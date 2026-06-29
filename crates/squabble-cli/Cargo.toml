@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+[package]
+name = "squabble-cli"
+description = "squabble — run the CI/CD fighter locally or as a CI step."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "squabble"
+path = "src/main.rs"
+
+[dependencies]
+squabble-core = { workspace = true }
+serde_json = { workspace = true }

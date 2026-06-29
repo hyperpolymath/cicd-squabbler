@@ -1,0 +1,108 @@
+= cicd-squabbler — Project Charter
+:toc: left
+:toclevels: 3
+:sectnums:
+Status: DRAFT (formalised 2026-06-29). No repo yet — creation is owner-gated.
+
+== Identity
+
+IS::
+A standalone, per-repo CI/CD fighter that drives a stuck pipeline to a *legitimate*
+green, or improves red→yellow, or fails and emits a structured human report.
+
+IS-NOT::
+* A bypass. Never `enforce_admins=off`, never "drop the required context", never
+  admin-merge. It *wins* the gate; it does not cheat past it.
+* hypatia/estate-dependent. Detachable is the whole point — the genesis is people
+  who admire the big system but want an intelligent local CI/CD fighter without
+  adopting hypatia.
+
+== Core principle: squabble ≠ bypass
+
+Every "green" the squabbler declares must be backed by the gate's *own* required
+check passing legitimately — never by an admin override, an `enforce_admins`
+toggle, or removal/rename-away of a required context. An admin-merge cheats past
+the gate; a squabble *wins* it.
+
+== Owner decisions (2026-06-29)
+
+[cols="1,3"]
+|===
+| First cut | CLI **and** GitHub App in parallel.
+| Stack | **Rust + SPARK** (per the standing estate pairing rule).
+| v0.1 scope | **Gate-deadlock class only** — not red→green code fixes (deferred:
+high risk of "fixing" by weakening tests, which would violate squabble≠bypass).
+|===
+
+== Architecture (3 Rust crates, one repo)
+
+`squabble-core`::
+The fight engine. Pure, detachable, the valuable reusable part. Loop:
+`diagnose → propose move → apply → verify-satisfied`.
+
+`squabble-cli` (`squabble` bin)::
+Wraps core. Runs locally or as a CI step. git + `gh` plumbing.
+
+`squabble-app`::
+GitHub App — axum webhook server + octocrab. Delivers the trigger button; calls
+the same `squabble-core`. *Provisional:* hosted on the farm (owned compute, per
+the cost-governor doctrine), not a conventional hosted App — owner to confirm.
+
+== The SPARK formal heart
+
+Model the gate as a state machine and *prove in SPARK that the only transition
+into `GREEN` is "a required check actually ran and passed."* Transitions such as
+"required context removed", "admin override", "check renamed away" are provably
+*unreachable* as paths to green. This makes `squabble ≠ bypass` a machine-checked
+invariant rather than a code-review promise — a clean, bounded SPARK target.
+
+*Provisional:* ships *in* v0.1 (the principle cannot be a v0.2 afterthought) —
+owner to confirm.
+
+== The arena
+
+The user pre-selects the permitted landing strategies. Estate default =
+`{squash, rebase}` + auto-variants, *never* merge-commit (linear-history
+rulesets). The squabbler lands only via a permitted strategy, or it does not land.
+
+== Trigger surface (the real one)
+
+The captured "SQUABBLE! button next to Merge/Squash/Rebase" placement is *not
+possible* — GitHub Apps cannot inject buttons into the native merge box.
+
+Primary:: Checks-API `requested_action` button ("Squabble!") in the PR checks
+section — the closest native button GitHub actually exposes.
+Secondary:: `/squabble` PR comment command; `squabble` label.
+
+== v0.1 fight playbook
+
+Mined from the 2026-06-22 rsr-template lockdown (effectively a manual squabbler
+run). All moves *satisfy* the gate, never bypass it.
+
+. *Stale required-context* → ground-truth emitted check names vs the required set;
+  reconcile names so the real check satisfies the requirement.
+. *Path-filter deadlock* → inject the documented job-level phantom pass-through so
+  the required check legitimately completes on off-path PRs.
+. *Reusable-workflow pin drift* → re-pin stale/broken SHA to current.
+. *Modify/delete & rebase conflicts* → resolve, re-run.
+. *Check-name ground-truthing* → shared substrate for moves 1 and 2.
+
+== Outcome contract
+
+GREEN:: Landed via a permitted (arena) strategy on a legitimately satisfied gate.
+YELLOW:: Red→improved but not won; handed back to the human.
+RED + report:: Could not win; structured report emitted for the human.
+
+== Repo & licensing (on creation)
+
+* Public RSR repo `hyperpolymath/cicd-squabbler`.
+* MPL-2.0 (code) / CC-BY-SA-4.0 (docs).
+* Provisional clade uuid; owner ratifies via gv-clade-index.
+* Update the Atlas entry `cicd-squabbler` from `location = "PLANNED — no repo"` /
+  `status = "planned"` to reserved on creation.
+
+== Open points for the owner
+
+. App hosting: farm (owned compute) vs conventional hosted App. *Provisional: farm.*
+. SPARK invariant timing: in v0.1 vs v0.2. *Provisional: v0.1.*
+. Go/no-go to scaffold the local 3-crate RSR skeleton (signed, unpushed).
