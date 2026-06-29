@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MPL-2.0
+# ANCHOR — semantic authority + golden path. What downstream may extend, not redefine.
+
+[authority]
+defines = "What it means to reach a CI/CD gate's green LEGITIMATELY (squabble ≠ bypass)."
+downstream-may = "Add new legitimate fight moves; add host adapters (CLI/App/other)."
+downstream-may-not = "Add any move that weakens the gate (drop/rename-away a required context, admin-override, enforce_admins toggle). Such a move is not extension — it is the thing this repo exists to refuse."
+
+[golden-path]
+command = "just ci"
+expects = [
+  "cargo test --workspace : all engine tests pass",
+  "gnatprove : Gate_Machine postcondition proved (green ⇔ non-empty ∧ all-passed)"
+]
+
+[invariant]
+name = "squabble-not-bypass"
+statement = "The only transition into Green is a required check that actually ran and passed."
+proof = "spark/src/gate_machine.ads (postcondition) — machine-checked by gnatprove."
+mirror = "crates/squabble-core/src/gate.rs (Gate::evaluate) carries the same semantics in Rust."
