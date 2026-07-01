@@ -5,11 +5,11 @@
 #
 [metadata]
 version = "0.1.0"
-last-updated = "{{CURRENT_DATE}}"
+last-updated = "2026-07-01"
 
 [project]
-name = "[YOUR-REPO-NAME]"
-purpose = "{{PROJECT_DESCRIPTION}}"
+name = "cicd-squabbler"
+purpose = "CI/CD gate fighter: drives a stuck branch-protection gate to green only by satisfying its required checks — never by admin override. Rust engine + SPARK-proved gate invariant (squabble != bypass)."
 
 [ai-allocation]
 agents = [
