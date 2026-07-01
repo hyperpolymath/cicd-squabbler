@@ -53,13 +53,47 @@ fn propose_for(required_context: &str) -> Move {
     // pure engine cannot scan the tree, so it starts at NeedsGroundTruth; the
     // host's licence scanner re-diagnoses with the concrete finding.
     let lc = required_context.to_ascii_lowercase();
-    if lc.contains("licence") || lc.contains("license") || lc.contains("spdx") || lc.contains("reuse") {
+    if lc.contains("licence")
+        || lc.contains("license")
+        || lc.contains("spdx")
+        || lc.contains("reuse")
+    {
         return Move::LicencePolicyDrift {
             check: required_context.to_string(),
             finding: LicenceFinding::NeedsGroundTruth,
         };
     }
-    Move::GroundTruthCheckNames { workflow: format!("(emitting `{required_context}`)") }
+    Move::GroundTruthCheckNames {
+        workflow: format!("(emitting `{required_context}`)"),
+    }
+}
+
+/// Diagnose a stuck gate using host-supplied classification hints.
+///
+/// `diagnose` is deliberately name-only: [`gate::Gate`] carries nothing about
+/// *why* a check is unsatisfied, so its default proposal falls back to
+/// [`propose_for`]'s heuristics. A host with more context (fetched workflow
+/// source, a check's own failure history, known-bad reusable-workflow
+/// patterns — see `hyperpolymath/hypatia#566`) can supply a `hints` map from
+/// `required_context` to the specific [`Move`] it has already classified,
+/// and this function uses that instead of guessing. Contexts absent from
+/// `hints` fall back to [`propose_for`], so this is a strict refinement of
+/// `diagnose`, never a divergence from it.
+pub fn diagnose_with_hints(
+    gate: &Gate,
+    hints: &std::collections::HashMap<String, Move>,
+) -> Diagnosis {
+    let state = gate.evaluate();
+    let proposed = gate
+        .unsatisfied()
+        .map(|c| {
+            hints
+                .get(&c.required_context)
+                .cloned()
+                .unwrap_or_else(|| propose_for(&c.required_context))
+        })
+        .collect();
+    Diagnosis { state, proposed }
 }
 
 #[cfg(test)]
@@ -99,5 +133,44 @@ mod tests {
             d.proposed.as_slice(),
             [Move::LicencePolicyDrift { .. }]
         ));
+    }
+
+    #[test]
+    fn hinted_context_uses_the_hint_not_ground_truthing() {
+        let g = Gate::new(vec![RequiredCheck::new(
+            "governance / Validate Hypatia Baseline",
+            CheckRun::Failed,
+        )]);
+        let mut hints = std::collections::HashMap::new();
+        hints.insert(
+            "governance / Validate Hypatia Baseline".to_string(),
+            Move::FlagNonFunctionalGate {
+                check: "governance / Validate Hypatia Baseline".into(),
+                evidence: "main red for 5+ days independent of any PR".into(),
+            },
+        );
+        let d = diagnose_with_hints(&g, &hints);
+        assert_eq!(
+            d.proposed,
+            vec![Move::FlagNonFunctionalGate {
+                check: "governance / Validate Hypatia Baseline".into(),
+                evidence: "main red for 5+ days independent of any PR".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn unhinted_context_still_falls_back_to_ground_truthing() {
+        let g = Gate::new(vec![RequiredCheck::new(
+            "some / other check",
+            CheckRun::Missing,
+        )]);
+        let d = diagnose_with_hints(&g, &std::collections::HashMap::new());
+        assert_eq!(
+            d.proposed,
+            vec![Move::GroundTruthCheckNames {
+                workflow: "(emitting `some / other check`)".into()
+            }]
+        );
     }
 }
