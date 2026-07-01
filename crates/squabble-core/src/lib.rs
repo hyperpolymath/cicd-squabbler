@@ -19,7 +19,7 @@ pub mod moves;
 pub mod outcome;
 
 use gate::{Gate, GateState};
-use moves::Move;
+use moves::{LicenceFinding, Move};
 
 /// A diagnosis: the current gate state plus a proposed legitimate move per
 /// unsatisfied requirement. The host decides whether to apply them.
@@ -47,6 +47,18 @@ pub fn diagnose(gate: &Gate) -> Diagnosis {
 /// move. v0.1 starts every unknown deadlock at ground-truthing the names; the
 /// host then re-diagnoses with the realised names bound.
 fn propose_for(required_context: &str) -> Move {
+    // A licence-policy gate is a distinct class: the resolution is doctrine-
+    // constrained (author-allowed vs owner-manual), so route it to a
+    // LicencePolicyDrift rather than generic check-name ground-truthing. The
+    // pure engine cannot scan the tree, so it starts at NeedsGroundTruth; the
+    // host's licence scanner re-diagnoses with the concrete finding.
+    let lc = required_context.to_ascii_lowercase();
+    if lc.contains("licence") || lc.contains("license") || lc.contains("spdx") || lc.contains("reuse") {
+        return Move::LicencePolicyDrift {
+            check: required_context.to_string(),
+            finding: LicenceFinding::NeedsGroundTruth,
+        };
+    }
     Move::GroundTruthCheckNames { workflow: format!("(emitting `{required_context}`)") }
 }
 
@@ -73,5 +85,19 @@ mod tests {
         let d = diagnose(&g);
         assert_eq!(d.state, GateState::Blocked);
         assert_eq!(d.proposed.len(), 2);
+    }
+
+    #[test]
+    fn licence_policy_context_proposes_a_licence_drift_move() {
+        let g = Gate::new(vec![
+            RequiredCheck::new("build", CheckRun::Passed),
+            RequiredCheck::new("licence-policy / spdx-headers", CheckRun::Missing),
+        ]);
+        let d = diagnose(&g);
+        assert_eq!(d.state, GateState::Blocked);
+        assert!(matches!(
+            d.proposed.as_slice(),
+            [Move::LicencePolicyDrift { .. }]
+        ));
     }
 }

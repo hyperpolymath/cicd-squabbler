@@ -1,0 +1,7 @@
+{
+  "checks": [
+    { "required_context": "governance / Licence consistency", "run": "passed" },
+    { "required_context": "licence-policy / spdx-headers", "run": "missing" },
+    { "required_context": "licence-policy / reuse-complete", "run": "missing" }
+  ]
+}
