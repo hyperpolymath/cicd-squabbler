@@ -2,7 +2,11 @@
 :toc: left
 :toclevels: 3
 :sectnums:
-Status: DRAFT (formalised 2026-06-29). No repo yet — creation is owner-gated.
+Status: ACTIVE (formalised 2026-06-29; repo created by the owner 2026-06-29).
+v0.1 progress: engine + SPARK-proved invariant + live gate fetch landed (#2, #6);
+`squabble apply` plumbing and the GitHub App remain open. Open point 3 (repo
+go/no-go) is resolved; points 1 (hosting) and 2 (SPARK timing — shipped in v0.1,
+confirming the provisional) stand as written below.
 
 == Identity
 
