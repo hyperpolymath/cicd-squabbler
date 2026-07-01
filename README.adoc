@@ -13,10 +13,11 @@ A standalone, per-repo CI/CD fighter that drives a stuck pipeline to a
 *legitimate* green — or improves red→yellow, or fails and hands the human a
 structured report. It *wins* the gate; it never cheats past it.
 
-NOTE: Status — *v0.1 scaffold, DRAFT (2026-06-29).* The engine and its formal
-invariant are real and verified (see below); the GitHub App webhook server is an
-honest stub. No GitHub repo exists yet (creation is owner-gated). See
-`docs/CHARTER.adoc` for the full design and the open owner decisions.
+NOTE: Status — *v0.1 in active development (updated 2026-07-01).* The engine and
+its formal invariant are real and verified (see below); live gate fetch via `gh`
+landed in #6. Still open: the `squabble apply` plumbing (moves are proposed, not
+yet executed) and the GitHub App webhook server (honest stub pending the owner's
+hosting decision). See `docs/CHARTER.adoc` for the design and open owner decisions.
 
 == Core principle: squabble ≠ bypass
 
@@ -59,6 +60,12 @@ squabbler run). Every move *satisfies* the gate:
 . *Reusable-workflow pin drift* — re-pin a stale/broken SHA to current.
 . *Modify/delete & rebase conflicts* — resolve and re-run.
 . *Check-name ground-truthing* — the shared substrate for moves 1 and 2.
+. *Licence-policy drift* — doctrine-constrained: adding a missing canonical
+  `LICENSES/` text is authoring (may apply); rewriting an existing file's SPDX
+  header is relicensing (flag, owner-only — never edit).
+. *Non-functional gate* — the required check's own script fails unconditionally
+  (cannot be won from the PR side; mined from `hypatia#566`): recognise, stop
+  re-diagnosing, escalate with evidence.
 
 Red→green *code* fixes are deliberately *out of scope* for v0.1: "fixing" a
 failing test by weakening it would violate squabble ≠ bypass.
