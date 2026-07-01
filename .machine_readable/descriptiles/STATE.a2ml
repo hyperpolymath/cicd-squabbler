@@ -1,64 +1,54 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 #
-# STATE.a2ml — Project state checkpoint (META-TEMPLATE)
-#
-# This is the STATE file for rsr-template-repo itself.
-# When consumed by a new project, replace {{PLACEHOLDER}} tokens
-# and customize sections below for the target project.
+# STATE.a2ml — cicd-squabbler project state checkpoint
 
 [metadata]
-project = "rsr-template-repo"
-version = "0.2.0"
-last-updated = "2026-02-28"
+project = "cicd-squabbler"
+version = "0.1.0"
+last-updated = "2026-07-01"
 status = "active"  # active | paused | archived
 
 [project-context]
-name = "rsr-template-repo"
-purpose = "Canonical RSR-compliant repository template providing scaffolding for all hyperpolymath projects — including CI/CD, AI manifests, ABI/FFI standards, container ecosystem, and governance infrastructure."
-completion-percentage = 95
+name = "cicd-squabbler"
+purpose = "CI/CD gate fighter: drives a stuck branch-protection gate to a legitimately-satisfied green by satisfying its required checks — never by admin override, enforce_admins toggle, or removing/renaming a required context. Rust fight engine + SPARK-proved gate invariant. Detachable; no hypatia/estate dependency."
+completion-percentage = 85
 
 [position]
-phase = "maintenance"      # design | implementation | testing | maintenance | archived
-maturity = "production"    # experimental | alpha | beta | production | lts
+phase = "implementation"   # design | implementation | testing | maintenance | archived
+maturity = "beta"          # experimental | alpha | beta | production | lts
 
 [route-to-mvp]
 milestones = [
-  { name = "Phase 0: Core scaffolding (justfile, CI/CD, .machine_readable)", completion = 100 },
-  { name = "Phase 1: ABI/FFI standard (Idris2/Zig templates)", completion = 100 },
-  { name = "Phase 1b: AI Gatekeeper Protocol (0-AI-MANIFEST.a2ml)", completion = 100 },
-  { name = "Phase 1c: TOPOLOGY.md standard and guide", completion = 100 },
-  { name = "Phase 1d: Maintenance gate (axes, checklist, approach)", completion = 100 },
-  { name = "Phase 1e: Trustfile / contractiles", completion = 100 },
-  { name = "Phase 2: Container ecosystem templates (stapeln)", completion = 100 },
-  { name = "Phase 3: Multi-forge sync hardening", completion = 0 },
-  { name = "Phase 4: Guix reproducible shells", completion = 50 },
+  { name = "Gate model + SPARK invariant (Green iff every required check ran and passed; no path to Green via weakening)", completion = 100 },
+  { name = "v0.1 fight playbook — 5 gate-deadlock moves (reconcile-context, path-filter pass-through, repin-reusable, resolve-and-rerun, ground-truth-names)", completion = 100 },
+  { name = "squabble-cli (`squabble diagnose <gate.json>`)", completion = 100 },
+  { name = "Licence-policy squabbling — Move 6 (LicencePolicyDrift; author-allowed vs owner-manual encoded in the type system)", completion = 100 },
+  { name = "squabble-app GitHub App webhook server (currently an honest stub — exits EX_UNAVAILABLE rather than fake OK)", completion = 20 },
+  { name = "RSR scaffolding customisation (identity, root-allow, A2ML manifests)", completion = 80 },
 ]
 
 [blockers-and-issues]
-# No active blockers
+# The GitHub App webhook server is an honest stub (it does not fake a green).
+# CLADE registration into gv-clade-index is pending owner action (separate repo).
 
 [critical-next-actions]
 actions = [
-  "Container templates complete — test with `just container-init`",
-  "Validate container templates across wolfi-base and static Chainguard images",
-  "Harden multi-forge sync for GitLab/Bitbucket mirroring edge cases",
-  "Expand Guix development shell templates",
+  "Implement the squabble-app webhook server (axum + octocrab) so the fighter runs as a GitHub App, not only a CLI.",
+  "Extend the SPARK invariant to cover the licence-policy gate class (v0.2; v0.1 moves are Rust-only for that class).",
+  "Register the CLADE (uuid 38bec2ed-bb12-44ee-9fb4-08872370c27b) into hyperpolymath/gv-clade-index (owner action).",
 ]
 
 [maintenance-status]
-last-run-utc = "never"
+last-run-utc = "2026-07-01"
 last-report = "docs/reports/maintenance/latest.json"
-last-result = "unknown"  # unknown | pass | warn | fail
+last-result = "pass"  # unknown | pass | warn | fail
 open-warnings = 0
 open-failures = 0
+# cargo test --workspace green; the SPARK gate invariant is gnatprove-checked in CI.
 
 [ecosystem]
-part-of = ["RSR Framework", "stapeln ecosystem"]
-depends-on = ["stapeln", "selur-compose", "cerro-torre", "svalinn", "vordr", "k9-svc"]
-
-# ---------------------------------------------------------------------------
-# NOTE FOR CONSUMERS: When using this template to create a new repo, reset
-# the fields above to your project's values and replace all {{PLACEHOLDER}}
-# tokens. The milestones above describe the TEMPLATE's evolution, not yours.
-# ---------------------------------------------------------------------------
+part-of = ["hyperpolymath estate CI/CD"]
+depends-on = []
+# Standalone: operationalises Doctrine #5 (squabble != bypass) as a detachable
+# tool. No hypatia/estate runtime dependency — the detachability is the point.
