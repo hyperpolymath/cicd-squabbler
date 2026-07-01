@@ -40,7 +40,10 @@ pub struct RequiredCheck {
 
 impl RequiredCheck {
     pub fn new(required_context: impl Into<String>, run: CheckRun) -> Self {
-        Self { required_context: required_context.into(), run }
+        Self {
+            required_context: required_context.into(),
+            run,
+        }
     }
 
     /// A requirement is satisfied only by a bound run that passed. This is the
@@ -93,7 +96,11 @@ impl Gate {
             }
             return GateState::Green;
         }
-        if self.checks.iter().any(|c| matches!(c.run, CheckRun::Failed)) {
+        if self
+            .checks
+            .iter()
+            .any(|c| matches!(c.run, CheckRun::Failed))
+        {
             return GateState::Red;
         }
         GateState::Blocked

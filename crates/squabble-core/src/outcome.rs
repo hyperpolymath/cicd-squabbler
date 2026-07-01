@@ -33,9 +33,7 @@ pub enum Outcome {
     },
     /// Could not win. A structured report is emitted for the human; nothing was
     /// bypassed, nothing was merged.
-    Red {
-        report: Report,
-    },
+    Red { report: Report },
 }
 
 /// The human-facing report emitted when the squabbler cannot win the gate.

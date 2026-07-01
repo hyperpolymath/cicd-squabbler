@@ -2,11 +2,14 @@
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 //! `squabble` — the CLI front-end to `squabble-core`.
 //!
-//! v0.1 surface: `squabble diagnose <gate.json>` reads a gate description
-//! (the required contexts and their realised runs), runs the pure engine, and
-//! prints the state plus the legitimate moves it proposes. git/`gh` plumbing
-//! that *applies* moves is the next implementation step (see docs/CHARTER.adoc);
-//! this binary fails loudly rather than pretending to land anything.
+//! v0.1 surface: `squabble fetch <owner/repo> <pr>` turns a live PR into a
+//! gate (via `gh`); `squabble diagnose <gate.json>` reads a gate description
+//! (from `fetch`, or hand-written) and prints the state plus the legitimate
+//! moves the pure engine proposes. Applying a move is still the next
+//! implementation step (see docs/CHARTER.adoc) — this binary fails loudly
+//! rather than pretending to land anything.
+
+mod fetch;
 
 use squabble_core::{diagnose, gate::Gate};
 use std::process::ExitCode;
@@ -21,6 +24,13 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        Some("fetch") => match (args.get(2), args.get(3)) {
+            (Some(slug), Some(pr)) => run_fetch(slug, pr),
+            _ => {
+                eprintln!("squabble fetch: usage: squabble fetch <owner>/<repo> <pr-number>");
+                ExitCode::from(2)
+            }
+        },
         Some("--version") | Some("-V") => {
             println!("squabble {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -28,9 +38,28 @@ fn main() -> ExitCode {
         _ => {
             eprintln!(
                 "squabble {} — CI/CD fighter (squabble ≠ bypass)\n\n\
-                 USAGE:\n  squabble diagnose <gate.json>\n  squabble --version\n",
+                 USAGE:\n  squabble fetch <owner>/<repo> <pr-number>\n  squabble diagnose <gate.json>\n  squabble --version\n",
                 env!("CARGO_PKG_VERSION")
             );
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_fetch(slug: &str, pr: &str) -> ExitCode {
+    match fetch::run(slug, pr) {
+        Ok(gate) => match serde_json::to_string_pretty(&gate) {
+            Ok(json) => {
+                println!("{json}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("squabble: could not serialise fetched gate: {e}");
+                ExitCode::from(2)
+            }
+        },
+        Err(e) => {
+            eprintln!("squabble fetch: {e}");
             ExitCode::from(2)
         }
     }

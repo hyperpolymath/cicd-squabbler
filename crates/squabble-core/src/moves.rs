@@ -30,7 +30,11 @@ pub enum Move {
     /// Move 3 — *reusable-workflow pin drift*. A required job calls a reusable
     /// workflow pinned to a stale/broken SHA and never starts. Re-pin to the
     /// current SHA so the job runs.
-    RepinReusableWorkflow { reference: String, from_sha: String, to_sha: String },
+    RepinReusableWorkflow {
+        reference: String,
+        from_sha: String,
+        to_sha: String,
+    },
 
     /// Move 4 — *modify/delete & rebase conflict*. Resolve the conflict and
     /// re-run the gate. No content is invented; the human's intent is preserved.
@@ -57,7 +61,27 @@ pub enum Move {
     /// can and defers the rest to the owner — it never bypasses the gate (an
     /// owner-manual finding leaves the gate unsatisfied until the owner acts;
     /// it is never "won" by dropping or weakening the licence requirement).
-    LicencePolicyDrift { check: String, finding: LicenceFinding },
+    LicencePolicyDrift {
+        check: String,
+        finding: LicenceFinding,
+    },
+
+    /// Move 7 — *non-functional gate*. The required check's own script fails
+    /// unconditionally regardless of any exemption/baseline file present — it
+    /// cannot be won by any change on the PR side, because the deadlock lives
+    /// in the shared check's implementation, not in the PR. Mined from
+    /// `hyperpolymath/hypatia#566` (2026-07-01): `standards`'s
+    /// `validate-hypatia-baseline` job never read `.hypatia-baseline.json`'s
+    /// content, so it failed on every PR regardless of what was already
+    /// accepted — confirmed by `main` itself failing the same check for 5+
+    /// days independent of any PR. Not auto-appliable: fixing the check
+    /// requires human review of the shared reusable workflow it lives in.
+    /// This move's job is *recognition* — stop re-diagnosing the same
+    /// unfixable deadlock as `GroundTruthCheckNames` on every run — and
+    /// *escalation*, so the host can hand the human a report naming the
+    /// check and the evidence rather than proposing a PR-side move that can
+    /// never win.
+    FlagNonFunctionalGate { check: String, evidence: String },
 }
 
 /// The specific way a licence-policy check is unsatisfied. The pure engine
@@ -79,7 +103,10 @@ pub enum LicenceFinding {
     RootDisplayMismatch { found: String },
     /// Existing file(s) carry the wrong per-file SPDX header for their content
     /// type (code should be `MPL-2.0`, prose `CC-BY-SA-4.0`).
-    HeaderDrift { files: Vec<String>, expected: String },
+    HeaderDrift {
+        files: Vec<String>,
+        expected: String,
+    },
 }
 
 /// How a [`LicenceFinding`] may legitimately be resolved, per estate doctrine
@@ -152,18 +179,24 @@ impl Move {
     /// A one-line, human-facing description for the structured report.
     pub fn describe(&self) -> String {
         match self {
-            Move::ReconcileRequiredContext { required, emitted } => format!(
-                "reconcile required context `{required}` → emitted name `{emitted}`"
-            ),
-            Move::InjectPathFilterPassThrough { check, workflow } => format!(
-                "inject path-filter pass-through for `{check}` in `{workflow}`"
-            ),
-            Move::RepinReusableWorkflow { reference, from_sha, to_sha } => format!(
+            Move::ReconcileRequiredContext { required, emitted } => {
+                format!("reconcile required context `{required}` → emitted name `{emitted}`")
+            }
+            Move::InjectPathFilterPassThrough { check, workflow } => {
+                format!("inject path-filter pass-through for `{check}` in `{workflow}`")
+            }
+            Move::RepinReusableWorkflow {
+                reference,
+                from_sha,
+                to_sha,
+            } => format!(
                 "re-pin `{reference}` {} → {}",
                 short(from_sha),
                 short(to_sha)
             ),
-            Move::ResolveAndRerun { branch } => format!("resolve conflicts on `{branch}` and re-run"),
+            Move::ResolveAndRerun { branch } => {
+                format!("resolve conflicts on `{branch}` and re-run")
+            }
             Move::GroundTruthCheckNames { workflow } => {
                 format!("ground-truth emitted check names for `{workflow}`")
             }
@@ -171,6 +204,9 @@ impl Move {
                 "licence-policy `{check}`: {} [{}]",
                 finding.describe(),
                 finding.resolution().describe()
+            ),
+            Move::FlagNonFunctionalGate { check, evidence } => format!(
+                "flag `{check}` as non-functional (unfixable from the PR side) — {evidence}"
             ),
         }
     }
@@ -185,7 +221,11 @@ impl Move {
 }
 
 fn short(sha: &str) -> &str {
-    if sha.len() >= 7 { &sha[..7] } else { sha }
+    if sha.len() >= 7 {
+        &sha[..7]
+    } else {
+        sha
+    }
 }
 
 #[cfg(test)]
@@ -195,12 +235,33 @@ mod tests {
     #[test]
     fn every_move_is_legitimate_by_construction() {
         let moves = [
-            Move::ReconcileRequiredContext { required: "gitleaks".into(), emitted: "scan / gitleaks".into() },
-            Move::InjectPathFilterPassThrough { check: "build".into(), workflow: "ci.yml".into() },
-            Move::RepinReusableWorkflow { reference: "org/wf/.github/workflows/x.yml".into(), from_sha: "deadbeefdeadbeef".into(), to_sha: "cafebabecafebabe".into() },
-            Move::ResolveAndRerun { branch: "feat/x".into() },
-            Move::GroundTruthCheckNames { workflow: "ci.yml".into() },
-            Move::LicencePolicyDrift { check: "licence-policy / spdx-headers".into(), finding: LicenceFinding::NeedsGroundTruth },
+            Move::ReconcileRequiredContext {
+                required: "gitleaks".into(),
+                emitted: "scan / gitleaks".into(),
+            },
+            Move::InjectPathFilterPassThrough {
+                check: "build".into(),
+                workflow: "ci.yml".into(),
+            },
+            Move::RepinReusableWorkflow {
+                reference: "org/wf/.github/workflows/x.yml".into(),
+                from_sha: "deadbeefdeadbeef".into(),
+                to_sha: "cafebabecafebabe".into(),
+            },
+            Move::ResolveAndRerun {
+                branch: "feat/x".into(),
+            },
+            Move::GroundTruthCheckNames {
+                workflow: "ci.yml".into(),
+            },
+            Move::LicencePolicyDrift {
+                check: "licence-policy / spdx-headers".into(),
+                finding: LicenceFinding::NeedsGroundTruth,
+            },
+            Move::FlagNonFunctionalGate {
+                check: "validate-hypatia-baseline".into(),
+                evidence: "main has failed this check for 5+ days independent of any PR".into(),
+            },
         ];
         assert!(moves.iter().all(Move::is_legitimate));
     }
@@ -210,25 +271,40 @@ mod tests {
         // Header drift on existing files is relicensing → owner-manual (flag,
         // never auto-edit); a missing canonical text is authoring → applyable.
         assert_eq!(
-            LicenceFinding::HeaderDrift { files: vec!["README.md".into()], expected: "CC-BY-SA-4.0".into() }.resolution(),
+            LicenceFinding::HeaderDrift {
+                files: vec!["README.md".into()],
+                expected: "CC-BY-SA-4.0".into()
+            }
+            .resolution(),
             LicenceResolution::OwnerManual
         );
         assert_eq!(
-            LicenceFinding::MissingLicenceText { missing: vec!["CC-BY-SA-4.0.txt".into()] }.resolution(),
+            LicenceFinding::MissingLicenceText {
+                missing: vec!["CC-BY-SA-4.0.txt".into()]
+            }
+            .resolution(),
             LicenceResolution::AuthorAllowed
         );
         assert_eq!(
-            LicenceFinding::RootDisplayMismatch { found: "AGPL-3.0".into() }.resolution(),
+            LicenceFinding::RootDisplayMismatch {
+                found: "AGPL-3.0".into()
+            }
+            .resolution(),
             LicenceResolution::AuthorNewRepoElseOwnerManual
         );
-        assert_eq!(LicenceFinding::NeedsGroundTruth.resolution(), LicenceResolution::Unknown);
+        assert_eq!(
+            LicenceFinding::NeedsGroundTruth.resolution(),
+            LicenceResolution::Unknown
+        );
     }
 
     #[test]
     fn licence_drift_move_serialises_round_trip() {
         let m = Move::LicencePolicyDrift {
             check: "licence-policy / reuse-complete".into(),
-            finding: LicenceFinding::MissingLicenceText { missing: vec!["CC-BY-SA-4.0.txt".into()] },
+            finding: LicenceFinding::MissingLicenceText {
+                missing: vec!["CC-BY-SA-4.0.txt".into()],
+            },
         };
         let json = serde_json::to_string(&m).expect("serialise");
         let back: Move = serde_json::from_str(&json).expect("deserialise");
