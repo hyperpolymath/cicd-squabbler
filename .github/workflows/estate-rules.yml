@@ -4,7 +4,7 @@
 # Estate Rules — enforces hyperpolymath estate-wide conventions:
 #   * root shape (allowlist of permitted root entries)
 #   * AsciiDoc-by-default (no .md files under docs/)
-#   * zig is banned (no zig scaffolding or references)
+#   * V-lang is banned (no V-lang scaffolding or references; Zig is the FFI default)
 #
 # Each rule is enforced by an executable check script under scripts/. Failures
 # are surfaced as workflow errors so the rule can't silently regress.
@@ -30,5 +30,5 @@ jobs:
         run: bash scripts/check-root-shape.sh .
       - name: AsciiDoc by default (no .md under docs/)
         run: bash scripts/check-no-md-in-docs.sh .
-      - name: No zig references
+      - name: No V-lang references
         run: bash scripts/check-no-vlang.sh .

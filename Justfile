@@ -19,11 +19,11 @@ set positional-arguments := true
 import? "build/contractile.just"
 
 # Project metadata — customize these
-project := "rsr-template-repo"
+project := "cicd-squabbler"
 OWNER := "hyperpolymath"
-REPO := "rsr-template-repo"
+REPO := "cicd-squabbler"
 version := "0.1.0"
-tier := "infrastructure"  # 1 | 2 | infrastructure
+tier := "1"  # 1 | 2 | infrastructure
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DEFAULT & HELP
@@ -87,14 +87,15 @@ import? "build/just/assess.just"
 
 # Build the project (debug mode)
 build *args:
-    @echo "Building {{project}} (debug)..."
-    # TODO: Replace with your build command
-    # Examples:
-    #   cargo build {{args}}                    # Rust
-    #   mix compile {{args}}                    # Elixir
-    #   zig build {{args}}                      # Zig
-    #   deno task build {{args}}                # Deno/ReScript
-    @echo "Build complete"
+    cargo build --workspace {{args}}
+
+# Prove the SPARK gate-machine invariant: green ⇔ all required checks passed.
+prove:
+    cd spark && gnatprove -P squabble_gate.gpr --level=2 --report=all
+
+# Demo: diagnose the sample stale-required-context deadlock.
+demo:
+    cargo run -q -p squabble-cli -- diagnose examples/gate-deadlock.json
 
 # Build in release mode with optimizations
 build-release *args:
@@ -131,14 +132,7 @@ clean-all: clean
 
 # Run all tests
 test *args:
-    @echo "Running tests..."
-    # TODO: Replace with your test command
-    # Examples:
-    #   cargo test {{args}}
-    #   mix test {{args}}
-    #   zig build test {{args}}
-    #   deno test {{args}}
-    @echo "Tests passed!"
+    cargo test --workspace {{args}}
 
 # Run tests with verbose output
 test-verbose:

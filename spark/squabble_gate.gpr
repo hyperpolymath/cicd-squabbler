@@ -1,0 +1,15 @@
+--  SPDX-License-Identifier: MPL-2.0
+--  Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+project Squabble_Gate is
+   for Source_Dirs use ("src");
+   for Object_Dir use "obj";
+   --  Library/analysis project: no main programs, this is a proof unit.
+
+   package Compiler is
+      for Default_Switches ("Ada") use ("-gnatwa", "-gnat2022");
+   end Compiler;
+
+   package Prove is
+      for Proof_Switches ("Ada") use ("--level=2", "--report=all");
+   end Prove;
+end Squabble_Gate;
