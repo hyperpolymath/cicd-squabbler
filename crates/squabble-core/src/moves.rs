@@ -82,6 +82,148 @@ pub enum Move {
     /// check and the evidence rather than proposing a PR-side move that can
     /// never win.
     FlagNonFunctionalGate { check: String, evidence: String },
+
+    /// Move 8 — *escalate to an expert group*. The failing check is genuinely
+    /// red for a reason **outside the squabbler's lane** — an application/code
+    /// fix (a `red→green code-fixer` is what this repo explicitly IS-NOT), a
+    /// proof obligation, or a security finding that needs a real scanner. Hand
+    /// it to a named [`ExpertGroup`] (in the estate, these resolve to boj-server
+    /// cartridges: hypatia-mcp / fleet-mcp / echidna / panic-attack) with an
+    /// [`EscalationKind`] and evidence.
+    ///
+    /// This is a **hand-off, never a win**: applying it constructs no
+    /// [`crate::gate::CheckRun::Passed`] and drops no required context, so it
+    /// cannot move the gate to [`crate::gate::GateState::Green`] by itself. It
+    /// exists so the squabbler can assemble the case for its "big guns" instead
+    /// of either faking a green or silently giving up (`fail-closed`,
+    /// `no-silent-skip`). If the expert group is unreachable, the host still
+    /// records this move as fail-closed evidence in the report.
+    EscalateToExpert {
+        check: String,
+        group: ExpertGroup,
+        obligation: EscalationKind,
+        evidence: String,
+    },
+
+    /// Move 9 — *assign a gate owner*. Surface a check that either **should be
+    /// in CI but is not yet** anyone's responsibility, or is **structurally
+    /// misconfigured** (a path-filtered required check that strands every PR as
+    /// `Expected`, a duplicate of an upstream gate, a reusable workflow owned in
+    /// another repo). Name who is responsible via [`OwnershipDisposition`], with
+    /// a one-line rationale.
+    ///
+    /// This is **pure annotation, never a path to green**: it satisfies no
+    /// check and weakens no requirement. It is how the squabbler "argues the
+    /// wider case" — putting into the debate the things that *should* be checked
+    /// and calling up whoever must own them — without ever bypassing the gate.
+    /// A check left to an upstream owner stays unsatisfied until that owner
+    /// acts; it is never "won" by re-attributing it.
+    AssignGateOwner {
+        check: String,
+        owner: String,
+        disposition: OwnershipDisposition,
+        rationale: String,
+    },
+}
+
+/// A specialist group the squabbler can summon when a gate is out of its lane.
+/// The squabbler never embeds these; in the estate each maps to an existing
+/// boj-server MCP cartridge (or a bundle of them), so calling in the "big guns"
+/// stays lightweight. The mapping itself lives in the host, keeping
+/// `squabble-core` free of any estate/boj dependency (detachability).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExpertGroup {
+    /// Analysis only — confidence scoring, recipe lookup, dispatch strategy
+    /// (estate: `ci-cd/hypatia-mcp`).
+    Hypatia,
+    /// Analyse **and** actuate — hypatia's judgement plus the fleet's fixers and
+    /// PR-openers (estate: `hypatia-mcp` + `fleet/fleet-mcp` + robot-repo-automaton).
+    HypatiaFleet,
+    /// Formal proof / verification obligations (estate: `formal-verification/echidna-llm-mcp`).
+    Proof,
+    /// Static-analysis / weak-point scanning (estate: `security/panic-attack-mcp`).
+    Security,
+}
+
+/// What the squabbler is asking an [`ExpertGroup`] to *do*. Kept coarse on
+/// purpose: the squabbler states the obligation, the host/cartridge decides how.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EscalationKind {
+    /// "Is this a known pattern, and how confident should we be in a fix?"
+    AssessConfidence,
+    /// "Fix this (code/config outside my lane) and open the PR."
+    DispatchFix,
+    /// "Verify this claim/obligation holds."
+    VerifyClaim,
+    /// "Scan for the real underlying weak points."
+    Scan,
+}
+
+/// Who is responsible for a surfaced check. `MisconfiguredGate` and
+/// `OwnedUpstream` carry the concrete detail so the report is actionable
+/// (`evidence-per-step`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "disposition", rename_all = "kebab-case")]
+pub enum OwnershipDisposition {
+    /// A check that *ought* to run here but no workflow provides it yet — the
+    /// squabbler puts it into the debate for someone to own.
+    ShouldBeAddedToCi,
+    /// The check runs but its own configuration strands PRs (e.g. a path-filter
+    /// on a required check, or a duplicate of an upstream gate).
+    MisconfiguredGate { detail: String },
+    /// The check is produced by a reusable workflow owned in another repo; the
+    /// fix belongs there, not on this PR.
+    OwnedUpstream { repo: String },
+    /// No current owner could be attributed — surfaced rather than swallowed.
+    Ownerless,
+}
+
+impl ExpertGroup {
+    /// A short human label naming the group and its remit.
+    pub const fn label(self) -> &'static str {
+        match self {
+            ExpertGroup::Hypatia => "hypatia (analysis)",
+            ExpertGroup::HypatiaFleet => "hypatia+fleet (analyse+fix)",
+            ExpertGroup::Proof => "proof (echidna)",
+            ExpertGroup::Security => "security (panic-attack)",
+        }
+    }
+}
+
+impl EscalationKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            EscalationKind::AssessConfidence => "assess-confidence",
+            EscalationKind::DispatchFix => "dispatch-fix",
+            EscalationKind::VerifyClaim => "verify-claim",
+            EscalationKind::Scan => "scan",
+        }
+    }
+}
+
+impl OwnershipDisposition {
+    /// A short kebab-case label for the disposition (for compact report lines).
+    pub const fn label(&self) -> &'static str {
+        match self {
+            OwnershipDisposition::ShouldBeAddedToCi => "should-be-added-to-ci",
+            OwnershipDisposition::MisconfiguredGate { .. } => "misconfigured-gate",
+            OwnershipDisposition::OwnedUpstream { .. } => "owned-upstream",
+            OwnershipDisposition::Ownerless => "ownerless",
+        }
+    }
+
+    fn describe(&self) -> String {
+        match self {
+            OwnershipDisposition::ShouldBeAddedToCi => "should be added to CI".to_string(),
+            OwnershipDisposition::MisconfiguredGate { detail } => {
+                format!("misconfigured gate: {detail}")
+            }
+            OwnershipDisposition::OwnedUpstream { repo } => format!("owned upstream in `{repo}`"),
+            OwnershipDisposition::Ownerless => "no current owner".to_string(),
+        }
+    }
 }
 
 /// The specific way a licence-policy check is unsatisfied. The pure engine
@@ -208,6 +350,25 @@ impl Move {
             Move::FlagNonFunctionalGate { check, evidence } => format!(
                 "flag `{check}` as non-functional (unfixable from the PR side) — {evidence}"
             ),
+            Move::EscalateToExpert {
+                check,
+                group,
+                obligation,
+                evidence,
+            } => format!(
+                "escalate `{check}` to {} [{}] — {evidence}",
+                group.label(),
+                obligation.label()
+            ),
+            Move::AssignGateOwner {
+                check,
+                owner,
+                disposition,
+                rationale,
+            } => format!(
+                "assign `{check}` → `{owner}` [{}] — {rationale}",
+                disposition.describe()
+            ),
         }
     }
 
@@ -262,8 +423,63 @@ mod tests {
                 check: "validate-hypatia-baseline".into(),
                 evidence: "main has failed this check for 5+ days independent of any PR".into(),
             },
+            Move::EscalateToExpert {
+                check: "lint-shell".into(),
+                group: ExpertGroup::HypatiaFleet,
+                obligation: EscalationKind::DispatchFix,
+                evidence: "ShellCheck findings in src/scripts/*.sh — a code fix, out of lane"
+                    .into(),
+            },
+            Move::AssignGateOwner {
+                check: "governance / Well-Known (RFC 9116 + RSR)".into(),
+                owner: "hyperpolymath/standards".into(),
+                disposition: OwnershipDisposition::OwnedUpstream {
+                    repo: "hyperpolymath/standards".into(),
+                },
+                rationale: "produced by the reusable governance workflow; fix belongs upstream"
+                    .into(),
+            },
         ];
         assert!(moves.iter().all(Move::is_legitimate));
+    }
+
+    #[test]
+    fn escalation_and_owner_moves_round_trip() {
+        // The two "call in the big guns / name an owner" moves must survive the
+        // JSON evidence manifest unchanged.
+        let escalate = Move::EscalateToExpert {
+            check: "container-build".into(),
+            group: ExpertGroup::HypatiaFleet,
+            obligation: EscalationKind::DispatchFix,
+            evidence: "podman build fails; needs a real fix".into(),
+        };
+        let assign = Move::AssignGateOwner {
+            check: "governance / Workflow security linter".into(),
+            owner: "hyperpolymath/standards".into(),
+            disposition: OwnershipDisposition::MisconfiguredGate {
+                detail: "duplicates the local lint-workflows gate".into(),
+            },
+            rationale: "consolidate upstream".into(),
+        };
+        for m in [escalate, assign] {
+            let json = serde_json::to_string(&m).expect("serialise");
+            let back: Move = serde_json::from_str(&json).expect("deserialise");
+            assert_eq!(m, back);
+        }
+    }
+
+    #[test]
+    fn escalation_move_names_group_and_obligation_in_kebab_case() {
+        let json = serde_json::to_string(&Move::EscalateToExpert {
+            check: "c".into(),
+            group: ExpertGroup::HypatiaFleet,
+            obligation: EscalationKind::VerifyClaim,
+            evidence: "e".into(),
+        })
+        .unwrap();
+        assert!(json.contains("\"kind\":\"escalate-to-expert\""));
+        assert!(json.contains("\"group\":\"hypatia-fleet\""));
+        assert!(json.contains("\"obligation\":\"verify-claim\""));
     }
 
     #[test]
