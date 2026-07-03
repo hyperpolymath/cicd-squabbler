@@ -90,6 +90,24 @@ run). All moves *satisfy* the gate, never bypass it.
 . *Reusable-workflow pin drift* → re-pin stale/broken SHA to current.
 . *Modify/delete & rebase conflicts* → resolve, re-run.
 . *Check-name ground-truthing* → shared substrate for moves 1 and 2.
+. *Unsatisfiable `code_scanning` ruleset rule* (**flagship v0.1 move**) → a branch
+  ruleset's `code_scanning` rule lists a tool in `code_scanning_tools` that never
+  uploads a per-PR-merge-commit SARIF analysis for the repo — e.g. `Hypatia`
+  (gated via a status-check context, not a code-scanning upload) or `Scorecard`
+  (uploads 0 analyses estate-wide). The rule then waits forever on an analysis
+  result that never arrives, so every PR sticks on "Waiting for code scanning
+  results from <tool> for the commit …". Fully mechanical fix: trim
+  `code_scanning_tools` down to only tools that genuinely upload SARIF per PR
+  (`CodeQL`), and gate the others via `required_status_checks` contexts instead.
++
+NOTE: This is a *confirmed, recurring, production* class — it deadlocked PRs on
+multiple estate repos the week of 2026-06-30 (`rsr-template-repo`, `standards`,
+`odds-and-sods-package-manager`, …). Already diagnosed and remediated on hypatia
+itself (see hypatia issues #470 and #473); the canonical provisioner
+`git-scripts/scripts/branch-protection-apply.sh` is now CodeQL-only, but stale
+live `Base` rulesets persist. Because the fix is purely list-trimming with a
+verifiable satisfaction condition, it is the ideal *first* squabbler move once
+the tool exists.
 
 == Outcome contract
 
