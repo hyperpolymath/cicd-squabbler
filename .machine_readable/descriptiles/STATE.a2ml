@@ -6,13 +6,13 @@
 [metadata]
 project = "cicd-squabbler"
 version = "0.1.0"
-last-updated = "2026-07-01"
+last-updated = "2026-07-03"
 status = "active"  # active | paused | archived
 
 [project-context]
 name = "cicd-squabbler"
 purpose = "CI/CD gate fighter: drives a stuck branch-protection gate to a legitimately-satisfied green by satisfying its required checks — never by admin override, enforce_admins toggle, or removing/renaming a required context. Rust fight engine + SPARK-proved gate invariant. Detachable; no hypatia/estate dependency."
-completion-percentage = 85
+completion-percentage = 88
 
 [position]
 phase = "implementation"   # design | implementation | testing | maintenance | archived
@@ -24,7 +24,12 @@ milestones = [
   { name = "v0.1 fight playbook — 5 gate-deadlock moves (reconcile-context, path-filter pass-through, repin-reusable, resolve-and-rerun, ground-truth-names)", completion = 100 },
   { name = "squabble-cli (`squabble diagnose <gate.json>`)", completion = 100 },
   { name = "Licence-policy squabbling — Move 6 (LicencePolicyDrift; author-allowed vs owner-manual encoded in the type system)", completion = 100 },
+  { name = "Non-functional-gate recognition — Move 7 (FlagNonFunctionalGate; escalate an unwinnable-from-PR check)", completion = 100 },
+  { name = "Call-in-the-big-guns — Moves 8-9 (EscalateToExpert → hypatia/fleet/echidna/security groups; AssignGateOwner → owned-upstream / misconfigured-gate / should-be-added-to-ci). Both non-satisfying by construction; SPARK invariant untouched.", completion = 100 },
+  { name = "Ecosystem-context reader (host-only a2ml/k9 → RepoContext; fail-safe, never a core dependency)", completion = 100 },
+  { name = "`squabble fight` orchestration — classifies each red as self-win | escalate | assign-owner via workflow ground-truth; first binary to emit an Outcome/Report evidence manifest. Proven on ipv6-only#43 (5 reds classified).", completion = 100 },
   { name = "squabble-app GitHub App webhook server (currently an honest stub — exits EX_UNAVAILABLE rather than fake OK)", completion = 20 },
+  { name = "boj-server client + cicd-squabbler-mcp cartridge + specialist expert groups (escalations become live hypatia/fleet/echidna calls) — designed, deferred to next push; EscalateToExpert is the seam", completion = 0 },
   { name = "RSR scaffolding customisation (identity, root-allow, A2ML manifests)", completion = 80 },
 ]
 
@@ -34,7 +39,8 @@ milestones = [
 
 [critical-next-actions]
 actions = [
-  "Implement the squabble-app webhook server (axum + octocrab) so the fighter runs as a GitHub App, not only a CLI.",
+  "Wire the escalation seam to boj-server: a feature-gated MCP/REST client + a cicd-squabbler-mcp cartridge, so EscalateToExpert calls hypatia-mcp/fleet-mcp/echidna live (specialist groups: Hypatia, Hypatia+Fleet, Proof, Security). Fail-closed if unreachable.",
+  "Implement `squabble fight --apply` (and the squabble-app webhook) so self-win moves are enacted + re-run, not only planned.",
   "Extend the SPARK invariant to cover the licence-policy gate class (v0.2; v0.1 moves are Rust-only for that class).",
   "Register the CLADE (uuid 38bec2ed-bb12-44ee-9fb4-08872370c27b) into hyperpolymath/gv-clade-index (owner action).",
 ]

@@ -1,0 +1,17 @@
+{
+  "_comment": "hyperpolymath/ipv6-only#43 — a 2-line Dependabot SHA-bump stranded behind 5 reds none of which its diff caused. Built from the PR's statusCheckRollup (2026-07-03); the passing entries are a representative slice of the required set. Feed to: squabble fight hyperpolymath/ipv6-only 43 --gate examples/ipv6-only-pr43.json --repo-root <ipv6-only checkout>",
+  "checks": [
+    { "required_context": "lint-shell", "run": "failed" },
+    { "required_context": "container-build", "run": "failed" },
+    { "required_context": "lint-workflows", "run": "failed" },
+    { "required_context": "governance / Workflow security linter", "run": "failed" },
+    { "required_context": "governance / Well-Known (RFC 9116 + RSR)", "run": "failed" },
+    { "required_context": "governance / Licence consistency", "run": "passed" },
+    { "required_context": "governance / Code quality + docs", "run": "passed" },
+    { "required_context": "governance / Security policy checks", "run": "passed" },
+    { "required_context": "scan / Hypatia Neurosymbolic Analysis", "run": "passed" },
+    { "required_context": "antipattern-check", "run": "passed" },
+    { "required_context": "lint", "run": "passed" },
+    { "required_context": "docs", "run": "passed" }
+  ]
+}
