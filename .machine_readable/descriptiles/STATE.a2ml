@@ -12,7 +12,7 @@ status = "active"  # active | paused | archived
 [project-context]
 name = "cicd-squabbler"
 purpose = "CI/CD gate fighter: drives a stuck branch-protection gate to a legitimately-satisfied green by satisfying its required checks — never by admin override, enforce_admins toggle, or removing/renaming a required context. Rust fight engine + SPARK-proved gate invariant. Detachable; no hypatia/estate dependency."
-completion-percentage = 88
+completion-percentage = 92
 
 [position]
 phase = "implementation"   # design | implementation | testing | maintenance | archived
@@ -28,8 +28,10 @@ milestones = [
   { name = "Call-in-the-big-guns — Moves 8-9 (EscalateToExpert → hypatia/fleet/echidna/security groups; AssignGateOwner → owned-upstream / misconfigured-gate / should-be-added-to-ci). Both non-satisfying by construction; SPARK invariant untouched.", completion = 100 },
   { name = "Ecosystem-context reader (host-only a2ml/k9 → RepoContext; fail-safe, never a core dependency)", completion = 100 },
   { name = "`squabble fight` orchestration — classifies each red as self-win | escalate | assign-owner via workflow ground-truth; first binary to emit an Outcome/Report evidence manifest. Proven on ipv6-only#43 (5 reds classified).", completion = 100 },
-  { name = "squabble-app GitHub App webhook server (currently an honest stub — exits EX_UNAVAILABLE rather than fake OK)", completion = 20 },
-  { name = "boj-server client + cicd-squabbler-mcp cartridge + specialist expert groups (escalations become live hypatia/fleet/echidna calls) — designed, deferred to next push; EscalateToExpert is the seam", completion = 0 },
+  { name = "Shared fight planner extracted to squabble-fight crate (context reader + workflow ground-truth + planner) so the CLI and the App serve one brain and cannot drift", completion = 100 },
+  { name = "squabble-app loopback HTTP backend (axum, 127.0.0.1:7741): /health, /api/v1/diagnose, /api/v1/fight — the process the cicd-squabbler-mcp cartridge proxies to. The GitHub App *webhook* leg (check_run.requested_action + octocrab) remains honestly absent (no webhook route registered).", completion = 100 },
+  { name = "boj-server expert client (feature `boj`, ureq; default build gains zero deps): `squabble fight --summon` maps each EscalateToExpert to its cartridge (Security→panic-attack-mcp, Proof→echidna-llm-mcp, Hypatia*→hypatia-mcp; dispatch-fix recorded as assessed+tracked, actuation external — no fixer cartridge exists). Fail-closed on unreachable experts; loud refusal when built without the feature.", completion = 100 },
+  { name = "cicd-squabbler-mcp cartridge (boj-server-cartridges cartridges/domains/ci-cd/): squabble_fight + squabble_diagnose tools, mod.js proxy to SQUABBLE_BACKEND_URL, no ffi block (JS dispatch path)", completion = 100 },
   { name = "RSR scaffolding customisation (identity, root-allow, A2ML manifests)", completion = 80 },
 ]
 
@@ -39,8 +41,8 @@ milestones = [
 
 [critical-next-actions]
 actions = [
-  "Wire the escalation seam to boj-server: a feature-gated MCP/REST client + a cicd-squabbler-mcp cartridge, so EscalateToExpert calls hypatia-mcp/fleet-mcp/echidna live (specialist groups: Hypatia, Hypatia+Fleet, Proof, Security). Fail-closed if unreachable.",
-  "Implement `squabble fight --apply` (and the squabble-app webhook) so self-win moves are enacted + re-run, not only planned.",
+  "Implement `squabble fight --apply` (and the squabble-app GitHub App webhook leg: check_run.requested_action + octocrab) so self-win moves are enacted + re-run, not only planned.",
+  "Live-fire --summon against a running boj-server with the expert backends up (hypatia :7701, panic-attack, echidna) — today's verification proves the wiring + fail-closed degradation; the experts themselves are not yet deployed.",
   "Extend the SPARK invariant to cover the licence-policy gate class (v0.2; v0.1 moves are Rust-only for that class).",
   "Register the CLADE (uuid 38bec2ed-bb12-44ee-9fb4-08872370c27b) into hyperpolymath/gv-clade-index (owner action).",
 ]

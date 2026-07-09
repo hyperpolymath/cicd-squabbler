@@ -9,10 +9,10 @@
 //! implementation step (see docs/CHARTER.adoc) — this binary fails loudly
 //! rather than pretending to land anything.
 
-mod context;
+#[cfg(feature = "boj")]
+mod boj;
 mod fetch;
 mod fight;
-mod workflows;
 
 use squabble_core::{diagnose, gate::Gate};
 use std::process::ExitCode;
@@ -45,7 +45,7 @@ fn main() -> ExitCode {
                  USAGE:\n  \
                  squabble fetch <owner>/<repo> <pr-number>\n  \
                  squabble diagnose <gate.json>\n  \
-                 squabble fight <owner>/<repo> <pr> [--repo-root <path>] [--gate <file>] [--json]\n  \
+                 squabble fight <owner>/<repo> <pr> [--repo-root <path>] [--gate <file>] [--json] [--summon]\n  \
                  squabble --version\n",
                 env!("CARGO_PKG_VERSION")
             );
