@@ -14,7 +14,14 @@ rust-version.workspace = true
 name = "squabble"
 path = "src/main.rs"
 
+[features]
+# Optional boj-server expert client (`squabble fight --summon`). Off by
+# default so the standard build stays dependency-light and detachable.
+boj = ["dep:ureq"]
+
 [dependencies]
 squabble-core = { workspace = true }
+squabble-fight = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+ureq = { version = "2", features = ["json"], optional = true }

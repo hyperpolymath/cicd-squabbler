@@ -20,10 +20,13 @@ pub mod outcome;
 
 use gate::{Gate, GateState};
 use moves::{LicenceFinding, Move};
+use serde::{Deserialize, Serialize};
 
 /// A diagnosis: the current gate state plus a proposed legitimate move per
 /// unsatisfied requirement. The host decides whether to apply them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Serialisable so hosts (CLI `--json`, the App's HTTP API) can emit it as
+/// part of the evidence trail.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diagnosis {
     pub state: GateState,
     pub proposed: Vec<Move>,

@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 #
-# squabble-app — the GitHub App front-end. v0.1 is an HONEST STUB: the axum
-# webhook server + octocrab client are the next implementation step and are NOT
-# yet wired (see docs/CHARTER.adoc "Trigger surface"). The planned dependencies
-# (axum, octocrab, tokio) are intentionally not declared yet so the workspace
-# builds fast and nothing claims to work that does not. Adding them is tracked
-# as the first squabble-app task.
+# squabble-app — the App front-end. As of Push #2 this is a REAL loopback HTTP
+# backend (axum): it serves the shared `squabble-fight` planner on
+# 127.0.0.1:7741 so the boj-server `cicd-squabbler-mcp` cartridge (a Deno
+# gateway that may only `fetch()`, never spawn processes) can summon the
+# squabbler. The GitHub App *webhook* leg (check_run.requested_action +
+# octocrab auth) remains the next step and is still honestly absent — the
+# server refuses to pretend otherwise (no webhook route is registered).
 [package]
 name = "squabble-app"
-description = "GitHub App front-end (axum webhook + octocrab) — STUB in v0.1; calls the same squabble-core."
+description = "squabble-app — loopback HTTP backend serving the shared fight planner (axum); GitHub App webhook leg still to come."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -23,3 +24,8 @@ path = "src/main.rs"
 
 [dependencies]
 squabble-core = { workspace = true }
+squabble-fight = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
