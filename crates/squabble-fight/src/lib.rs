@@ -40,6 +40,10 @@ use workflows::WorkflowFacts;
 /// The pure planning core: classify every unsatisfied check and assemble the
 /// [`Outcome`]. Pure over its inputs (no IO beyond the structural file probes,
 /// which are read-only), so it is the unit of test coverage.
+///
+/// Prefer [`plan_at_root`] (or [`plan_ungrounded`]) from hosts — this is the
+/// pure seam for a host that manages its own context/facts loading (e.g. to
+/// cache them); it does not guarantee those inputs match `repo_root`.
 pub fn plan(
     gate: &Gate,
     slug: &str,
@@ -85,15 +89,22 @@ pub fn plan(
     // 3. Structural scan: surface latent issues that are not themselves a
     //    required check but belong in the debate (missing well-known files, the
     //    path-filter trap, a banned AGPL licence label).
-    structural_scan(
-        repo_root,
-        slug,
-        context,
-        &unsatisfied,
-        facts,
-        &mut escalations,
-        &mut owner_assignments,
-    );
+    let (extra_escalations, extra_owner_assignments) =
+        structural_scan(repo_root, slug, context, &unsatisfied, facts);
+    escalations.extend(extra_escalations);
+    owner_assignments.extend(extra_owner_assignments);
+
+    // Honesty about the ground the plan stands on: if neither a2ml context nor
+    // any workflow could be read, every classification above fell back to
+    // name-only heuristics. Say so explicitly — a confident-looking manifest
+    // computed against an absent filesystem would be silent evidence loss.
+    if !context.found && facts.workflows.is_empty() {
+        blockers.push(format!(
+            "ground-truth absent under `{}`: no .machine_readable/ descriptiles or \
+             .github/workflows found — classification is name-only conservative",
+            repo_root.display()
+        ));
+    }
 
     let summary = format!(
         "gate {state:?}: {} unsatisfied — {} self-win, {} escalated, {} owner-assigned",
@@ -112,6 +123,7 @@ pub fn plan(
             moves_attempted,
             escalations,
             owner_assignments,
+            expert_verdicts: Vec::new(),
             blockers,
         },
     }
@@ -128,17 +140,34 @@ pub fn plan_at_root(gate: &Gate, slug: &str, repo_root: &Path) -> (RepoContext, 
     (context, outcome)
 }
 
-/// Read-only probes for latent structural issues worth putting into the debate.
-#[allow(clippy::too_many_arguments)]
+/// Plan with **no filesystem at all** — for hosts serving callers that have no
+/// local checkout (e.g. the App handling a cartridge request without
+/// `repo_root`). Deliberately does NOT probe the process's own working
+/// directory: reading whatever tree the daemon happens to be launched from
+/// would silently mis-attribute evidence to the wrong repo. The resulting
+/// report carries an explicit "ground-truth absent" blocker.
+pub fn plan_ungrounded(gate: &Gate, slug: &str) -> Outcome {
+    plan(
+        gate,
+        slug,
+        Path::new("(no repo_root supplied)"),
+        &RepoContext::default(),
+        &WorkflowFacts::default(),
+    )
+}
+
+/// Read-only probes for latent structural issues worth putting into the
+/// debate. A pure producer: returns what it found rather than appending to
+/// caller-owned vectors.
 fn structural_scan(
     repo_root: &Path,
     slug: &str,
     context: &RepoContext,
     unsatisfied: &[squabble_core::gate::RequiredCheck],
     facts: &WorkflowFacts,
-    escalations: &mut Vec<Escalation>,
-    owner_assignments: &mut Vec<OwnerAssignment>,
-) {
+) -> (Vec<Escalation>, Vec<OwnerAssignment>) {
+    let mut escalations = Vec::new();
+    let mut owner_assignments = Vec::new();
     let names: Vec<&str> = unsatisfied
         .iter()
         .map(|c| c.required_context.as_str())
@@ -178,7 +207,7 @@ fn structural_scan(
     for w in &facts.workflows {
         if w.path_filtered && is_gate_like(&w.file, w.name.as_deref()) {
             let check = w.name.clone().unwrap_or_else(|| w.file.clone());
-            if already_owned(owner_assignments, &check) {
+            if already_owned(&owner_assignments, &check) {
                 continue;
             }
             owner_assignments.push(OwnerAssignment {
@@ -213,6 +242,8 @@ fn structural_scan(
             }
         }
     }
+
+    (escalations, owner_assignments)
 }
 
 /// Whether a workflow file looks like an estate compliance gate (so a path
@@ -350,14 +381,39 @@ mod tests {
     #[test]
     fn plan_at_root_is_fail_safe_on_missing_root() {
         // A nonexistent repo root must not error: loaders yield empty context
-        // and facts, and the planner falls back to conservative core defaults.
+        // and facts, the planner falls back to conservative core defaults, AND
+        // the report says out loud that the ground-truth was absent.
         let gate = pr43_gate();
         let (ctx, out) = plan_at_root(&gate, "hyperpolymath/ipv6-only", Path::new("/nonexistent"));
         assert!(!ctx.found);
         let Outcome::Red { report } = out else {
             panic!("expected Red plan");
         };
-        // Every unsatisfied check is accounted for — no silent skip.
-        assert_eq!(report.blockers.len(), report.unsatisfied.len());
+        // Every unsatisfied check is accounted for, plus the honesty blocker.
+        assert_eq!(report.blockers.len(), report.unsatisfied.len() + 1);
+        assert!(report
+            .blockers
+            .iter()
+            .any(|b| b.contains("ground-truth absent")));
+    }
+
+    #[test]
+    fn plan_ungrounded_never_reads_the_cwd() {
+        // The ungrounded entry point must not graft the daemon's own working
+        // directory onto a fight for an unrelated repo: no structural findings
+        // from the local tree, and the absent-ground-truth blocker present.
+        let gate = pr43_gate();
+        let Outcome::Red { report } = plan_ungrounded(&gate, "hyperpolymath/ipv6-only") else {
+            panic!("expected Red plan");
+        };
+        assert!(report
+            .blockers
+            .iter()
+            .any(|b| b.contains("ground-truth absent")));
+        // The AGPL/path-filter probes found nothing because nothing was read.
+        assert!(!report
+            .owner_assignments
+            .iter()
+            .any(|o| matches!(&o.disposition, OwnershipDisposition::MisconfiguredGate { detail } if detail.contains("AGPL"))));
     }
 }

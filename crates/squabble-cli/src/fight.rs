@@ -25,7 +25,8 @@ struct FightArgs {
     summon: bool,
 }
 
-const USAGE: &str = "usage: squabble fight <owner>/<repo> <pr> [--repo-root <path>] [--gate <file>] [--json] [--summon]";
+// Shared with the top-level help in main.rs so the two cannot drift.
+pub(crate) const USAGE: &str = "usage: squabble fight <owner>/<repo> <pr> [--repo-root <path>] [--gate <file>] [--json] [--summon]";
 
 /// Entry point for `squabble fight`; `rest` is the args after the subcommand.
 pub fn run(rest: &[String]) -> ExitCode {
@@ -45,15 +46,24 @@ pub fn run(rest: &[String]) -> ExitCode {
         }
     };
 
+    // `mut` is only exercised by the boj build (summon appends evidence).
+    #[cfg_attr(not(feature = "boj"), allow(unused_mut))]
     let (context, mut outcome) = squabble_fight::plan_at_root(&gate, &args.slug, &args.repo_root);
 
     if args.summon {
-        if let Err(e) = summon(&mut outcome, &args.repo_root) {
-            // Fail loudly, not silently: a summon that cannot run at all is a
-            // usage/build error, not a degraded expert call.
-            eprintln!("squabble fight --summon: {e}");
+        // Without the `boj` feature there is no client compiled in. Refusing
+        // loudly honours `no-silent-skip`: pretending to summon would be
+        // worse than failing.
+        #[cfg(not(feature = "boj"))]
+        {
+            eprintln!(
+                "squabble fight --summon: this build has no boj-server client — \
+                 rebuild with `--features boj` to summon experts"
+            );
             return ExitCode::from(2);
         }
+        #[cfg(feature = "boj")]
+        crate::boj::summon(&mut outcome, &args.repo_root);
     }
 
     print_human(&args.slug, &context, &outcome);
@@ -68,24 +78,6 @@ pub fn run(rest: &[String]) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
-}
-
-/// Turn each escalation into a live expert call via boj-server, folding the
-/// verdict (or the fail-closed unreachability evidence) into the report.
-#[cfg(feature = "boj")]
-fn summon(outcome: &mut Outcome, repo_root: &std::path::Path) -> Result<(), String> {
-    crate::boj::summon(outcome, repo_root);
-    Ok(())
-}
-
-/// Without the `boj` feature there is no client compiled in. Refusing loudly
-/// honours `no-silent-skip`: pretending to summon would be worse than failing.
-#[cfg(not(feature = "boj"))]
-fn summon(_outcome: &mut Outcome, _repo_root: &std::path::Path) -> Result<(), String> {
-    Err(
-        "this build has no boj-server client — rebuild with `--features boj` to summon experts"
-            .to_string(),
-    )
 }
 
 fn load_gate(args: &FightArgs) -> Result<Gate, String> {
