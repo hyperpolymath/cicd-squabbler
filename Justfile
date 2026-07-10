@@ -130,9 +130,12 @@ clean-all: clean
 # TEST & QUALITY
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Run all tests
+# Run all tests — including the feature-gated boj expert client, which the
+# plain --workspace run never compiles (the golden path must cover it or a
+# break in `--summon` ships silently).
 test *args:
     cargo test --workspace {{args}}
+    cargo test -p squabble-cli --features boj {{args}}
 
 # Run tests with verbose output
 test-verbose:

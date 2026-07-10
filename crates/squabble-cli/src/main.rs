@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
-//! `squabble` — the CLI front-end to `squabble-core`.
+//! `squabble` — the CLI front-end to the squabbler.
 //!
-//! v0.1 surface: `squabble fetch <owner/repo> <pr>` turns a live PR into a
-//! gate (via `gh`); `squabble diagnose <gate.json>` reads a gate description
-//! (from `fetch`, or hand-written) and prints the state plus the legitimate
-//! moves the pure engine proposes. Applying a move is still the next
-//! implementation step (see docs/CHARTER.adoc) — this binary fails loudly
-//! rather than pretending to land anything.
+//! Surface: `squabble fetch <owner/repo> <pr>` turns a live PR into a gate
+//! (via `gh`); `squabble diagnose <gate.json>` prints the pure engine's
+//! state + proposed legitimate moves; `squabble fight` runs the shared
+//! planner from `squabble-fight` (the same brain `squabble-app` serves) and,
+//! with `--summon` (feature `boj`), makes live loopback HTTP calls to
+//! boj-server (`BOJ_URL`, default localhost:7700) to put expert verdicts on
+//! the report — the CLI's only network I/O beyond `gh`. Applying a move is
+//! still the next implementation step (see docs/CHARTER.adoc) — this binary
+//! fails loudly rather than pretending to land anything.
 
 #[cfg(feature = "boj")]
 mod boj;
@@ -40,14 +43,17 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         _ => {
+            // fight's flag list comes from fight::USAGE so the two help
+            // surfaces cannot drift.
             eprintln!(
                 "squabble {} — CI/CD fighter (squabble ≠ bypass)\n\n\
                  USAGE:\n  \
                  squabble fetch <owner>/<repo> <pr-number>\n  \
                  squabble diagnose <gate.json>\n  \
-                 squabble fight <owner>/<repo> <pr> [--repo-root <path>] [--gate <file>] [--json] [--summon]\n  \
+                 squabble {}\n  \
                  squabble --version\n",
-                env!("CARGO_PKG_VERSION")
+                env!("CARGO_PKG_VERSION"),
+                fight::USAGE.trim_start_matches("usage: squabble ")
             );
             ExitCode::from(2)
         }

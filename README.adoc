@@ -13,11 +13,14 @@ A standalone, per-repo CI/CD fighter that drives a stuck pipeline to a
 *legitimate* green — or improves red→yellow, or fails and hands the human a
 structured report. It *wins* the gate; it never cheats past it.
 
-NOTE: Status — *v0.1 in active development (updated 2026-07-01).* The engine and
+NOTE: Status — *v0.1 in active development (updated 2026-07-03).* The engine and
 its formal invariant are real and verified (see below); live gate fetch via `gh`
-landed in #6. Still open: the `squabble apply` plumbing (moves are proposed, not
-yet executed) and the GitHub App webhook server (honest stub pending the owner's
-hosting decision). See `docs/CHARTER.adoc` for the design and open owner decisions.
+landed in #6; `squabble fight` (classify each red as self-win | escalate |
+assign-owner), the `squabble-app` loopback HTTP backend, and the boj-server
+expert summoning (`--summon`, feature `boj`) landed in #13. Still open: the
+`squabble apply` plumbing (moves are proposed, not yet executed) and the GitHub
+App *webhook* leg (pending the owner's hosting decision). See
+`docs/CHARTER.adoc` for the design and open owner decisions.
 
 == Core principle: squabble ≠ bypass
 
@@ -36,8 +39,9 @@ check away, or any override are provably *not* paths to green.
 [cols="1,3"]
 |===
 | `crates/squabble-core` | The fight engine. Pure, detachable, no hypatia/estate dependency — `diagnose → propose move → apply → verify-satisfied`. The valuable reusable part.
-| `crates/squabble-cli`  | `squabble` — runs locally or as a CI step. `squabble diagnose <gate.json>` today; git/`gh` apply plumbing next.
-| `crates/squabble-app`  | GitHub App (axum webhook + octocrab). *Stub in v0.1.* Delivers the trigger button; calls the same `squabble-core`.
+| `crates/squabble-fight`| The shared host brain: a2ml ecosystem-context reader + workflow ground-truth + the fight planner. One planner for the CLI and the App, so they cannot drift.
+| `crates/squabble-cli`  | `squabble` — runs locally or as a CI step. `fetch`, `diagnose`, and `fight` (with `--summon` under the `boj` feature to put expert verdicts on the report); apply plumbing next.
+| `crates/squabble-app`  | The loopback HTTP backend (axum, `127.0.0.1:7741`): serves the shared planner to the boj-server `cicd-squabbler-mcp` cartridge. The GitHub App *webhook* leg (trigger button + octocrab) is still to come — no webhook route is registered.
 | `spark/`               | The formal heart. `Gate_Machine` + the proved theorem `green ⇔ (non-empty ∧ all passed)`.
 |===
 

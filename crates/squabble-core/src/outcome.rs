@@ -56,8 +56,35 @@ pub struct Report {
     /// should be in CI, are misconfigured, or are owned by an upstream repo.
     #[serde(default)]
     pub owner_assignments: Vec<OwnerAssignment>,
+    /// Full-fidelity results of summoning experts for escalations (one entry
+    /// per expert call, success or failure). Typed so no evidence is lost to
+    /// prose truncation and downstream consumers can parse verdicts back out;
+    /// the escalation's `evidence` string carries only the human narration.
+    #[serde(default)]
+    pub expert_verdicts: Vec<ExpertVerdict>,
     /// Why each remaining requirement could not be satisfied legitimately.
     pub blockers: Vec<String>,
+}
+
+/// One expert call made while summoning, recorded verbatim. `ok` follows the
+/// fail-closed rule: it is `true` only when the expert both responded AND its
+/// body carries no error signal — transport success alone is not a verdict.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpertVerdict {
+    /// The required-context the escalation concerns.
+    pub check: String,
+    /// The cartridge/service that was summoned (host-side identifier).
+    pub cartridge: String,
+    /// The tool invoked on it.
+    pub tool: String,
+    /// Whether the call genuinely succeeded (transport AND body).
+    pub ok: bool,
+    /// Honest framing of what a success *means* (no overclaim — e.g.
+    /// "assessment only, actuation external").
+    pub meaning: String,
+    /// The raw response body (JSON text) on success, or the failure
+    /// description. Never truncated.
+    pub verdict: String,
 }
 
 /// A hand-off of one red to a specialist [`ExpertGroup`] — the typed projection
@@ -182,6 +209,14 @@ mod tests {
                 },
                 rationale: "reusable".into(),
             }],
+            expert_verdicts: vec![ExpertVerdict {
+                check: "lint-shell".into(),
+                cartridge: "panic-attack-mcp".into(),
+                tool: "panic_attack_scan".into(),
+                ok: true,
+                meaning: "weak-point scan".into(),
+                verdict: r#"{"findings":[]}"#.into(),
+            }],
             blockers: vec![],
         };
         let json = serde_json::to_string(&report).expect("serialise");
@@ -191,11 +226,12 @@ mod tests {
 
     #[test]
     fn report_deserialises_without_new_sections_for_back_compat() {
-        // Older reports had no escalations/owner_assignments; #[serde(default)]
-        // must keep them parseable.
+        // Older reports had no escalations/owner_assignments/expert_verdicts;
+        // #[serde(default)] must keep them parseable.
         let legacy = r#"{"summary":"x","unsatisfied":[],"moves_attempted":[],"blockers":[]}"#;
         let report: Report = serde_json::from_str(legacy).expect("legacy parse");
         assert!(report.escalations.is_empty());
         assert!(report.owner_assignments.is_empty());
+        assert!(report.expert_verdicts.is_empty());
     }
 }

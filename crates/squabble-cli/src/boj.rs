@@ -15,21 +15,32 @@
 //! Loopback callers bypass boj's trust enforcement, so no auth headers are
 //! needed for a co-located client.
 //!
+//! **Why an in-process HTTP client here when `fetch.rs` deliberately shells
+//! out to `gh` instead?** A deliberate, scoped reversal: this leg needs
+//! structured error handling (transport vs HTTP-status vs error-shaped-body
+//! are three different fail-closed outcomes below) and safe JSON bodies,
+//! which a `curl` subprocess makes brittle. The reversal is contained by the
+//! feature gate — the default build compiles this module out entirely, so
+//! `fetch.rs`'s "no HTTP client dependency" stance still holds for it.
+//!
 //! Design constraints honoured here:
 //!
 //! * **Host-only, feature-gated.** `squabble-core` must never depend on boj
-//!   (detachability is the product identity); the default build compiles this
-//!   module out entirely and gains zero dependencies.
-//! * **Fail-closed, no silent skip** (`AGENTIC.a2ml`): an unreachable server
-//!   or expert *appends evidence* to the escalation — the hand-off stands and
-//!   the failure is recorded; nothing is dropped and nothing is faked.
+//!   (detachability is the product identity).
+//! * **Fail-closed, no silent skip** (`AGENTIC.a2ml`): an unreachable server,
+//!   a failing expert, *or a 200 whose body carries an error signal* records
+//!   an explicit failure — the hand-off stands, nothing is dropped, nothing
+//!   is faked. Transport success alone is never reported as a verdict.
 //! * **No overclaim** (doctrine #10): `dispatch-fix` has no single actuator
 //!   cartridge today (fleet-mcp tracks, it does not fix), so a dispatch is
-//!   recorded as *assessed + tracked, actuation external* — never as "a fix
-//!   was applied" or "a PR was opened".
+//!   recorded as *assessed, actuation external* — never as "a fix was
+//!   applied" or "a PR was opened".
+//! * **Full-fidelity evidence**: every call is recorded verbatim as a typed
+//!   [`ExpertVerdict`] on the report (never truncated); the escalation's
+//!   `evidence` string carries only a short human narration.
 
-use squabble_core::moves::{EscalationKind, ExpertGroup};
-use squabble_core::outcome::{Escalation, Outcome};
+use squabble_core::moves::ExpertGroup;
+use squabble_core::outcome::{Escalation, ExpertVerdict, Outcome};
 use std::path::Path;
 use std::time::Duration;
 
@@ -63,8 +74,14 @@ impl BojClient {
             .map_err(|e| format!("boj-server /health returned non-JSON: {e}"))
     }
 
-    /// `POST /cartridge/<name>/invoke {"tool", "arguments"}` → the cartridge's
-    /// result object (returned unwrapped by the router on 200).
+    /// `POST /cartridge/<name>/invoke {"tool", "arguments"}`.
+    ///
+    /// The boj router returns the cartridge's result object **unwrapped** on
+    /// HTTP 200 — including cartridge-level *failures* (the gateway pattern
+    /// emits `{status: 503, data: {error: ...}}` and the router forwards the
+    /// inner object). So a 200 is not a verdict: the body is inspected for
+    /// the estate error shapes (`error` key, `success: false`) and those are
+    /// returned as `Err`, keeping the summon fail-closed end to end.
     pub fn invoke(
         &self,
         cartridge: &str,
@@ -74,19 +91,34 @@ impl BojClient {
         let url = format!("{}/cartridge/{cartridge}/invoke", self.base);
         let body = serde_json::json!({ "tool": tool, "arguments": arguments });
         match self.agent.post(&url).send_json(body) {
-            Ok(resp) => resp
-                .into_json()
-                .map_err(|e| format!("`{cartridge}/{tool}` returned non-JSON: {e}")),
+            Ok(resp) => {
+                let v: serde_json::Value = resp
+                    .into_json()
+                    .map_err(|e| format!("`{cartridge}/{tool}` returned non-JSON: {e}"))?;
+                if let Some(err) = body_error(&v) {
+                    return Err(format!("`{cartridge}/{tool}` reported failure: {err}"));
+                }
+                Ok(v)
+            }
             Err(ureq::Error::Status(code, resp)) => {
                 let detail = resp.into_string().unwrap_or_default();
-                Err(format!(
-                    "`{cartridge}/{tool}` failed: HTTP {code} {}",
-                    truncate(&detail, 200)
-                ))
+                Err(format!("`{cartridge}/{tool}` failed: HTTP {code} {detail}"))
             }
             Err(e) => Err(format!("`{cartridge}/{tool}` unreachable: {e}")),
         }
     }
+}
+
+/// Detect the estate error shapes in an otherwise-200 body: a top-level
+/// `error` field, or `success: false`. Returns the error description.
+fn body_error(v: &serde_json::Value) -> Option<String> {
+    if let Some(err) = v.get("error") {
+        return Some(err.to_string());
+    }
+    if v.get("success") == Some(&serde_json::Value::Bool(false)) {
+        return Some(v.to_string());
+    }
+    None
 }
 
 /// One concrete expert call derived from an escalation.
@@ -98,18 +130,21 @@ struct ExpertCall {
     meaning: &'static str,
 }
 
-/// Map an escalation to the cartridge tool call(s) for its specialist group.
-/// The routing is deliberately host-side data, not core types.
-fn route(e: &Escalation, repo_root: &Path) -> Vec<ExpertCall> {
-    let path = repo_root.display().to_string();
-    match (e.group, e.obligation) {
-        (ExpertGroup::Security, _) | (_, EscalationKind::Scan) => vec![ExpertCall {
+/// Map an escalation to the cartridge tool call for its specialist group.
+///
+/// **Group is primary**: the planner already chose the specialist; the
+/// obligation never reroutes to a different one (a HypatiaFleet escalation
+/// with a `scan` obligation is still hypatia's case, possibly *using* a
+/// scan). The routing is deliberately host-side data, not core types.
+fn route(e: &Escalation, repo_path: &str) -> ExpertCall {
+    match e.group {
+        ExpertGroup::Security => ExpertCall {
             cartridge: "panic-attack-mcp",
             tool: "panic_attack_scan",
-            arguments: serde_json::json!({ "path": path }),
+            arguments: serde_json::json!({ "path": repo_path }),
             meaning: "weak-point scan",
-        }],
-        (ExpertGroup::Proof, _) | (_, EscalationKind::VerifyClaim) => vec![ExpertCall {
+        },
+        ExpertGroup::Proof => ExpertCall {
             cartridge: "echidna-llm-mcp",
             tool: "consult",
             arguments: serde_json::json!({
@@ -119,22 +154,23 @@ fn route(e: &Escalation, repo_root: &Path) -> Vec<ExpertCall> {
                 )
             }),
             meaning: "proof consultation",
-        }],
-        // Hypatia / HypatiaFleet, assess or dispatch: hypatia assesses; the
-        // fleet cartridge only *tracks* gate results. Actuation (fix + PR) has
-        // no cartridge today and stays external — recorded as such.
-        (ExpertGroup::Hypatia | ExpertGroup::HypatiaFleet, _) => vec![ExpertCall {
+        },
+        // Hypatia / HypatiaFleet: hypatia assesses; the fleet cartridge only
+        // *tracks* gate results. Actuation (fix + PR) has no cartridge today
+        // and stays external — recorded as such.
+        ExpertGroup::Hypatia | ExpertGroup::HypatiaFleet => ExpertCall {
             cartridge: "hypatia-mcp",
             tool: "hypatia_scan_repo",
-            arguments: serde_json::json!({ "path": path }),
+            arguments: serde_json::json!({ "path": repo_path }),
             meaning: "hypatia assessment (actuation external — no fixer cartridge yet)",
-        }],
+        },
     }
 }
 
 /// Execute every escalation's expert call, folding verdicts (or fail-closed
 /// unreachability evidence) back into the report. Never removes or downgrades
-/// an escalation: a summon can only *add* evidence.
+/// an escalation: a summon can only *add* evidence, and never changes the
+/// outcome colour.
 pub fn summon(outcome: &mut Outcome, repo_root: &Path) {
     let Outcome::Red { report } = outcome else {
         return;
@@ -146,9 +182,21 @@ pub fn summon(outcome: &mut Outcome, repo_root: &Path) {
         return;
     }
 
+    // Experts run as separate processes with their own working directories, so
+    // a relative path (the CLI's default is ".") would resolve against the
+    // WRONG tree over there — and panic-attack's contract requires an absolute
+    // path. Refuse to send garbage: no canonical path, no path-based calls.
+    let repo_path = std::fs::canonicalize(repo_root)
+        .map(|p| p.display().to_string())
+        .map_err(|e| {
+            format!(
+                "cannot canonicalize repo root `{}`: {e}",
+                repo_root.display()
+            )
+        });
+
     let client = BojClient::from_env();
-    let health = client.health();
-    if let Err(err) = &health {
+    if let Err(err) = client.health() {
         // Fail-closed: record once at the report level and on every
         // escalation, so no hand-off silently looks "attempted".
         report.blockers.push(format!("summon: {err}"));
@@ -159,50 +207,64 @@ pub fn summon(outcome: &mut Outcome, repo_root: &Path) {
         return;
     }
 
+    let mut verdicts = Vec::new();
     for e in &mut report.escalations {
-        for call in route(e, repo_root) {
-            match client.invoke(call.cartridge, call.tool, call.arguments) {
-                Ok(v) => {
-                    let compact = truncate(&v.to_string(), 400);
-                    e.evidence.push_str(&format!(
-                        " | summon {} `{}/{}`: {compact}",
-                        call.meaning, call.cartridge, call.tool
-                    ));
-                    report.blockers.push(format!(
-                        "summon `{}` → {}/{} ok ({})",
-                        e.check, call.cartridge, call.tool, call.meaning
-                    ));
-                }
-                Err(err) => {
-                    e.evidence.push_str(&format!(
-                        " | summon `{}/{}` failed: {err} — escalation stands, fail-closed",
-                        call.cartridge, call.tool
-                    ));
-                    report.blockers.push(format!(
-                        "summon `{}` → {}/{} FAILED: {err}",
-                        e.check, call.cartridge, call.tool
-                    ));
-                }
+        let repo_path = match &repo_path {
+            Ok(p) => p.as_str(),
+            Err(err) => {
+                e.evidence
+                    .push_str(&format!(" | summon skipped: {err} — fail-closed"));
+                report.blockers.push(format!("summon `{}`: {err}", e.check));
+                continue;
+            }
+        };
+        let call = route(e, repo_path);
+        match client.invoke(call.cartridge, call.tool, call.arguments) {
+            Ok(v) => {
+                e.evidence.push_str(&format!(
+                    " | summoned {} `{}/{}`: ok (full verdict in expert_verdicts)",
+                    call.meaning, call.cartridge, call.tool
+                ));
+                report.blockers.push(format!(
+                    "summon `{}` → {}/{} ok ({})",
+                    e.check, call.cartridge, call.tool, call.meaning
+                ));
+                verdicts.push(ExpertVerdict {
+                    check: e.check.clone(),
+                    cartridge: call.cartridge.to_string(),
+                    tool: call.tool.to_string(),
+                    ok: true,
+                    meaning: call.meaning.to_string(),
+                    verdict: v.to_string(),
+                });
+            }
+            Err(err) => {
+                e.evidence.push_str(&format!(
+                    " | summon `{}/{}` failed: {err} — escalation stands, fail-closed",
+                    call.cartridge, call.tool
+                ));
+                report.blockers.push(format!(
+                    "summon `{}` → {}/{} FAILED: {err}",
+                    e.check, call.cartridge, call.tool
+                ));
+                verdicts.push(ExpertVerdict {
+                    check: e.check.clone(),
+                    cartridge: call.cartridge.to_string(),
+                    tool: call.tool.to_string(),
+                    ok: false,
+                    meaning: call.meaning.to_string(),
+                    verdict: err,
+                });
             }
         }
     }
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        let mut cut = max;
-        while !s.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        format!("{}…", &s[..cut])
-    }
+    report.expert_verdicts.extend(verdicts);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use squabble_core::moves::EscalationKind;
     use squabble_core::outcome::Report;
 
     fn escalation(group: ExpertGroup, obligation: EscalationKind) -> Escalation {
@@ -215,24 +277,39 @@ mod tests {
     }
 
     #[test]
-    fn routing_maps_groups_to_expected_cartridges() {
-        let root = Path::new("/repo");
+    fn routing_is_group_primary() {
         let sec = route(
             &escalation(ExpertGroup::Security, EscalationKind::Scan),
-            root,
+            "/r",
         );
-        assert_eq!(sec[0].cartridge, "panic-attack-mcp");
+        assert_eq!(sec.cartridge, "panic-attack-mcp");
         let proof = route(
             &escalation(ExpertGroup::Proof, EscalationKind::VerifyClaim),
-            root,
+            "/r",
         );
-        assert_eq!(proof[0].cartridge, "echidna-llm-mcp");
-        let fleet = route(
-            &escalation(ExpertGroup::HypatiaFleet, EscalationKind::DispatchFix),
-            root,
-        );
-        assert_eq!(fleet[0].cartridge, "hypatia-mcp");
-        assert!(fleet[0].meaning.contains("actuation external"));
+        assert_eq!(proof.cartridge, "echidna-llm-mcp");
+        // The obligation must never reroute away from the planner's chosen
+        // specialist: HypatiaFleet stays hypatia's case even for scan/verify.
+        for obligation in [
+            EscalationKind::Scan,
+            EscalationKind::VerifyClaim,
+            EscalationKind::DispatchFix,
+            EscalationKind::AssessConfidence,
+        ] {
+            let fleet = route(&escalation(ExpertGroup::HypatiaFleet, obligation), "/r");
+            assert_eq!(fleet.cartridge, "hypatia-mcp");
+            assert!(fleet.meaning.contains("actuation external"));
+        }
+    }
+
+    #[test]
+    fn body_error_detects_estate_error_shapes() {
+        // The boj router unwraps cartridge failures into 200 bodies; both
+        // estate shapes must be caught or a hard miss records as "ok".
+        assert!(body_error(&serde_json::json!({"error": "ANTHROPIC_API_KEY not set"})).is_some());
+        assert!(body_error(&serde_json::json!({"success": false, "detail": "x"})).is_some());
+        assert!(body_error(&serde_json::json!({"success": true, "findings": []})).is_none());
+        assert!(body_error(&serde_json::json!({"findings": []})).is_none());
     }
 
     #[test]
@@ -247,6 +324,7 @@ mod tests {
                 moves_attempted: vec![],
                 escalations: vec![escalation(ExpertGroup::Security, EscalationKind::Scan)],
                 owner_assignments: vec![],
+                expert_verdicts: vec![],
                 blockers: vec![],
             },
         };
@@ -258,13 +336,5 @@ mod tests {
         assert!(report.escalations[0].evidence.contains("fail-closed"));
         assert!(report.blockers.iter().any(|b| b.starts_with("summon:")));
         std::env::remove_var("BOJ_URL");
-    }
-
-    #[test]
-    fn truncate_respects_char_boundaries() {
-        let s = "aé".repeat(300);
-        let t = truncate(&s, 401); // lands mid-'é' (2-byte) without the guard
-        assert!(t.ends_with('…'));
-        assert!(t.len() <= 405);
     }
 }

@@ -10,8 +10,9 @@
 //!
 //! Two deliberate design choices keep this honest and lightweight:
 //!
-//! * **Host-only.** This lives in `squabble-cli`, never in `squabble-core` —
-//!   the pure engine stays free of any estate/format dependency (detachability).
+//! * **Host-only.** This lives in `squabble-fight` (the shared host brain the
+//!   CLI and the App both call), never in `squabble-core` — the pure engine
+//!   stays free of any estate/format dependency (detachability).
 //! * **Fail-safe, not fail-open.** a2ml appears in more than one dialect across
 //!   the estate, and a target repo may have no `.machine_readable/` at all. So
 //!   this reader never errors: a missing file or unrecognised shape yields an
