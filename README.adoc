@@ -15,13 +15,17 @@ A standalone, per-repo CI/CD fighter that drives a stuck pipeline to a
 *legitimate* green — or improves red→yellow, or fails and hands the human a
 structured report. It *wins* the gate; it never cheats past it.
 
-NOTE: Status — *v0.1 in active development (updated 2026-07-03).* The engine and
+NOTE: Status — *v0.1 in active development (updated 2026-07-17).* The engine and
 its formal invariant are real and verified (see below); live gate fetch via `gh`
 landed in #6; `squabble fight` (classify each red as self-win | escalate |
 assign-owner), the `squabble-app` loopback HTTP backend, and the boj-server
-expert summoning (`--summon`, feature `boj`) landed in #13. Still open: the
-`squabble apply` plumbing (moves are proposed, not yet executed) and the GitHub
-App *webhook* leg (pending the owner's hosting decision). See
+expert summoning (`--summon`, feature `boj`) landed in #13. `squabble fight
+--apply` now *enacts* the first appliable self-win — stripping an `on.*.paths`
+trigger filter that strands a required check — by writing the workflow file
+(propose remains the default; `--apply` never commits, pushes, or re-runs CI).
+Still open: applying the other self-wins (required-context reconcile,
+reusable-workflow re-pin — these need the GitHub ruleset API / a target SHA) and
+the GitHub App *webhook* leg (pending the owner's hosting decision). See
 `docs/CHARTER.adoc` for the design and open owner decisions.
 
 == Core principle: squabble ≠ bypass
@@ -42,7 +46,7 @@ check away, or any override are provably *not* paths to green.
 |===
 | `crates/squabble-core` | The fight engine. Pure, detachable, no hypatia/estate dependency — `diagnose → propose move → apply → verify-satisfied`. The valuable reusable part.
 | `crates/squabble-fight`| The shared host brain: a2ml ecosystem-context reader + workflow ground-truth + the fight planner. One planner for the CLI and the App, so they cannot drift.
-| `crates/squabble-cli`  | `squabble` — runs locally or as a CI step. `fetch`, `diagnose`, and `fight` (with `--summon` under the `boj` feature to put expert verdicts on the report); apply plumbing next.
+| `crates/squabble-cli`  | `squabble` — runs locally or as a CI step. `fetch`, `diagnose`, and `fight` (with `--summon` under the `boj` feature to put expert verdicts on the report, and `--apply` to enact the path-filter self-win by editing the workflow — no commit/push).
 | `crates/squabble-app`  | The loopback HTTP backend (axum, `127.0.0.1:7741`): serves the shared planner to the boj-server `cicd-squabbler-mcp` cartridge. The GitHub App *webhook* leg (trigger button + octocrab) is still to come — no webhook route is registered.
 | `spark/`               | The formal heart. `Gate_Machine` + the proved theorem `green ⇔ (non-empty ∧ all passed)`.
 |===

@@ -325,6 +325,7 @@ mod tests {
                 escalations: vec![escalation(ExpertGroup::Security, EscalationKind::Scan)],
                 owner_assignments: vec![],
                 expert_verdicts: vec![],
+                applied: vec![],
                 blockers: vec![],
             },
         };

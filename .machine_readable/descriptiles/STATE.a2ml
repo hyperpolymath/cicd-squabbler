@@ -6,13 +6,13 @@
 [metadata]
 project = "cicd-squabbler"
 version = "0.1.0"
-last-updated = "2026-07-03"
+last-updated = "2026-07-17"
 status = "active"  # active | paused | archived
 
 [project-context]
 name = "cicd-squabbler"
 purpose = "CI/CD gate fighter: drives a stuck branch-protection gate to a legitimately-satisfied green by satisfying its required checks — never by admin override, enforce_admins toggle, or removing/renaming a required context. Rust fight engine + SPARK-proved gate invariant. Detachable; no hypatia/estate dependency."
-completion-percentage = 92
+completion-percentage = 93
 
 [position]
 phase = "implementation"   # design | implementation | testing | maintenance | archived
@@ -32,6 +32,7 @@ milestones = [
   { name = "squabble-app loopback HTTP backend (axum, 127.0.0.1:7741): /health, /api/v1/diagnose, /api/v1/fight — the process the cicd-squabbler-mcp cartridge proxies to. The GitHub App *webhook* leg (check_run.requested_action + octocrab) remains honestly absent (no webhook route registered).", completion = 100 },
   { name = "boj-server expert client (feature `boj`, ureq; default build gains zero deps): `squabble fight --summon` maps each EscalateToExpert to its cartridge (Security→panic-attack-mcp, Proof→echidna-llm-mcp, Hypatia*→hypatia-mcp; dispatch-fix recorded as assessed+tracked, actuation external — no fixer cartridge exists). Fail-closed on unreachable experts; loud refusal when built without the feature.", completion = 100 },
   { name = "cicd-squabbler-mcp cartridge (boj-server-cartridges cartridges/domains/ci-cd/): squabble_fight + squabble_diagnose tools, mod.js proxy to SQUABBLE_BACKEND_URL, no ffi block (JS dispatch path)", completion = 100 },
+  { name = "`squabble fight --apply` — enacts the first appliable self-win: strips an on.*.paths trigger filter that strands a required check (Missing-only classification), writing the workflow file. Fail-closed + idempotent + no commit/push/re-run; Outcome stays Red with an `applied` evidence section (no overclaim). Provably gate-strengthening (more coverage, never fewer) so the SPARK invariant is untouched. Other self-wins (context reconcile, reusable re-pin) stay propose-only pending the GitHub ruleset API.", completion = 100 },
   { name = "RSR scaffolding customisation (identity, root-allow, A2ML manifests)", completion = 80 },
 ]
 
@@ -41,7 +42,8 @@ milestones = [
 
 [critical-next-actions]
 actions = [
-  "Implement `squabble fight --apply` (and the squabble-app GitHub App webhook leg: check_run.requested_action + octocrab) so self-win moves are enacted + re-run, not only planned.",
+  "Enact the remaining self-wins under --apply: required-context reconcile and reusable-workflow re-pin both need the GitHub ruleset API / a target SHA (network), so they stay propose-only until that host capability exists. (`--apply` already enacts the path-filter strip, which is a pure local file edit.)",
+  "Add the squabble-app GitHub App webhook leg (check_run.requested_action + octocrab — the \"Squabble!\" button) so a fight can be triggered from a PR, not only from the CLI; still honestly absent (no webhook route registered).",
   "Live-fire --summon against a running boj-server with the expert backends up (hypatia :7701, panic-attack, echidna) — today's verification proves the wiring + fail-closed degradation; the experts themselves are not yet deployed.",
   "Extend the SPARK invariant to cover the licence-policy gate class (v0.2; v0.1 moves are Rust-only for that class).",
   "Register the CLADE (uuid 38bec2ed-bb12-44ee-9fb4-08872370c27b) into hyperpolymath/gv-clade-index (owner action).",

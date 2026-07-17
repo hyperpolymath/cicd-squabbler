@@ -25,6 +25,7 @@
 //! still-red gate is honestly reported as [`Outcome::Red`] carrying the full
 //! manifest rather than a faked green.
 
+pub mod apply;
 pub mod context;
 pub mod workflows;
 
@@ -33,7 +34,7 @@ use squabble_core::gate::Gate;
 use squabble_core::moves::{EscalationKind, ExpertGroup, Move, OwnershipDisposition};
 use squabble_core::outcome::{Escalation, Outcome, OwnerAssignment, Report};
 use squabble_core::{diagnose_with_hints, Diagnosis};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use workflows::WorkflowFacts;
 
@@ -53,10 +54,12 @@ pub fn plan(
 ) -> Outcome {
     let unsatisfied: Vec<_> = gate.unsatisfied().cloned().collect();
 
-    // 1. Per-check classification via workflow ground-truth → hints.
+    // 1. Per-check classification via workflow ground-truth → hints. The full
+    //    check (not just its name) is passed so the classifier can see the
+    //    realised run — the path-filter trap is a *Missing*-only diagnosis.
     let mut hints: HashMap<String, Move> = HashMap::new();
     for check in &unsatisfied {
-        if let Some(m) = facts.classify(&check.required_context, slug) {
+        if let Some(m) = facts.classify(check, slug) {
             hints.insert(check.required_context.clone(), m);
         }
     }
@@ -88,9 +91,24 @@ pub fn plan(
 
     // 3. Structural scan: surface latent issues that are not themselves a
     //    required check but belong in the debate (missing well-known files, the
-    //    path-filter trap, a banned AGPL licence label).
-    let (extra_escalations, extra_owner_assignments) =
-        structural_scan(repo_root, slug, context, &unsatisfied, facts);
+    //    path-filter trap, a banned AGPL licence label). Any workflow already
+    //    being self-won via an appliable InjectPathFilterPassThrough is excluded
+    //    so the same trap is not both "I'll fix it" and "someone should own it".
+    let selfwon_path_filter: HashSet<String> = moves_attempted
+        .iter()
+        .filter_map(|m| match m {
+            Move::InjectPathFilterPassThrough { workflow, .. } => Some(workflow.clone()),
+            _ => None,
+        })
+        .collect();
+    let (extra_escalations, extra_owner_assignments) = structural_scan(
+        repo_root,
+        slug,
+        context,
+        &unsatisfied,
+        facts,
+        &selfwon_path_filter,
+    );
     escalations.extend(extra_escalations);
     owner_assignments.extend(extra_owner_assignments);
 
@@ -124,6 +142,9 @@ pub fn plan(
             escalations,
             owner_assignments,
             expert_verdicts: Vec::new(),
+            // Propose-only: `plan` never writes. `squabble fight --apply` fills
+            // this in afterwards from `apply::apply_moves`.
+            applied: Vec::new(),
             blockers,
         },
     }
@@ -165,6 +186,7 @@ fn structural_scan(
     context: &RepoContext,
     unsatisfied: &[squabble_core::gate::RequiredCheck],
     facts: &WorkflowFacts,
+    selfwon_path_filter: &HashSet<String>,
 ) -> (Vec<Escalation>, Vec<OwnerAssignment>) {
     let mut escalations = Vec::new();
     let mut owner_assignments = Vec::new();
@@ -206,6 +228,11 @@ fn structural_scan(
         .unwrap_or_else(|| slug.to_string());
     for w in &facts.workflows {
         if w.path_filtered && is_gate_like(&w.file, w.name.as_deref()) {
+            // Already being fixed as an appliable self-win — don't also assign
+            // it an owner (that would contradict "I'll fix it").
+            if selfwon_path_filter.contains(&w.file) {
+                continue;
+            }
             let check = w.name.clone().unwrap_or_else(|| w.file.clone());
             if already_owned(&owner_assignments, &check) {
                 continue;
@@ -395,6 +422,52 @@ mod tests {
             .blockers
             .iter()
             .any(|b| b.contains("ground-truth absent")));
+    }
+
+    #[test]
+    fn missing_path_filtered_check_is_appliable_selfwin_not_owner_assigned() {
+        use squabble_core::gate::CheckRun;
+        use workflows::WorkflowKind;
+        // One Missing required check emitted by a path-filtered hygiene gate:
+        // the appliable path-filter strip is the self-win, and the same trap
+        // must NOT also be surfaced as an owner assignment (no contradiction).
+        let gate = Gate::new(vec![RequiredCheck::new(
+            "lint-workflows",
+            CheckRun::Missing,
+        )]);
+        let facts = WorkflowFacts {
+            workflows: vec![wf(
+                "workflow-linter.yml",
+                "Workflow Security Linter",
+                &["lint-workflows"],
+                &[],
+                true,
+                WorkflowKind::Hygiene,
+            )],
+        };
+        let out = plan(
+            &gate,
+            "hyperpolymath/ipv6-only",
+            Path::new("/nonexistent"),
+            &RepoContext::default(),
+            &facts,
+        );
+        let Outcome::Red { report } = out else {
+            panic!("expected Red plan");
+        };
+        assert!(report.moves_attempted.iter().any(|m| matches!(
+            m,
+            Move::InjectPathFilterPassThrough { workflow, .. } if workflow == "workflow-linter.yml"
+        )));
+        assert!(
+            !report
+                .owner_assignments
+                .iter()
+                .any(|o| o.check.contains("Workflow Security Linter")),
+            "a self-won path-filter trap must not also be owner-assigned"
+        );
+        // Nothing is applied by planning alone — `--apply` is a separate step.
+        assert!(report.applied.is_empty());
     }
 
     #[test]

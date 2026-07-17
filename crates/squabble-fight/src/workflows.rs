@@ -15,6 +15,7 @@
 //! returns `None`/`false` and the fight falls back to a conservative move —
 //! it never guesses a classification it cannot ground.
 
+use squabble_core::gate::{CheckRun, RequiredCheck};
 use squabble_core::moves::{EscalationKind, ExpertGroup, Move, OwnershipDisposition};
 use std::path::Path;
 
@@ -108,15 +109,20 @@ impl WorkflowFacts {
     /// engine's conservative default rather than guessing.
     ///
     /// `slug` is the current repo's `owner/repo`; a reusable workflow whose
-    /// `owner/repo` differs is owned upstream.
-    pub fn classify(&self, check: &str, slug: &str) -> Option<Move> {
-        let w = self.find_emitting(check)?;
+    /// `owner/repo` differs is owned upstream. The check's realised [`CheckRun`]
+    /// matters: the path-filter trap only manifests as a *Missing* check (the
+    /// workflow never triggered off-path), so the appliable pass-through move is
+    /// proposed only then — a check that actually ran and *Failed* is a
+    /// different problem the filter cannot explain.
+    pub fn classify(&self, check: &RequiredCheck, slug: &str) -> Option<Move> {
+        let name = check.required_context.as_str();
+        let w = self.find_emitting(name)?;
 
         // 1. Owned upstream: the job delegates to a reusable workflow living in
         //    another repo. The fix belongs there, not on this PR.
         if let Some(repo) = w.reusable_repos.iter().find(|r| r.as_str() != slug) {
             return Some(Move::AssignGateOwner {
-                check: check.to_string(),
+                check: name.to_string(),
                 owner: repo.clone(),
                 disposition: OwnershipDisposition::OwnedUpstream { repo: repo.clone() },
                 rationale: format!(
@@ -126,7 +132,24 @@ impl WorkflowFacts {
             });
         }
 
-        // 2. In-lane CI-configuration hygiene: the squabbler owns workflow
+        // 2. Path-filter trap → the one appliable self-win. A required check is
+        //    *Missing* (never created → gate Blocked) because its in-repo
+        //    workflow is path-filtered and this PR is off-path. The documented
+        //    estate fix (boj-server "CI / Required Status Checks") is to drop
+        //    the `on.*.paths` filter so the required check is always created.
+        //    This is strictly gate-*strengthening* — the check then runs on more
+        //    PRs, never fewer — so it can never be a bypass, and it is a pure
+        //    local file edit (`squabble fight --apply` can enact it with no
+        //    network). Gated on `Missing`: a check that ran and Failed did
+        //    trigger, so the filter is not its cause.
+        if w.path_filtered && matches!(check.run, CheckRun::Missing) {
+            return Some(Move::InjectPathFilterPassThrough {
+                check: name.to_string(),
+                workflow: w.file.clone(),
+            });
+        }
+
+        // 3. In-lane CI-configuration hygiene: the squabbler owns workflow
         //    config, but the concrete violation must be ground-truthed first.
         if w.kind == WorkflowKind::Hygiene {
             return Some(Move::GroundTruthCheckNames {
@@ -134,7 +157,7 @@ impl WorkflowFacts {
             });
         }
 
-        // 3. Out of lane → escalate to the matching specialist group. A
+        // 4. Out of lane → escalate to the matching specialist group. A
         //    `red→green code-fixer` is exactly what this repo IS-NOT.
         let (group, obligation, what) = match w.kind {
             WorkflowKind::CodeBuild => (
@@ -156,11 +179,11 @@ impl WorkflowFacts {
             WorkflowKind::Other | WorkflowKind::Hygiene => return None,
         };
         Some(Move::EscalateToExpert {
-            check: check.to_string(),
+            check: name.to_string(),
             group,
             obligation,
             evidence: format!(
-                "`{check}` runs in `{}` which {what} — out of the squabbler's CI-config lane",
+                "`{name}` runs in `{}` which {what} — out of the squabbler's CI-config lane",
                 w.file
             ),
         })
@@ -435,11 +458,15 @@ jobs:
         assert_eq!(w.kind, WorkflowKind::Hygiene);
     }
 
+    fn req(name: &str, run: CheckRun) -> RequiredCheck {
+        RequiredCheck::new(name, run)
+    }
+
     #[test]
     fn classify_reusable_check_as_owned_upstream() {
         let m = facts()
             .classify(
-                "governance / Well-Known (RFC 9116 + RSR)",
+                &req("governance / Well-Known (RFC 9116 + RSR)", CheckRun::Failed),
                 "hyperpolymath/ipv6-only",
             )
             .unwrap();
@@ -452,7 +479,10 @@ jobs:
     #[test]
     fn classify_codebuild_check_as_escalation() {
         let m = facts()
-            .classify("lint-shell", "hyperpolymath/ipv6-only")
+            .classify(
+                &req("lint-shell", CheckRun::Failed),
+                "hyperpolymath/ipv6-only",
+            )
             .unwrap();
         assert!(matches!(
             m,
@@ -465,16 +495,45 @@ jobs:
 
     #[test]
     fn classify_hygiene_check_stays_in_lane() {
+        // A hygiene check that ran and *Failed* is a real hygiene finding, not a
+        // path-filter strand: it stays in-lane as GroundTruthCheckNames even
+        // though its workflow is path-filtered.
         let m = facts()
-            .classify("lint-workflows", "hyperpolymath/ipv6-only")
+            .classify(
+                &req("lint-workflows", CheckRun::Failed),
+                "hyperpolymath/ipv6-only",
+            )
             .unwrap();
         assert!(matches!(m, Move::GroundTruthCheckNames { .. }));
     }
 
     #[test]
+    fn classify_missing_path_filtered_check_is_appliable_passthrough() {
+        // The same path-filtered workflow, but its required check never ran
+        // (Missing → gate Blocked): now the appliable self-win is to strip the
+        // filter so the required check is always created.
+        let m = facts()
+            .classify(
+                &req("lint-workflows", CheckRun::Missing),
+                "hyperpolymath/ipv6-only",
+            )
+            .unwrap();
+        match m {
+            Move::InjectPathFilterPassThrough { check, workflow } => {
+                assert_eq!(check, "lint-workflows");
+                assert_eq!(workflow, "workflow-linter.yml");
+            }
+            other => panic!("expected path-filter pass-through, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn unknown_check_is_unclassified() {
         assert!(facts()
-            .classify("something / nobody-emits", "hyperpolymath/ipv6-only")
+            .classify(
+                &req("something / nobody-emits", CheckRun::Failed),
+                "hyperpolymath/ipv6-only"
+            )
             .is_none());
     }
 }
