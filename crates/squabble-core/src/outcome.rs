@@ -62,8 +62,31 @@ pub struct Report {
     /// the escalation's `evidence` string carries only the human narration.
     #[serde(default)]
     pub expert_verdicts: Vec<ExpertVerdict>,
+    /// Concrete edits the squabbler wrote to the working tree while executing
+    /// self-win moves under `--apply` (propose-mode never writes, so this is
+    /// empty then). Applying a config edit does **not** make the gate green —
+    /// only a CI re-run can — so the [`Outcome`] stays [`Outcome::Red`] and this
+    /// section is the honest record of what changed on disk (`evidence-per-step`,
+    /// `no-overclaim`).
+    #[serde(default)]
+    pub applied: Vec<AppliedChange>,
     /// Why each remaining requirement could not be satisfied legitimately.
     pub blockers: Vec<String>,
+}
+
+/// One concrete edit the squabbler made to the working tree while executing a
+/// self-win move (only under `--apply`). It records *what* was written, never a
+/// claim that the gate improved: the gate's colour is a property of the checks'
+/// runs, and nothing here re-ran them. Nothing is committed or pushed — that
+/// outward-facing step is deliberately the operator's (doctrine #11, stop-first).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppliedChange {
+    /// The move kind this realises, e.g. `"inject-path-filter-pass-through"`.
+    pub move_kind: String,
+    /// Repo-relative path of the file edited.
+    pub file: String,
+    /// Human description of the concrete change made.
+    pub detail: String,
 }
 
 /// One expert call made while summoning, recorded verbatim. `ok` follows the
@@ -217,6 +240,11 @@ mod tests {
                 meaning: "weak-point scan".into(),
                 verdict: r#"{"findings":[]}"#.into(),
             }],
+            applied: vec![AppliedChange {
+                move_kind: "inject-path-filter-pass-through".into(),
+                file: ".github/workflows/wellknown-enforcement.yml".into(),
+                detail: "removed on.*.paths filter so the required check always runs".into(),
+            }],
             blockers: vec![],
         };
         let json = serde_json::to_string(&report).expect("serialise");
@@ -226,12 +254,13 @@ mod tests {
 
     #[test]
     fn report_deserialises_without_new_sections_for_back_compat() {
-        // Older reports had no escalations/owner_assignments/expert_verdicts;
-        // #[serde(default)] must keep them parseable.
+        // Older reports had no escalations/owner_assignments/expert_verdicts/
+        // applied; #[serde(default)] must keep them parseable.
         let legacy = r#"{"summary":"x","unsatisfied":[],"moves_attempted":[],"blockers":[]}"#;
         let report: Report = serde_json::from_str(legacy).expect("legacy parse");
         assert!(report.escalations.is_empty());
         assert!(report.owner_assignments.is_empty());
         assert!(report.expert_verdicts.is_empty());
+        assert!(report.applied.is_empty());
     }
 }

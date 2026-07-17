@@ -23,10 +23,11 @@ struct FightArgs {
     gate_file: Option<String>,
     json: bool,
     summon: bool,
+    apply: bool,
 }
 
 // Shared with the top-level help in main.rs so the two cannot drift.
-pub(crate) const USAGE: &str = "usage: squabble fight <owner>/<repo> <pr> [--repo-root <path>] [--gate <file>] [--json] [--summon]";
+pub(crate) const USAGE: &str = "usage: squabble fight <owner>/<repo> <pr> [--repo-root <path>] [--gate <file>] [--json] [--summon] [--apply]";
 
 /// Entry point for `squabble fight`; `rest` is the args after the subcommand.
 pub fn run(rest: &[String]) -> ExitCode {
@@ -46,9 +47,29 @@ pub fn run(rest: &[String]) -> ExitCode {
         }
     };
 
-    // `mut` is only exercised by the boj build (summon appends evidence).
-    #[cfg_attr(not(feature = "boj"), allow(unused_mut))]
     let (context, mut outcome) = squabble_fight::plan_at_root(&gate, &args.slug, &args.repo_root);
+
+    // `--apply` enacts the appliable self-win moves (v0.1: path-filter strips)
+    // by writing the workflow files — and nothing more. It never commits or
+    // pushes, and it never re-runs the checks, so the gate stays honestly red
+    // (only CI can turn a check green); the report gains an `applied` section
+    // recording exactly what was written. Default (propose) leaves the tree
+    // untouched.
+    if args.apply {
+        if let Outcome::Red { report } = &mut outcome {
+            let result =
+                squabble_fight::apply::apply_moves(&args.repo_root, &report.moves_attempted);
+            let applied_n = result.applied.len();
+            report.applied = result.applied;
+            report.blockers.extend(result.skipped);
+            if applied_n > 0 {
+                report.blockers.push(format!(
+                    "applied {applied_n} self-win move(s) to the working tree — re-run CI to \
+                     confirm the gate; nothing was committed or pushed (that is the operator's step)"
+                ));
+            }
+        }
+    }
 
     if args.summon {
         // Without the `boj` feature there is no client compiled in. Refusing
@@ -102,6 +123,7 @@ fn parse_args(rest: &[String]) -> Result<FightArgs, String> {
     let mut gate_file = None;
     let mut json = false;
     let mut summon = false;
+    let mut apply = false;
 
     let mut i = 0;
     while i < rest.len() {
@@ -126,6 +148,10 @@ fn parse_args(rest: &[String]) -> Result<FightArgs, String> {
             }
             "--summon" => {
                 summon = true;
+                i += 1;
+            }
+            "--apply" => {
+                apply = true;
                 i += 1;
             }
             s if s.starts_with("--") => return Err(format!("unknown flag `{s}`\n{USAGE}")),
@@ -153,6 +179,7 @@ fn parse_args(rest: &[String]) -> Result<FightArgs, String> {
         gate_file,
         json,
         summon,
+        apply,
     })
 }
 
@@ -182,6 +209,12 @@ fn print_human(slug: &str, context: &RepoContext, outcome: &Outcome) {
         println!("\n  self-win moves (squabbler's lane):");
         for m in &report.moves_attempted {
             println!("    - {}", m.describe());
+        }
+    }
+    if !report.applied.is_empty() {
+        println!("\n  applied to the working tree (no commit/push — operator's step):");
+        for a in &report.applied {
+            println!("    - {}: {}", a.file, a.detail);
         }
     }
     if !report.escalations.is_empty() {
@@ -224,6 +257,15 @@ mod tests {
         .expect("parse");
         assert!(args.summon);
         assert_eq!(args.slug, "hyperpolymath/ipv6-only");
+    }
+
+    #[test]
+    fn parse_args_accepts_apply_flag_default_off() {
+        let off = parse_args(&["o/r".to_string(), "1".to_string()]).expect("parse");
+        assert!(!off.apply, "apply must default to propose-only");
+        let on = parse_args(&["o/r".to_string(), "1".to_string(), "--apply".to_string()])
+            .expect("parse");
+        assert!(on.apply);
     }
 
     #[test]
