@@ -76,3 +76,5 @@ RSR-PHILOSOPHY.adoc        # doctrinal rationale for this repo: "squabble != byp
 .pre-commit-config.yaml    # TODO: relocate to ci/.pre-commit-config.yaml after invocation pattern decided
 affinescript/              # AffineScript source subtree consumed by this template
 tools/                     # TODO: consolidate with scripts/ or document the split (pending decision)
+.hypatia-ignore
+CLAUDE.md
