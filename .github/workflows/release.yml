@@ -22,7 +22,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Detect project type and build
         id: build
         run: |
@@ -84,7 +84,7 @@ jobs:
       changelog: ${{ steps.cliff.outputs.content }}
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Extract version from tag
@@ -124,7 +124,7 @@ jobs:
       id-token: write       # mint the OIDC token attestation provenance is signed with
       attestations: write   # write the build-provenance attestation (the "claim")
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # TODO: Download build artifacts if uploading to the release (pin
       #   actions/download-artifact to a full commit SHA when enabling):
       # - uses: actions/download-artifact@<full-commit-sha>  # vX.Y.Z
