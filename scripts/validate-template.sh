@@ -338,21 +338,21 @@ echo ""
 
 check_file_exists "docs/developer/ABI-FFI-README.adoc" "ABI/FFI documentation"
 # TOPOLOGY may live at root or under docs/architecture/, .md or .adoc
-if [ -f "$REPO_ROOT/TOPOLOGY.adoc" ] || [ -f "$REPO_ROOT/TOPOLOGY.md" ] || \
-   [ -f "$REPO_ROOT/docs/architecture/TOPOLOGY.adoc" ] || [ -f "$REPO_ROOT/docs/architecture/TOPOLOGY.md" ]; then
+if [ -f "$REPO_ROOT/TOPOLOGY.adoc" ] || [ -f "$REPO_ROOT/TOPOLOGY.adoc" ] || \
+   [ -f "$REPO_ROOT/docs/architecture/TOPOLOGY.adoc" ] || [ -f "$REPO_ROOT/docs/architecture/TOPOLOGY.adoc" ]; then
     [ "$VERBOSE" = "1" ] && log_pass "Architecture topology found"
 else
-    log_error "Required file missing: TOPOLOGY (root or docs/architecture/, .adoc or .md)"
+    log_error "Required file missing: TOPOLOGY (root or docs/architecture/, .adoc)"
 fi
-# CONTRIBUTING.md may live at root or in .github/ (GitHub auto-discovers either)
-if [ -f "$REPO_ROOT/CONTRIBUTING.md" ] || [ -f "$REPO_ROOT/.github/CONTRIBUTING.md" ]; then
+# CONTRIBUTING.adoc may live at root or in .github/ (GitHub auto-discovers either)
+if [ -f "$REPO_ROOT/CONTRIBUTING.adoc" ] || [ -f "$REPO_ROOT/.github/CONTRIBUTING.adoc" ]; then
     [ "$VERBOSE" = "1" ] && log_pass "Contribution guide found"
 else
-    log_error "Required file missing: CONTRIBUTING.md (root or .github/)"
+    log_error "Required file missing: CONTRIBUTING.adoc (root or .github/)"
 fi
 
 # Governance can be at root or in docs/governance/
-if [ -f "$REPO_ROOT/GOVERNANCE.adoc" ] || [ -f "$REPO_ROOT/GOVERNANCE.md" ] || [ -d "$REPO_ROOT/docs/governance" ]; then
+if [ -f "$REPO_ROOT/GOVERNANCE.adoc" ] || [ -f "$REPO_ROOT/GOVERNANCE.adoc" ] || [ -d "$REPO_ROOT/docs/governance" ]; then
     [ "$VERBOSE" = "1" ] && log_pass "Governance files found"
 else
     log_warning "Governance documentation not found"
