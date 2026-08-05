@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 #
-# Rokur secrets-gate configuration for {{PROJECT_NAME}}
+# Rokur secrets-gate configuration for cicd-squabbler — an intelligent, detachable CI/CD fighter
 #
 # Rokur (stapeln container stack) is a secrets-management gate: a small
 # Deno service that sits in front of the application and refuses to pass

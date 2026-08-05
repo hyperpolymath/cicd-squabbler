@@ -2,7 +2,7 @@
 // Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 // Template: rsr-template-repo/docs/status/PROOF-NEEDS.adoc
 // Authoritative master list: ~/Desktop/PROOF-REQUIREMENTS-MASTER.adoc
-= Proof Requirements — {{PROJECT}}
+= Proof Requirements — CICD_SQUABBLER
 
 == Proof Tier
 

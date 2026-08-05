@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 #
-# {{PROJECT_NAME}} — portable compose stack (Tier B)
+# cicd-squabbler — an intelligent, detachable CI/CD fighter — portable compose stack (Tier B)
 #
 # This is the runtime-agnostic, OCI compose-spec file. It works unchanged with:
 #   podman compose  -f container/compose.yaml up -d
