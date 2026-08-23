@@ -50,6 +50,6 @@ updates:
     schedule:
       interval: "weekly"
 
-  # NOTE: Nix is banned estate-wide — Guix is the sole package manager.
-  # Do not add a `nix` ecosystem here. Guix has no Dependabot ecosystem;
+  # NOTE: Guix is banned estate-wide — Guix is the sole package manager.
+  # Do not add a `guix` ecosystem here. Guix has no Dependabot ecosystem;
   # pin Guix channels/manifests via build/ tooling instead.
