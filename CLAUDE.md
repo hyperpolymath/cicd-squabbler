@@ -51,7 +51,7 @@ The descriptive family (working name *descriptiles*) describes what-is; the **co
 - **Before you invent, rename, or consolidate anything: STOP and check the map + IS-NOT.**
 
 ## Estate language policy (overridable per-repo via AGENTIC)
-Deny: **Nix, Node/npm, TypeScript, Python, Go, AGPL**. (Guix, not Nix.)
+Deny: **Guix, Node/npm, TypeScript, Python, Go, AGPL**. (Guix, not Guix.)
 
 ---
 

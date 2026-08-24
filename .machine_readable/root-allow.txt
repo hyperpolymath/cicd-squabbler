@@ -89,5 +89,5 @@ CODE_OF_CONDUCT.md          # Project documentation.
 GOVERNANCE.md               # Project documentation.
 MAINTAINERS                 # Project file that must remain at the repository root.
 REQUIRES_INITIALISATION.md  # Project documentation.
-flake.nix                   # Project file that must remain at the repository root.
+flake.guix                   # Project file that must remain at the repository root.
 mise.toml                   # Build/tool manifest — must sit at the root to be found.
