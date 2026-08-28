@@ -162,7 +162,7 @@ After replacing all placeholders, verify none remain:
 ```bash
 grep -rn '{{' . --include='*.md' --include='*.adoc' --include='*.a2ml' \
   --include='*.scm' --include='*.idr' --include='*.zig' --include='*.res' \
-  --include='Justfile' --include='*.nix' --include='*.toml' --include='*.yml' \
+  --include='Justfile' --include='*.guix' --include='*.toml' --include='*.yml' \
   --include='*.yaml' --include='*.hs' --include='*.ncl' --include='*.txt' \
   --include='*.json' --include='Containerfile' --include='dep5' \
   | grep -v 'PLACEHOLDERS.md' | grep -v 'node_modules'

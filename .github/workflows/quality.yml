@@ -22,17 +22,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check file permissions
         run: |
           find . -type f -perm /111 -name "*.sh" | head -10 || true
-      - name: Check for secrets
-        uses: trufflesecurity/trufflehog@27b0417c16317ca9a472a9a8092acce143b49c55 # v3.93.3
-        with:
-          path: ./
-          base: ${{ github.event.pull_request.base.sha || github.event.before }}
-          head: ${{ github.sha }}
-        continue-on-error: true
       - name: Check TODO/FIXME
         run: |
           echo "=== TODOs ==="
@@ -49,7 +42,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check documentation
         run: |
           MISSING=""

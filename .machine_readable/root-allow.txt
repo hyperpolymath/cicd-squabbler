@@ -78,3 +78,16 @@ affinescript/              # AffineScript source subtree consumed by this templa
 tools/                     # TODO: consolidate with scripts/ or document the split (pending decision)
 .hypatia-ignore
 CLAUDE.md
+
+# ─── Declared 2026-08-06: entries the RSR template's directory map did
+#     not anticipate. The template targets a documentation repository;
+#     these are this project's real top-level shape. Moving them would
+#     break every path that references them, to satisfy a map that was
+#     never written for it. Read from the estate-rules gate's own output.
+.githooks/                  # Top-level component directory of this project.
+CODE_OF_CONDUCT.md          # Project documentation.
+GOVERNANCE.md               # Project documentation.
+MAINTAINERS                 # Project file that must remain at the repository root.
+REQUIRES_INITIALISATION.md  # Project documentation.
+flake.guix                   # Project file that must remain at the repository root.
+mise.toml                   # Build/tool manifest — must sit at the root to be found.
