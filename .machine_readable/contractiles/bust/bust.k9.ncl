@@ -1,3 +1,4 @@
+K9!
 # SPDX-License-Identifier: MPL-2.0
 # bust.k9.ncl — K9 trust-tier component of the bust trident
 # Author: Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
@@ -50,6 +51,7 @@ let base    = import "../_base.ncl" in
       allow_filesystem_write = false,
       allow_subprocess = true,
       probe_scope = 'read_only,
+      signature_required = true,
     },
   },
 
