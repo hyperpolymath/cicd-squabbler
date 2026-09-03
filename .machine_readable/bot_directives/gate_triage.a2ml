@@ -1,0 +1,177 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# gate_triage.a2ml — what to do with a gate that CANNOT RUN
+# Declares how agents classify an unavailable, vacuous or inapplicable check.
+# Read at session start by any AI agent (Claude, Gemini, Copilot, etc.)
+#
+# Reference: ADR-002 in standards/agentic-a2ml/docs/
+# Origin: owner ruling 2026-09-03, given on the vacuous-Hypatia-gate options menu.
+
+[metadata]
+version = "0.1.0"
+last-updated = "2026-09-03"
+spec = "https://github.com/hyperpolymath/standards/blob/main/agentic-a2ml/docs/ADR-002-methodology-layer.adoc"
+status = "draft"              # not yet wired into the fight engine; see issue
+
+# ============================================================================
+# THE CORE PRINCIPLE
+# ============================================================================
+# A gate that cannot run does not get to decide its own colour.
+# Unavailability is neither a pass nor a failure — it is a ROUTED TRIAGE CASE.
+# The workflow reports; a bot assesses; a human rules.
+#
+# This is the enforcement of three constraints this repo already declares in
+# AGENTIC: fail-closed, evidence-per-step, no-silent-skip. A vacuous gate is
+# exactly a silent skip that asserts green.
+
+[gate-triage]
+unavailable-is-a-verdict = false      # never auto-green, never auto-fail
+default-behaviour = "assess applicability NOW, then recommend"
+
+# PRECEDENCE, not a split. (Owner ruling 2026-09-03.)
+#
+# robot-repo-automaton is NOT a top-level repo — it lives inside `gitbot-fleet`,
+# working at the interface of online/offline, the hooks system, and write/admin
+# operations in repos. Where it is present AND working, it ALWAYS takes
+# precedence and handles all five cases, guided by its own override rules under
+# `.machine_readable/bot_directives/rr_automaton/`.
+#
+# cicd-squabbler is the BACKUP. It exists because not everyone adopts the full
+# stack (hypatia, gitbot-fleet, .git-private-farm, git-logistics-office, echidna,
+# nickel) — many will want a squabbler per repo and nothing else.
+#
+# Therefore cicd-squabbler MUST NOT assume hypatia exists. Its own ANCHOR
+# already declares "hypatia-dependent" as an IS-NOT; this directive is bound by
+# that. Standalone operation is a hard requirement, not a nicety.
+
+[gate-triage.precedence]
+order = ["gitbot-fleet/robot-repo-automaton", "cicd-squabbler"]
+primary = "gitbot-fleet/robot-repo-automaton"
+primary-wins-when = "present AND working"
+primary-override-rules = ".machine_readable/bot_directives/rr_automaton/"
+fallback = "cicd-squabbler"
+fallback-must-be-standalone = true         # never depends on hypatia et al
+handles-all-five-cases = "whichever is in force"
+
+# When the FALLBACK takes over — the four recorded triggers:
+[gate-triage.precedence.fallback-triggers]
+non-adoption = "repo does not install the full stack; squabbler is per-repo, on its own"
+primary-broken = "hypatia/gitbot-fleet is down, or polluted after an attack"
+paid-function-exhausted = "GitHub Actions minutes or another paid function exhausted"
+exotic-pipeline = "a pipeline so unusual (many languages, non-standard steps) that it needs repo-specific handling for a specific failure type"
+# NOTE: `exotic-pipeline` is provisional — the owner flagged it as not-yet-certain.
+
+# ============================================================================
+# INVARIANT — DO NOT BREAK THE SPARK PROOF
+# ============================================================================
+# spark/ proves: the ONLY transition into Green is a required check that
+# actually ran and passed. Dropping a required set, renaming a check away, or
+# any override are provably NOT paths to green.
+#
+# Therefore an unavailable gate classifies as `escalate`, NEVER `self-win`.
+# The output is a structured RECOMMENDATION to a human — remove / delete /
+# repair / install-locally / fix-declaration — never a transition to Green.
+# `escalate` is an existing terminal non-green state, so a classifier that only
+# ever emits `escalate` leaves the proof untouched.
+
+[gate-triage.invariants]
+classification = "escalate"           # hard constraint: never self-win
+may-transition-to-green = false
+may-drop-required-context = false
+may-delete-gate-autonomously = false  # deletion is a RECOMMENDATION to the owner
+emits-evidence = true                 # a verdict without evidence is not a verdict
+
+# ============================================================================
+# AXIS 0 — APPLICABILITY (check this FIRST, before cases 1-5)
+# ============================================================================
+# A gate skipped because its audience or channel does not match is CORRECTLY
+# INAPPLICABLE, by declaration. It is not vacuous and must not be escalated.
+# Report it as "not applicable here", with the declaration that says so.
+#
+# Declared in 0-AI-MANIFEST (estate files: `0.1-AI-MANIFEST.a2ml`).
+# Purpose: do not waste regular users' time running maintainer-only checks.
+
+[gate-triage.applicability]
+manifest-file = "0.1-AI-MANIFEST.a2ml"
+operator-type-key = "@gitforge_OperatorType"
+channel-key = "@channel"
+operator-types = ["user", "developer", "platform_maintainer"]
+channels = ["nightly", "alpha", "beta", "rc", "release", "lts", "alternative"]
+# `lts` = Long Term Support. `nightly` is sometimes spelled `canary`/`edge`.
+# `release` is sometimes spelled `stable`.
+unmatched-is-vacuous = false          # inapplicable != broken
+report-as = "not-applicable"
+
+# Example predicate a gate may carry:
+#   runs-on-channels = ["alpha"]
+#   runs-for-operator-types = ["developer", "platform_maintainer"]
+
+# ============================================================================
+# THE FIVE CASES
+# ============================================================================
+# Splitting question: is this tool's availability a DECLARED property of the
+# environment?
+
+[[gate-triage.cases]]
+id = 1
+name = "technology-gone"
+shape = "The gate targets a technology this repo no longer contains (gate is about Rust; Rust removed)."
+computable = true
+method = "Cross-reference the gate's paths:/glob against the repo tree."
+verdict = "recommend-removal"
+
+[[gate-triage.cases]]
+id = 2
+name = "useless-everywhere"
+shape = "Generally useless — returns [] everywhere it runs."
+computable = "detectable-not-decidable"
+method = "Stub/empty rate across recent runs in N repos."
+verdict = "assess-value-then-delete"
+assessment-reserved-to = "owner"
+
+[[gate-triage.cases]]
+id = 3
+name = "valuable-but-poor"
+shape = "Valuable in principle, crap in practice."
+computable = "detectable-not-decidable"
+verdict = "make-it-great-in-practice"
+note = "Hypatia resolves HERE. Both fake-green routes fixed and verified firing 2026-09-03."
+
+[[gate-triage.cases]]
+id = 4
+name = "missing-local-tooling"
+shape = "A tool that legitimately lives on the developer's machine is absent (trufflehog class: a local pre-push hook, firing on push of new, unhashed — never-before-seen — content)."
+computable = true
+verdict = "explain-to-user-missing-locally"
+note = "Ideally detected up front. If not, the automaton picks it up and suggests it be sorted."
+
+[[gate-triage.cases]]
+id = 5
+name = "missing-declared-tooling"
+shape = "A tool declared ONLINE for this container/directory reports unavailable (gitleaks class: the normal in-repo checks)."
+computable = "once the environment declarations exist"
+verdict = "fix-the-declaration"
+severity = "should-never-happen"
+note = "This is a contradiction with the environment declaration, NOT a judgement call. Do not triage the gate; repair the declaration. The estate is to hold environment details for every container and every directory, recording what is online and what is offline."
+
+# ============================================================================
+# DETECTION — no workflow change required
+# ============================================================================
+# The machine-readable "unavailable" marker already exists in the jobs API:
+# a green check whose step conclusions read
+#     Run <scanner> scan      = skipped
+#     Create stub findings    = success
+# That signature IS the unavailability report. Read it from the jobs API.
+#
+# POLARITY GAP: `squabble fight` classifies REDS. An unavailable gate is GREEN,
+# so the fight engine has no reason to look at it. Closing that gap — inspecting
+# green checks for the stub signature — is the work this file specifies.
+
+[gate-triage.detection]
+source = "actions jobs API step conclusions"
+signature-skipped-steps = ["Run Hypatia scan"]
+signature-success-steps = ["Create stub findings"]
+check-conclusion-when-vacuous = "success"
+polarity = "green"                    # NOT red — this is the gap in `fight`
+evidence-required = ["run-count", "stub-rate", "upstream-exists", "target-tech-present"]
