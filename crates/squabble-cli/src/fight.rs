@@ -11,6 +11,9 @@
 
 use crate::fetch;
 use squabble_core::gate::Gate;
+use squabble_core::moves::Move;
+use squabble_core::outcome::Escalation;
+use squabble_core::polarity::{Applicability, Evidence, RepoDeclaration};
 use squabble_core::outcome::Outcome;
 use squabble_fight::context::RepoContext;
 use std::path::PathBuf;
@@ -39,7 +42,7 @@ pub fn run(rest: &[String]) -> ExitCode {
         }
     };
 
-    let gate = match load_gate(&args) {
+    let (gate, greens) = match load_gate(&args) {
         Ok(g) => g,
         Err(e) => {
             eprintln!("squabble fight: {e}");
@@ -48,6 +51,13 @@ pub fn run(rest: &[String]) -> ExitCode {
     };
 
     let (context, mut outcome) = squabble_fight::plan_at_root(&gate, &args.slug, &args.repo_root);
+
+    // `fight` classifies only reds, so a check that could not run reports green
+    // and is never inspected. Surface those before anything else acts on the
+    // outcome — including `--summon`, which must record its honest
+    // non-dispatch for them.
+    let vacuity = classify_greens(&args, &greens);
+    attach_vacuity(&mut outcome, &vacuity);
 
     // `--apply` enacts the appliable self-win moves (v0.1: path-filter strips)
     // by writing the workflow files — and nothing more. It never commits or
@@ -101,15 +111,104 @@ pub fn run(rest: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn load_gate(args: &FightArgs) -> Result<Gate, String> {
+/// Classify the checks that concluded **green**, per the `gate_triage`
+/// directive.
+///
+/// `fight` only ever classifies reds, so a check that could not run reports
+/// green and is never inspected. This is the missing polarity.
+fn classify_greens(args: &FightArgs, greens: &[fetch::GreenCheck]) -> Vec<Move> {
+    let signature = squabble_fight::gate_triage::load_signature(&args.repo_root);
+    if !signature.is_usable() {
+        // Fail-safe: no directive means "detect no vacuity", never "detect it
+        // everywhere". It also costs zero API calls on repos without one.
+        return Vec::new();
+    }
+    // No gate declares an applicability predicate today, so Axis 0 falls
+    // through to the signature. Stated explicitly rather than assumed.
+    let applicability = Applicability::default();
+    let declared = RepoDeclaration::default();
+
+    let mut moves = Vec::new();
+    for g in greens {
+        let steps = match fetch::fetch_step_outcomes(&args.slug, g.job_id) {
+            Ok(s) => s,
+            Err(e) => {
+                // `no-silent-skip`: an uninspectable green is reported, never
+                // quietly assumed genuine.
+                eprintln!(
+                    "squabble fight: could not inspect green check `{}`: {e}",
+                    g.name
+                );
+                continue;
+            }
+        };
+        // One run inspected, and it is the run being judged. `upstream-exists`
+        // and `target-tech-present` are not observable from the jobs API — no
+        // gate declares the globs that would make them computable — so they are
+        // reported `unmeasured` rather than asserted, which also keeps the
+        // recommendation on the non-destructive branch.
+        let evidence = Evidence {
+            run_count: 1,
+            stub_rate: 1.0,
+            upstream_exists: None,
+            target_tech_present: None,
+        };
+        let verdict = squabble_core::polarity::classify(
+            &steps,
+            &signature,
+            &applicability,
+            &declared,
+            evidence,
+        );
+        if let Some(m) = verdict.to_move(&g.name) {
+            moves.push(m);
+        }
+    }
+    moves
+}
+
+/// Fold vacuity findings into the outcome **without changing its colour**.
+fn attach_vacuity(outcome: &mut Outcome, moves: &[Move]) {
+    if moves.is_empty() {
+        return;
+    }
+    match outcome {
+        Outcome::Red { report } => {
+            for m in moves {
+                if let Some(e) = Escalation::from_move(m) {
+                    report.escalations.push(e);
+                }
+            }
+        }
+        // A gate that is green overall carries no `Report`, and giving
+        // `Outcome::Green` one would change an outcome state — which issue #58
+        // rules is spec-first work, not something to slip in here. stderr keeps
+        // the finding visible in `--json` mode too, so it is never dropped.
+        _ => {
+            eprintln!(
+                "squabble fight: {} green check(s) are vacuous — not represented in --json \
+                 (that needs an Outcome change; see issue #58):",
+                moves.len()
+            );
+            for m in moves {
+                eprintln!("  - {}", m.describe());
+            }
+        }
+    }
+}
+
+fn load_gate(args: &FightArgs) -> Result<(Gate, Vec<fetch::GreenCheck>), String> {
     if let Some(path) = &args.gate_file {
         let text =
             std::fs::read_to_string(path).map_err(|e| format!("cannot read `{path}`: {e}"))?;
+        // Offline mode inspects no live runs, so there are no green checks to
+        // classify — an honest empty set, not a silent skip.
         return serde_json::from_str(&text)
+            .map(|g| (g, Vec::new()))
             .map_err(|e| format!("`{path}` is not a valid gate: {e}"));
     }
     match &args.pr {
-        Some(pr) => fetch::run(&args.slug, pr),
+        Some(pr) => fetch::run_with_greens(&args.slug, pr),
         None => Err(format!(
             "need a PR number (live) or `--gate <file>` (offline).\n{USAGE}"
         )),

@@ -150,10 +150,22 @@ pub struct Evidence {
     pub run_count: u32,
     /// Fraction of those runs that were stubbed, in `0.0..=1.0`.
     pub stub_rate: f64,
-    /// Does the tool this gate invokes exist upstream at all?
-    pub upstream_exists: bool,
-    /// Is the technology this gate scans for still present in the tree?
-    pub target_tech_present: bool,
+    /// Does the tool this gate invokes exist upstream at all? `None` when the
+    /// host could not determine it — never silently `true`.
+    pub upstream_exists: Option<bool>,
+    /// Is the technology this gate scans for still present in the tree? `None`
+    /// when unmeasured: no gate today declares the paths/globs that would make
+    /// this computable, and claiming `true` would be an overclaim.
+    pub target_tech_present: Option<bool>,
+}
+
+/// Render a tri-state honestly. "unmeasured" is a first-class answer.
+fn tri(v: Option<bool>) -> &'static str {
+    match v {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "unmeasured",
+    }
 }
 
 impl Evidence {
@@ -162,7 +174,10 @@ impl Evidence {
     pub fn describe(&self) -> String {
         format!(
             "run-count={} stub-rate={:.2} upstream-exists={} target-tech-present={}",
-            self.run_count, self.stub_rate, self.upstream_exists, self.target_tech_present
+            self.run_count,
+            self.stub_rate,
+            tri(self.upstream_exists),
+            tri(self.target_tech_present)
         )
     }
 }
@@ -225,13 +240,15 @@ impl Recommendation {
 
     /// Select the case from the four required evidence fields. Total function.
     pub const fn from_evidence(e: &Evidence) -> Self {
-        if !e.target_tech_present {
-            Recommendation::RecommendRemoval
-        } else if !e.upstream_exists {
-            Recommendation::FixTheDeclaration
-        } else {
-            // Deliberately unconditional on stub_rate — see the type doc.
-            Recommendation::MakeItGreatInPractice
+        match (e.target_tech_present, e.upstream_exists) {
+            // Case 1 — measured absent. Only a measurement may recommend removal.
+            (Some(false), _) => Recommendation::RecommendRemoval,
+            // Case 5 — the tool is declared but is not there.
+            (_, Some(false)) => Recommendation::FixTheDeclaration,
+            // Case 3 — including every unmeasured combination. Unmeasured must
+            // fall to the non-destructive recommendation, and stub_rate never
+            // enters: see the type doc.
+            _ => Recommendation::MakeItGreatInPractice,
         }
     }
 }
@@ -399,8 +416,8 @@ mod tests {
         Evidence {
             run_count: 4,
             stub_rate: rate,
-            upstream_exists: upstream,
-            target_tech_present: tech,
+            upstream_exists: Some(upstream),
+            target_tech_present: Some(tech),
         }
     }
 
@@ -670,6 +687,28 @@ mod tests {
                 "stub_rate {rate} must not change the recommendation"
             );
         }
+    }
+
+    #[test]
+    fn an_unmeasured_field_never_recommends_removal() {
+        // The host cannot measure target-tech-present from the jobs API today,
+        // and "unmeasured" must fall to the non-destructive recommendation
+        // rather than being rendered as a confident `true`/`false`.
+        let unmeasured = Evidence {
+            run_count: 1,
+            stub_rate: 1.0,
+            upstream_exists: None,
+            target_tech_present: None,
+        };
+        assert_eq!(
+            Recommendation::from_evidence(&unmeasured),
+            Recommendation::MakeItGreatInPractice
+        );
+        assert!(
+            unmeasured.describe().contains("target-tech-present=unmeasured"),
+            "got `{}`",
+            unmeasured.describe()
+        );
     }
 
     #[test]

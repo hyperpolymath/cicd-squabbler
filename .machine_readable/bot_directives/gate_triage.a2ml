@@ -9,10 +9,10 @@
 # Origin: owner ruling 2026-09-03, given on the vacuous-Hypatia-gate options menu.
 
 [metadata]
-version = "0.1.0"
-last-updated = "2026-09-03"
+version = "0.2.0"
+last-updated = "2026-09-04"
 spec = "https://github.com/hyperpolymath/standards/blob/main/agentic-a2ml/docs/ADR-002-methodology-layer.adoc"
-status = "draft"              # not yet wired into the fight engine; see issue
+status = "active"             # wired into `squabble fight`; see crates/squabble-core/src/polarity.rs
 
 # ============================================================================
 # THE CORE PRINCIPLE
@@ -175,3 +175,12 @@ signature-success-steps = ["Create stub findings"]
 check-conclusion-when-vacuous = "success"
 polarity = "green"                    # NOT red — this is the gap in `fight`
 evidence-required = ["run-count", "stub-rate", "upstream-exists", "target-tech-present"]
+
+# Measurability, stated honestly (Doctrine #10, no overclaim).
+# Of the four fields above, the actions jobs API supplies only the first two.
+# `upstream-exists` and `target-tech-present` need a repo-tree probe that no
+# gate currently declares the globs for, so `squabble fight` renders them
+# `unmeasured` rather than guessing — and an unmeasured field can never reach
+# the destructive recommendation. Removal advice waits for real measurement.
+evidence-measurable-by-host = ["run-count", "stub-rate"]
+evidence-unmeasured-by-host = ["upstream-exists", "target-tech-present"]

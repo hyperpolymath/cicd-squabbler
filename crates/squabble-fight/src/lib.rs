@@ -27,6 +27,7 @@
 
 pub mod apply;
 pub mod context;
+pub mod gate_triage;
 pub mod workflows;
 
 use context::RepoContext;
