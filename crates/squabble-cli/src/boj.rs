@@ -136,15 +136,19 @@ struct ExpertCall {
 /// obligation never reroutes to a different one (a HypatiaFleet escalation
 /// with a `scan` obligation is still hypatia's case, possibly *using* a
 /// scan). The routing is deliberately host-side data, not core types.
-fn route(e: &Escalation, repo_path: &str) -> ExpertCall {
+///
+/// Returns `None` for a group with **no cartridge**. That is not a gap to be
+/// filled with a wildcard arm: routing `GateTriage` to hypatia would reintroduce
+/// the hypatia dependency this repo declares as an IS-NOT, by the back door.
+fn route(e: &Escalation, repo_path: &str) -> Option<ExpertCall> {
     match e.group {
-        ExpertGroup::Security => ExpertCall {
+        ExpertGroup::Security => Some(ExpertCall {
             cartridge: "panic-attack-mcp",
             tool: "panic_attack_scan",
             arguments: serde_json::json!({ "path": repo_path }),
             meaning: "weak-point scan",
-        },
-        ExpertGroup::Proof => ExpertCall {
+        }),
+        ExpertGroup::Proof => Some(ExpertCall {
             cartridge: "echidna-llm-mcp",
             tool: "consult",
             arguments: serde_json::json!({
@@ -154,16 +158,20 @@ fn route(e: &Escalation, repo_path: &str) -> ExpertCall {
                 )
             }),
             meaning: "proof consultation",
-        },
+        }),
         // Hypatia / HypatiaFleet: hypatia assesses; the fleet cartridge only
         // *tracks* gate results. Actuation (fix + PR) has no cartridge today
         // and stays external — recorded as such.
-        ExpertGroup::Hypatia | ExpertGroup::HypatiaFleet => ExpertCall {
+        ExpertGroup::Hypatia | ExpertGroup::HypatiaFleet => Some(ExpertCall {
             cartridge: "hypatia-mcp",
             tool: "hypatia_scan_repo",
             arguments: serde_json::json!({ "path": repo_path }),
             meaning: "hypatia assessment (actuation external — no fixer cartridge yet)",
-        },
+        }),
+        // A vacuous-gate finding is the owner's to discharge. No cartridge can
+        // assess whether a gate is worth keeping — the `gate_triage` directive
+        // reserves that judgement to the owner.
+        ExpertGroup::GateTriage => None,
     }
 }
 
@@ -218,7 +226,27 @@ pub fn summon(outcome: &mut Outcome, repo_root: &Path) {
                 continue;
             }
         };
-        let call = route(e, repo_path);
+        // `no-silent-skip`: a group with no cartridge is recorded as an honest
+        // non-dispatch, not quietly passed over. The escalation stands.
+        let Some(call) = route(e, repo_path) else {
+            e.evidence
+                .push_str(" | summon: owner-facing group — no cartridge to dispatch to");
+            report.blockers.push(format!(
+                "summon `{}`: owner-facing group — no cartridge, escalation stands",
+                e.check
+            ));
+            verdicts.push(ExpertVerdict {
+                check: e.check.clone(),
+                cartridge: "(none)".to_string(),
+                tool: "(none)".to_string(),
+                ok: false,
+                meaning: "owner-facing; no cartridge".to_string(),
+                verdict:
+                    "not dispatched — the gate_triage directive reserves this judgement to the owner"
+                        .to_string(),
+            });
+            continue;
+        };
         match client.invoke(call.cartridge, call.tool, call.arguments) {
             Ok(v) => {
                 e.evidence.push_str(&format!(
@@ -281,12 +309,14 @@ mod tests {
         let sec = route(
             &escalation(ExpertGroup::Security, EscalationKind::Scan),
             "/r",
-        );
+        )
+        .expect("Security routes to a cartridge");
         assert_eq!(sec.cartridge, "panic-attack-mcp");
         let proof = route(
             &escalation(ExpertGroup::Proof, EscalationKind::VerifyClaim),
             "/r",
-        );
+        )
+        .expect("Proof routes to a cartridge");
         assert_eq!(proof.cartridge, "echidna-llm-mcp");
         // The obligation must never reroute away from the planner's chosen
         // specialist: HypatiaFleet stays hypatia's case even for scan/verify.
@@ -296,9 +326,28 @@ mod tests {
             EscalationKind::DispatchFix,
             EscalationKind::AssessConfidence,
         ] {
-            let fleet = route(&escalation(ExpertGroup::HypatiaFleet, obligation), "/r");
+            let fleet = route(&escalation(ExpertGroup::HypatiaFleet, obligation), "/r")
+                .expect("HypatiaFleet routes to a cartridge");
             assert_eq!(fleet.cartridge, "hypatia-mcp");
             assert!(fleet.meaning.contains("actuation external"));
+        }
+    }
+
+    #[test]
+    fn gate_triage_has_no_cartridge() {
+        // ANCHOR: `hypatia-dependent` is an IS-NOT, and the gate_triage directive
+        // sets `fallback-must-be-standalone = true`. A wildcard arm here would
+        // have routed owner-facing findings to hypatia by the back door.
+        for obligation in [
+            EscalationKind::Scan,
+            EscalationKind::VerifyClaim,
+            EscalationKind::DispatchFix,
+            EscalationKind::AssessConfidence,
+        ] {
+            assert!(
+                route(&escalation(ExpertGroup::GateTriage, obligation), "/r").is_none(),
+                "GateTriage must never dispatch to a cartridge"
+            );
         }
     }
 
