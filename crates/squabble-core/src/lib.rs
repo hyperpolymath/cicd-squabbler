@@ -18,6 +18,7 @@ pub mod admission;
 pub mod gate;
 pub mod moves;
 pub mod outcome;
+pub mod polarity;
 
 use gate::{Gate, GateState};
 use moves::{LicenceFinding, Move};

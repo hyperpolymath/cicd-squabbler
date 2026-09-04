@@ -9,10 +9,10 @@
 # Origin: owner ruling 2026-09-03, given on the vacuous-Hypatia-gate options menu.
 
 [metadata]
-version = "0.1.0"
-last-updated = "2026-09-03"
+version = "0.2.0"
+last-updated = "2026-09-04"
 spec = "https://github.com/hyperpolymath/standards/blob/main/agentic-a2ml/docs/ADR-002-methodology-layer.adoc"
-status = "draft"              # not yet wired into the fight engine; see issue
+status = "active"             # wired into `squabble fight`; see crates/squabble-core/src/polarity.rs
 
 # ============================================================================
 # THE CORE PRINCIPLE
@@ -170,8 +170,57 @@ note = "This is a contradiction with the environment declaration, NOT a judgemen
 
 [gate-triage.detection]
 source = "actions jobs API step conclusions"
+
+# GROUND TRUTH, not a paraphrase. Census of 33 local `static-analysis-gate.yml`
+# copies, 2026-09-04: both names below appear 33/33 with ZERO variants. The
+# matcher in `squabble-core::polarity::step_concluded` is an EXACT compare, so
+# the abbreviated form this file carried until now ("Create stub findings")
+# matched no real job on earth — every green check would have classified
+# `Genuine`, forever, and the vacuity classifier would have been its own fake
+# green. Do not shorten these for readability.
 signature-skipped-steps = ["Run Hypatia scan"]
-signature-success-steps = ["Create stub findings"]
+signature-success-steps = ["Create stub findings (when Hypatia unavailable)"]
 check-conclusion-when-vacuous = "success"
 polarity = "green"                    # NOT red — this is the gap in `fight`
 evidence-required = ["run-count", "stub-rate", "upstream-exists", "target-tech-present"]
+
+# Coverage, stated honestly. The same workflow carries two more stub paths of
+# identical shape, found by the same census:
+#   "Run panic-attack assail"  / "Create stub findings (when panic-attack unavailable)"  33/33
+#   "Run Patch Bridge triage"  / "Create stub report (when unavailable)"                 27/33
+# Neither is covered here. The matcher quantifies with `all`, so one signature
+# describes one scanner; and each scanner is a separate JOB, hence a separate
+# check, so an unmatched scanner is NOT escalated on the signature. That is an
+# UNDERCOUNT, never a false alarm — with one stated exception: a job that
+# concluded success having recorded steps, every one of them SKIPPED, is
+# reported `all-steps-skipped` whether or not any signature matched. That is
+# not a false alarm either; a job that ran nothing enforced nothing, and the
+# finding stands on its own terms without naming a scanner.
+#
+# A green whose job records NO steps at all is the opposite case: absence of
+# evidence, not evidence of absence. It is reported to the operator on stderr
+# and classified `Genuine`, never escalated.
+#
+# A second signature needs a repeatable table in this file plus a parser
+# change, so it is filed rather than bodged in.
+signature-covers = ["hypatia"]
+signature-not-yet-covered = ["panic-attack", "patch-bridge"]
+
+# Measurability, stated honestly (Doctrine #10, no overclaim).
+# `run-count` and `stub-rate` are NOT a measured history. `squabble fight`
+# inspects ONE run, so it reports run-count 1 and a rate that is trivially 0.0
+# or 1.0; a real rate needs a runs-list probe. `upstream-exists` and
+# `target-tech-present` need a repo-tree probe that no gate declares globs for,
+# so they render `unmeasured` rather than being guessed at. An unmeasured field
+# can never reach the destructive recommendation, and a single-run rate must
+# never be read as evidence of a pattern. Removal advice waits for real
+# measurement.
+evidence-measurable-by-host = ["run-count", "stub-rate"]
+evidence-unmeasured-by-host = ["upstream-exists", "target-tech-present"]
+evidence-single-run-only = ["run-count", "stub-rate"]
+
+# Applicability (axis 0) is CORE-ONLY. `classify()` takes an `Applicability` and
+# a `RepoDeclaration`, but `squabble fight` passes the defaults, so the owner's
+# operator-type / channel axis cannot fire in production yet. Declared here so
+# the gap is visible instead of being implied to work.
+applicability-wired-into-host = false
