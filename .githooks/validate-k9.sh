@@ -109,7 +109,7 @@ normalise_level() {
 
 # ---------------------------------------------------------------------------
 # Validator: check a single K9 file
-# ---------------------------------------------------------------------------
+# validate_k9 validates a K9 file's magic number, SPDX header, pedigree fields, security level, and signature requirements.
 validate_k9() {
     local file="$1"
     FILES_SCANNED=$((FILES_SCANNED + 1))
