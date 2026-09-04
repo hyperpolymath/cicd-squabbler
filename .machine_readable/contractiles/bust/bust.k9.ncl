@@ -51,6 +51,7 @@ let base    = import "../_base.ncl" in
       allow_filesystem_write = false,
       allow_subprocess = true,
       probe_scope = 'read_only,
+      signature_required = true,
     },
   },
 

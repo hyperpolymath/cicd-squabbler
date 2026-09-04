@@ -4,7 +4,7 @@ K9!
 #
 # coapt.k9.ncl — k9 contract for the coaptation receipt's drift check.
 #
-# Yard-tier (pure evaluation / comparison; no network, no FS write): the check
+# Hunt-tier (guarded execution; no network, writes intermediate data files): the check
 # regenerates the coaptation receipt from this repo's contractiles (normative
 # set-point) and descriptiles (descriptive self-model) and asserts the committed
 # receipt byte-matches it. The runnable side is verify.sh; the writer (Hunt-tier,
@@ -16,11 +16,12 @@ K9!
     contractile_verb = "trust",   # provenance: the reading must equal its sources
     semantics = "coaptation-fidelity",
     security = {
-      leash = 'Yard,
-      trust_level = "read-only comparison",
+      leash = 'Hunt,
+      trust_level = "guarded drift verification",
       allow_network = false,
-      allow_filesystem_write = false,
+      allow_filesystem_write = true,
       allow_subprocess = true,    # runs the extractors + nickel to reproduce the reading
+      signature_required = true,
     },
     metadata = {
       name = "coaptation",
