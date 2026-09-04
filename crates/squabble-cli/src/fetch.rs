@@ -393,17 +393,26 @@ mod polarity_plumbing_tests {
 
     #[test]
     fn the_parsed_steps_classify_as_vacuous_end_to_end() {
-        // The whole point: a real jobs-API payload, the real directive
-        // signature, and the verdict the report will carry.
+        // The whole chain, with nothing synthetic on the signature side: a
+        // real-shaped jobs-API payload carrying the LITERAL step names read off
+        // 33 estate `static-analysis-gate.yml` copies, matched against THIS
+        // REPO'S OWN directive file rather than an inline fixture.
+        //
+        // The inline fixture this test used to carry named the steps
+        // "Create stub findings" on both sides, so it agreed with itself and
+        // proved nothing: the directive's abbreviation matched no real job, and
+        // the test could not see that. Loading the real file is what makes a
+        // future drift in either direction fail here.
         let json = r#"{"steps":[
             {"name":"Run Hypatia scan","conclusion":"skipped"},
-            {"name":"Create stub findings","conclusion":"success"}
+            {"name":"Create stub findings (when Hypatia unavailable)","conclusion":"success"}
         ]}"#;
         let steps = parse_steps(json).expect("valid payload");
-        let sig = squabble_fight::gate_triage::parse_signature(
-            "signature-skipped-steps = [\"Run Hypatia scan\"]\n\
-             signature-success-steps = [\"Create stub findings\"]\n",
-        );
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("workspace root");
+        let sig = squabble_fight::gate_triage::load_signature(root);
         let verdict = squabble_core::polarity::classify(
             &steps,
             &sig,
@@ -424,5 +433,42 @@ mod polarity_plumbing_tests {
             "got {verdict:?}"
         );
         assert!(verdict.to_move("scan / hypatia").is_some());
+    }
+
+    #[test]
+    fn a_scanner_that_really_ran_is_not_called_vacuous() {
+        // The negative control the end-to-end test needs. Same directive, same
+        // job shape, but the scan actually ran and the stub was skipped — the
+        // exact flip recorded when the estate's probe fix landed. If this ever
+        // returns Vacuous the classifier is condemning working gates.
+        let json = r#"{"steps":[
+            {"name":"Run Hypatia scan","conclusion":"success"},
+            {"name":"Create stub findings (when Hypatia unavailable)","conclusion":"skipped"}
+        ]}"#;
+        let steps = parse_steps(json).expect("valid payload");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("workspace root");
+        let sig = squabble_fight::gate_triage::load_signature(root);
+        let verdict = squabble_core::polarity::classify(
+            &steps,
+            &sig,
+            &squabble_core::polarity::Applicability::default(),
+            &squabble_core::polarity::RepoDeclaration::default(),
+            squabble_core::polarity::Evidence {
+                run_count: 1,
+                stub_rate: 0.0,
+                upstream_exists: None,
+                target_tech_present: None,
+            },
+        );
+        assert!(
+            !matches!(
+                verdict,
+                squabble_core::polarity::PolarityVerdict::Vacuous { .. }
+            ),
+            "a gate that ran must not be reported vacuous; got {verdict:?}"
+        );
     }
 }

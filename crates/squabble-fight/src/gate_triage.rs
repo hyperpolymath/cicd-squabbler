@@ -81,8 +81,16 @@ evidence-required = ["run-count", "stub-rate", "upstream-exists", "target-tech-p
     }
 
     #[test]
-    fn the_repos_own_directive_parses() {
-        // Ground-truth against the real file rather than only a fixture.
+    fn the_repos_own_directive_names_real_workflow_steps() {
+        // Ground-truth against the real file. `is_usable()` alone was NOT
+        // enough: it asks "is the list non-empty", while the consumer needs
+        // "do these names match a real job". The directive shipped
+        // "Create stub findings" — an abbreviation that matches no step on
+        // earth, since `step_concluded` compares exactly. Every check would
+        // have read `Genuine` forever.
+        //
+        // The names below are a census of 33 local `static-analysis-gate.yml`
+        // copies (2026-09-04): 33/33, zero variants.
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(|p| p.parent())
@@ -91,6 +99,16 @@ evidence-required = ["run-count", "stub-rate", "upstream-exists", "target-tech-p
         assert!(
             sig.is_usable(),
             "this repo's own {DIRECTIVE_PATH} must parse into a usable signature"
+        );
+        assert_eq!(
+            sig.skipped_steps,
+            vec!["Run Hypatia scan".to_string()],
+            "must be the workflow's literal step name"
+        );
+        assert_eq!(
+            sig.success_steps,
+            vec!["Create stub findings (when Hypatia unavailable)".to_string()],
+            "the parenthetical is part of the real step name — do not abbreviate"
         );
     }
 }
