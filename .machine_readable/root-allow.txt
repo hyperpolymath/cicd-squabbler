@@ -91,3 +91,14 @@ MAINTAINERS                 # Project file that must remain at the repository ro
 REQUIRES_INITIALISATION.md  # Project documentation.
 flake.guix                   # Project file that must remain at the repository root.
 mise.toml                   # Build/tool manifest — must sit at the root to be found.
+
+# ─── Declared 2026-09-04: AsciiDoc-by-default migration + tool dotfile.
+#     The .md docs above were converted to .adoc (openssf-compliance and
+#     docs checks already accept either); the old entries are left above
+#     for tooling that still references the historical .md names.
+ARCHITECTURE.adoc           # Project documentation (AsciiDoc-by-default).
+CHANGELOG.adoc              # Project documentation (AsciiDoc-by-default).
+CODE_OF_CONDUCT.adoc        # Project documentation (AsciiDoc-by-default).
+CONTRIBUTING.adoc           # Project documentation (AsciiDoc-by-default).
+SECURITY.adoc               # Project documentation (AsciiDoc-by-default).
+.mise.toml                  # Repo-specific mise config; must sit at the root to be found.

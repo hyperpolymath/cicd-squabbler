@@ -239,7 +239,7 @@ validate_k9() {
         fi
 
         # Also check for signature fields outside pedigree (top-level)
-        if [[ "$line" =~ ^[[:space:]]*(signature)[[:space:]]*= ]]; then
+        if [[ "$line" =~ ^[[:space:]]*(signature|signature_required)[[:space:]]*= ]]; then
             has_signature_field=true
         fi
     done < "$file"
