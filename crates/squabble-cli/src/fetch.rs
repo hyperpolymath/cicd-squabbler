@@ -19,6 +19,7 @@
 
 use serde::Deserialize;
 use squabble_core::gate::{CheckRun, Gate, RequiredCheck};
+use squabble_core::polarity::{StepConclusion, StepOutcome};
 use std::process::Command;
 
 #[derive(Debug, Deserialize)]
@@ -26,6 +27,10 @@ struct RollupEntry {
     name: String,
     status: Option<String>,
     conclusion: Option<String>,
+    /// `https://github.com/O/R/actions/runs/<run>/job/<job>` — the only place
+    /// the rollup exposes a job id, which is what the jobs API needs.
+    #[serde(rename = "detailsUrl")]
+    details_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +94,99 @@ fn build_gate(required_contexts: &[String], rollup: &[RollupEntry]) -> Gate {
     Gate::new(checks)
 }
 
+/// A check that concluded `success`, and the job whose steps can be inspected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GreenCheck {
+    pub name: String,
+    pub job_id: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct JobStep {
+    name: String,
+    conclusion: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JobView {
+    #[serde(default)]
+    steps: Vec<JobStep>,
+}
+
+/// Pull the job id out of a rollup entry's `detailsUrl`.
+///
+/// The rollup exposes no job id field, but the details URL ends
+/// `/actions/runs/<run>/job/<job>`. Pure and directly tested: a silent `None`
+/// here would mean a green check is never inspected, which is precisely the
+/// failure this module exists to catch.
+fn job_id_from_details_url(url: &str) -> Option<u64> {
+    let path = url
+        .strip_prefix("https://github.com/")?
+        .split(['?', '#'])
+        .next()?;
+    let mut segments = path.split('/');
+    let (owner, repo, actions, runs, run_id, job, job_id) = (
+        segments.next()?,
+        segments.next()?,
+        segments.next()?,
+        segments.next()?,
+        segments.next()?,
+        segments.next()?,
+        segments.next()?,
+    );
+
+    if owner.is_empty()
+        || repo.is_empty()
+        || actions != "actions"
+        || runs != "runs"
+        || run_id.parse::<u64>().is_err()
+        || job != "job"
+        || !matches!(segments.next(), None | Some(""))
+        || segments.next().is_some()
+    {
+        return None;
+    }
+
+    job_id.parse().ok()
+}
+
+/// The checks that concluded `success` and can actually be inspected.
+///
+/// A `SUCCESS` entry with an unparseable `detailsUrl` (a status context posted
+/// by an app, say — it has no job) is skipped: there are no steps to read.
+fn greens_from_rollup(rollup: &[RollupEntry]) -> Vec<GreenCheck> {
+    rollup
+        .iter()
+        .filter(|r| r.conclusion.as_deref() == Some("SUCCESS"))
+        .filter_map(|r| {
+            let job_id = job_id_from_details_url(r.details_url.as_deref()?)?;
+            Some(GreenCheck {
+                name: r.name.clone(),
+                job_id,
+            })
+        })
+        .collect()
+}
+
+/// Parse a jobs-API payload into step outcomes. Pure — the unit of test
+/// coverage for [`fetch_step_outcomes`].
+fn parse_steps(json: &str) -> Result<Vec<StepOutcome>, String> {
+    let job: JobView =
+        serde_json::from_str(json).map_err(|e| format!("could not parse job response: {e}"))?;
+    Ok(job
+        .steps
+        .into_iter()
+        .map(|s| StepOutcome::new(s.name, StepConclusion::parse(s.conclusion.as_deref())))
+        .collect())
+}
+
+/// Fetch one job's step conclusions — the declared evidence tier for
+/// [`squabble_core::polarity`].
+pub fn fetch_step_outcomes(slug: &str, job_id: u64) -> Result<Vec<StepOutcome>, String> {
+    let json = run_gh(&["api", &format!("repos/{slug}/actions/jobs/{job_id}")])?;
+    parse_steps(&json)
+}
+
 fn run_gh(args: &[&str]) -> Result<String, String> {
     let out = Command::new("gh")
         .args(args)
@@ -110,6 +208,16 @@ fn run_gh(args: &[&str]) -> Result<String, String> {
 /// `slug` is `owner/repo`. Requires `gh` to be authenticated for that repo —
 /// the same precondition every other `gh`-based estate tool already has.
 pub fn run(slug: &str, pr: &str) -> Result<Gate, String> {
+    run_with_greens(slug, pr).map(|(gate, _greens)| gate)
+}
+
+/// As [`run`], but also returns the checks that concluded **success**, with the
+/// job id needed to inspect their steps.
+///
+/// The green set is what [`squabble_core::polarity`] classifies. `fight` only
+/// ever looks at reds, so a gate that could not run reports green and is never
+/// inspected — that is the whole fake-green class.
+pub fn run_with_greens(slug: &str, pr: &str) -> Result<(Gate, Vec<GreenCheck>), String> {
     let (owner, repo) = slug
         .split_once('/')
         .ok_or_else(|| format!("expected `owner/repo`, got `{slug}`"))?;
@@ -152,7 +260,10 @@ pub fn run(slug: &str, pr: &str) -> Result<Gate, String> {
         ));
     }
 
-    Ok(build_gate(&required_contexts, &pr_view.status_check_rollup))
+    Ok((
+        build_gate(&required_contexts, &pr_view.status_check_rollup),
+        greens_from_rollup(&pr_view.status_check_rollup),
+    ))
 }
 
 #[cfg(test)]
@@ -164,6 +275,7 @@ mod tests {
             name: name.to_string(),
             status: status.map(String::from),
             conclusion: conclusion.map(String::from),
+            details_url: None,
         }
     }
 
@@ -213,5 +325,206 @@ mod tests {
         let rollup = vec![entry("a", Some("COMPLETED"), Some("SUCCESS"))];
         let gate = build_gate(&["a".to_string()], &rollup);
         assert_eq!(gate.evaluate(), squabble_core::gate::GateState::Green);
+    }
+}
+
+#[cfg(test)]
+mod polarity_plumbing_tests {
+    use super::*;
+
+    fn green(name: &str, details: Option<&str>) -> RollupEntry {
+        RollupEntry {
+            name: name.to_string(),
+            status: Some("COMPLETED".into()),
+            conclusion: Some("SUCCESS".into()),
+            details_url: details.map(String::from),
+        }
+    }
+
+    #[test]
+    fn a_job_id_is_read_from_a_real_details_url() {
+        // Shape taken from a live `gh pr view --json statusCheckRollup`.
+        let url = "https://github.com/hyperpolymath/standards/actions/runs/33817314194/job/100852208701";
+        assert_eq!(job_id_from_details_url(url), Some(100852208701));
+    }
+
+    #[test]
+    fn a_query_string_or_fragment_does_not_hide_the_job_id() {
+        // GitHub appends `?check_suite_focus=true` to details URLs as a matter
+        // of course. Cutting the id on `/` alone leaves the suffix attached,
+        // `parse::<u64>` fails, and the green is skipped without a word — the
+        // exact silent undercount this module exists to prevent.
+        let base = "https://github.com/hyperpolymath/standards/actions/runs/33817314194/job/100852208701";
+        for suffix in ["?check_suite_focus=true", "#step:4:1", "?a=1#step:2:9"] {
+            let url = format!("{base}{suffix}");
+            assert_eq!(
+                job_id_from_details_url(&url),
+                Some(100852208701),
+                "suffix {suffix} must not hide the job id"
+            );
+        }
+    }
+
+    #[test]
+    fn a_details_url_with_no_job_segment_yields_none() {
+        // A status context posted by an app has no job, so there are no steps
+        // to inspect. It must be skipped, not guessed at.
+        assert_eq!(
+            job_id_from_details_url("https://example.com/build/status"),
+            None
+        );
+        assert_eq!(
+            job_id_from_details_url(
+                "https://github.com/o/r/actions/runs/1"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn an_external_job_url_is_not_treated_as_a_github_actions_job() {
+        assert_eq!(
+            job_id_from_details_url("https://ci.example/job/42"),
+            None
+        );
+    }
+
+    #[test]
+    fn only_successful_checks_with_an_inspectable_job_are_green() {
+        let rollup = vec![
+            green(
+                "has-a-job",
+                Some("https://github.com/o/r/actions/runs/1/job/42"),
+            ),
+            green("no-details-url", None),
+            green("not-a-job", Some("https://example.com/status")),
+            RollupEntry {
+                name: "red".into(),
+                status: Some("COMPLETED".into()),
+                conclusion: Some("FAILURE".into()),
+                details_url: Some("https://github.com/o/r/actions/runs/1/job/43".into()),
+            },
+        ];
+        let greens = greens_from_rollup(&rollup);
+        assert_eq!(
+            greens,
+            vec![GreenCheck {
+                name: "has-a-job".into(),
+                job_id: 42
+            }],
+            "reds are `fight`'s job; only inspectable greens belong here"
+        );
+    }
+
+    #[test]
+    fn step_conclusions_are_parsed_from_a_jobs_api_payload() {
+        let json = r#"{
+            "id": 42,
+            "conclusion": "success",
+            "steps": [
+                {"name": "Set up job", "conclusion": "success"},
+                {"name": "Run Hypatia scan", "conclusion": "skipped"},
+                {"name": "Create stub findings", "conclusion": "success"},
+                {"name": "Post job", "conclusion": null}
+            ]
+        }"#;
+        let steps = parse_steps(json).expect("valid payload");
+        assert_eq!(steps.len(), 4);
+        assert_eq!(steps[1].name, "Run Hypatia scan");
+        assert_eq!(steps[1].conclusion, StepConclusion::Skipped);
+        assert_eq!(steps[2].conclusion, StepConclusion::Success);
+        // A null conclusion must not be mistaken for a skip — a skip is half
+        // the vacuity signature.
+        assert_eq!(steps[3].conclusion, StepConclusion::Other);
+    }
+
+    #[test]
+    fn a_payload_with_no_steps_parses_to_an_empty_list() {
+        // An absent `steps` array is a legitimate payload — the caller reports
+        // it as an uninspectable green — so this must parse rather than error.
+        let steps = parse_steps(r#"{"id": 1, "conclusion": "success"}"#).expect("valid");
+        assert!(steps.is_empty());
+    }
+
+    #[test]
+    fn the_parsed_steps_classify_as_vacuous_end_to_end() {
+        // The whole chain, with nothing synthetic on the signature side. This
+        // payload is the LIVE shape of hyperpolymath/session-sentinel run
+        // 33813809227 (jobs API, 2026-09-04): a green Hypatia check whose
+        // scanner never ran. It is matched against THIS REPO'S OWN directive
+        // file rather than an inline fixture.
+        //
+        // The fixture this test used to carry named the step "Create stub
+        // findings" on BOTH sides, so it agreed with itself and proved nothing
+        // — the directive's abbreviation matched no real job, and the test
+        // could not see that. Loading the real file is what makes drift on
+        // either side fail here.
+        let json = r#"{"steps":[
+            {"name":"Run Hypatia scan","conclusion":"skipped"},
+            {"name":"Create stub findings (when Hypatia unavailable)","conclusion":"success"}
+        ]}"#;
+        let steps = parse_steps(json).expect("valid payload");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("workspace root");
+        let sig = squabble_fight::gate_triage::load_signature(root);
+        let verdict = squabble_core::polarity::classify(
+            &steps,
+            &sig,
+            &squabble_core::polarity::Applicability::default(),
+            &squabble_core::polarity::RepoDeclaration::default(),
+            squabble_core::polarity::Evidence {
+                run_count: 1,
+                stub_rate: 1.0,
+                upstream_exists: None,
+                target_tech_present: None,
+            },
+        );
+        assert!(
+            matches!(
+                verdict,
+                squabble_core::polarity::PolarityVerdict::Vacuous { .. }
+            ),
+            "got {verdict:?}"
+        );
+        assert!(verdict.to_move("scan / hypatia").is_some());
+    }
+
+    #[test]
+    fn a_scanner_that_really_ran_is_not_called_vacuous() {
+        // The negative control. Live shape of hyperpolymath/echidnabot run
+        // 33712324720: the same gate, same job, but the scan actually ran and
+        // the stub was skipped. If this ever returns Vacuous the classifier is
+        // condemning working gates.
+        let json = r#"{"steps":[
+            {"name":"Run Hypatia scan","conclusion":"success"},
+            {"name":"Create stub findings (when Hypatia unavailable)","conclusion":"skipped"}
+        ]}"#;
+        let steps = parse_steps(json).expect("valid payload");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("workspace root");
+        let sig = squabble_fight::gate_triage::load_signature(root);
+        let verdict = squabble_core::polarity::classify(
+            &steps,
+            &sig,
+            &squabble_core::polarity::Applicability::default(),
+            &squabble_core::polarity::RepoDeclaration::default(),
+            squabble_core::polarity::Evidence {
+                run_count: 1,
+                stub_rate: 0.0,
+                upstream_exists: None,
+                target_tech_present: None,
+            },
+        );
+        assert!(
+            !matches!(
+                verdict,
+                squabble_core::polarity::PolarityVerdict::Vacuous { .. }
+            ),
+            "a gate that ran must not be reported vacuous; got {verdict:?}"
+        );
     }
 }

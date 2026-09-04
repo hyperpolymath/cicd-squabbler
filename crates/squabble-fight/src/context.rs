@@ -149,7 +149,7 @@ fn extract_scalar(text: &str, key: &str) -> Option<String> {
 
 /// Extract every double-quoted string in an array-valued key, whether the array
 /// is written on one line or spread across several (`key = [ ... ]`).
-fn extract_array(text: &str, key: &str) -> Vec<String> {
+pub(crate) fn extract_array(text: &str, key: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut collecting = false;
     for line in text.lines() {

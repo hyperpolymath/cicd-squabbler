@@ -144,6 +144,12 @@ pub enum ExpertGroup {
     Proof,
     /// Static-analysis / weak-point scanning (estate: `security/panic-attack-mcp`).
     Security,
+    /// Gate triage — a **green** check that is not really green. Owner-facing:
+    /// deliberately names no estate service, because `cicd-squabbler` declares
+    /// `hypatia-dependent` as an IS-NOT and the `gate_triage` directive sets
+    /// `fallback-must-be-standalone = true`. There is no cartridge to dispatch
+    /// to; the obligation is the owner's to discharge.
+    GateTriage,
 }
 
 /// What the squabbler is asking an [`ExpertGroup`] to *do*. Kept coarse on
@@ -188,6 +194,7 @@ impl ExpertGroup {
             ExpertGroup::HypatiaFleet => "hypatia+fleet (analyse+fix)",
             ExpertGroup::Proof => "proof (echidna)",
             ExpertGroup::Security => "security (panic-attack)",
+            ExpertGroup::GateTriage => "gate-triage (owner-facing)",
         }
     }
 }
