@@ -78,6 +78,7 @@ let base    = import "../_base.ncl" in
       allow_subprocess = true,
       authorised_probes_only = true,    # probe section explicitly lists allowed targets + probe classes
       probe_scope_enforcement = 'this_repo_only,  # probes NEVER hit external systems
+      signature_required = true,
     },
   },
 
