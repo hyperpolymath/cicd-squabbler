@@ -9,6 +9,22 @@ K9!
 # Usage: k9 validate methodology-guard
 
 let methodology_guard = {
+  pedigree = {
+    schema_version = "1.0.0",
+    security = {
+      leash = 'Yard,
+      trust_level = "read-only comparison",
+      allow_network = false,
+      allow_filesystem_write = false,
+      allow_subprocess = false,
+    },
+    metadata = {
+      name = "methodology-guard",
+      version = "1.0.0",
+      description = "Validates that agent work respects declared methodology constraints",
+    },
+  },
+
   name = "methodology-guard",
   version = "1.0.0",
   description = "Validates that agent work respects declared methodology constraints",
