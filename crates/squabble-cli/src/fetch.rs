@@ -393,16 +393,17 @@ mod polarity_plumbing_tests {
 
     #[test]
     fn the_parsed_steps_classify_as_vacuous_end_to_end() {
-        // The whole chain, with nothing synthetic on the signature side: a
-        // real-shaped jobs-API payload carrying the LITERAL step names read off
-        // 33 estate `static-analysis-gate.yml` copies, matched against THIS
-        // REPO'S OWN directive file rather than an inline fixture.
+        // The whole chain, with nothing synthetic on the signature side. This
+        // payload is the LIVE shape of hyperpolymath/session-sentinel run
+        // 33813809227 (jobs API, 2026-09-04): a green Hypatia check whose
+        // scanner never ran. It is matched against THIS REPO'S OWN directive
+        // file rather than an inline fixture.
         //
-        // The inline fixture this test used to carry named the steps
-        // "Create stub findings" on both sides, so it agreed with itself and
-        // proved nothing: the directive's abbreviation matched no real job, and
-        // the test could not see that. Loading the real file is what makes a
-        // future drift in either direction fail here.
+        // The fixture this test used to carry named the step "Create stub
+        // findings" on BOTH sides, so it agreed with itself and proved nothing
+        // — the directive's abbreviation matched no real job, and the test
+        // could not see that. Loading the real file is what makes drift on
+        // either side fail here.
         let json = r#"{"steps":[
             {"name":"Run Hypatia scan","conclusion":"skipped"},
             {"name":"Create stub findings (when Hypatia unavailable)","conclusion":"success"}
@@ -437,10 +438,10 @@ mod polarity_plumbing_tests {
 
     #[test]
     fn a_scanner_that_really_ran_is_not_called_vacuous() {
-        // The negative control the end-to-end test needs. Same directive, same
-        // job shape, but the scan actually ran and the stub was skipped — the
-        // exact flip recorded when the estate's probe fix landed. If this ever
-        // returns Vacuous the classifier is condemning working gates.
+        // The negative control. Live shape of hyperpolymath/echidnabot run
+        // 33712324720: the same gate, same job, but the scan actually ran and
+        // the stub was skipped. If this ever returns Vacuous the classifier is
+        // condemning working gates.
         let json = r#"{"steps":[
             {"name":"Run Hypatia scan","conclusion":"success"},
             {"name":"Create stub findings (when Hypatia unavailable)","conclusion":"skipped"}
