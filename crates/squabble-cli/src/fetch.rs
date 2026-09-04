@@ -120,16 +120,34 @@ struct JobView {
 /// here would mean a green check is never inspected, which is precisely the
 /// failure this module exists to catch.
 fn job_id_from_details_url(url: &str) -> Option<u64> {
-    // The id is terminated by a path separator OR by a query/fragment. GitHub
-    // routinely appends `?check_suite_focus=true`, and cutting only on `/`
-    // leaves that in the digits, so `parse` fails and the check is skipped —
-    // an undercount that is silent by construction.
-    url.split("/job/")
-        .nth(1)?
-        .split(['/', '?', '#'])
-        .next()?
-        .parse()
-        .ok()
+    let path = url
+        .strip_prefix("https://github.com/")?
+        .split(['?', '#'])
+        .next()?;
+    let mut segments = path.split('/');
+    let (owner, repo, actions, runs, run_id, job, job_id) = (
+        segments.next()?,
+        segments.next()?,
+        segments.next()?,
+        segments.next()?,
+        segments.next()?,
+        segments.next()?,
+        segments.next()?,
+    );
+
+    if owner.is_empty()
+        || repo.is_empty()
+        || actions != "actions"
+        || runs != "runs"
+        || run_id.parse::<u64>().is_err()
+        || job != "job"
+        || !matches!(segments.next(), None | Some(""))
+        || segments.next().is_some()
+    {
+        return None;
+    }
+
+    job_id.parse().ok()
 }
 
 /// The checks that concluded `success` and can actually be inspected.
@@ -364,16 +382,27 @@ mod polarity_plumbing_tests {
     }
 
     #[test]
+    fn an_external_job_url_is_not_treated_as_a_github_actions_job() {
+        assert_eq!(
+            job_id_from_details_url("https://ci.example/job/42"),
+            None
+        );
+    }
+
+    #[test]
     fn only_successful_checks_with_an_inspectable_job_are_green() {
         let rollup = vec![
-            green("has-a-job", Some("https://g/o/r/actions/runs/1/job/42")),
+            green(
+                "has-a-job",
+                Some("https://github.com/o/r/actions/runs/1/job/42"),
+            ),
             green("no-details-url", None),
             green("not-a-job", Some("https://example.com/status")),
             RollupEntry {
                 name: "red".into(),
                 status: Some("COMPLETED".into()),
                 conclusion: Some("FAILURE".into()),
-                details_url: Some("https://g/o/r/actions/runs/1/job/43".into()),
+                details_url: Some("https://github.com/o/r/actions/runs/1/job/43".into()),
             },
         ];
         let greens = greens_from_rollup(&rollup);
