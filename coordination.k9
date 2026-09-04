@@ -1,5 +1,18 @@
 K9!
 # Thin coordination bindings for central session-management standards
+#
+# pedigree (K9 self-description; see .machine_readable/self-validating/README.adoc)
+pedigree = {
+  schema_version = "1.0.0",
+  security = {
+    leash = 'Kennel,
+  },
+  metadata = {
+    name = "coordination",
+    version = "0.1.0",
+    description = "Thin coordination bindings for central session-management standards",
+  },
+}
 
 session_management:
   source_of_truth: "standards/session-management-standards"
