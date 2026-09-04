@@ -114,6 +114,27 @@ impl VacuitySignature {
     pub fn is_usable(&self) -> bool {
         !self.skipped_steps.is_empty() && !self.success_steps.is_empty()
     }
+
+    /// Does this signature match `steps`?
+    ///
+    /// Lives here, rather than inline in [`classify`], because the *host* needs
+    /// the same answer to report an honest `stub_rate`. `Evidence` is an input
+    /// to `classify` while the cause is its output, so a rate derived from the
+    /// cause would be circular: both callers ask this instead.
+    ///
+    /// CONJUNCTION, deliberately: a partial match is a legitimately optional
+    /// step, not vacuity.
+    pub fn matches(&self, steps: &[StepOutcome]) -> bool {
+        self.is_usable()
+            && self
+                .skipped_steps
+                .iter()
+                .all(|n| step_concluded(steps, n, StepConclusion::Skipped))
+            && self
+                .success_steps
+                .iter()
+                .all(|n| step_concluded(steps, n, StepConclusion::Success))
+    }
 }
 
 /// What a gate declares about *where it applies* — the directive's
@@ -190,9 +211,12 @@ pub enum VacuityCause {
     /// stub-writing step succeeded. (Measured in the wild: 4 repos.)
     StubbedAfterSkippedScan,
     /// The job concluded success with steps recorded, every one of them skipped.
+    ///
+    /// True on its own terms whether or not the signature matched: a job that
+    /// ran nothing enforced nothing. Note there is deliberately **no**
+    /// "recorded no steps at all" cause — see [`classify`] for why an empty
+    /// step list is absence of evidence rather than evidence of vacuity.
     AllStepsSkipped,
-    /// The job concluded success having recorded no steps at all.
-    NoStepsRecorded,
 }
 
 impl VacuityCause {
@@ -200,7 +224,6 @@ impl VacuityCause {
         match self {
             VacuityCause::StubbedAfterSkippedScan => "stubbed after a skipped scan",
             VacuityCause::AllStepsSkipped => "every step skipped",
-            VacuityCause::NoStepsRecorded => "no steps recorded",
         }
     }
 }
@@ -371,19 +394,21 @@ pub fn classify(
         return v;
     }
 
-    let cause = if steps.is_empty() {
-        Some(VacuityCause::NoStepsRecorded)
-    } else if signature.is_usable()
-        // CONJUNCTION. A partial match is a legitimately optional step.
-        && signature
-            .skipped_steps
-            .iter()
-            .all(|n| step_concluded(steps, n, StepConclusion::Skipped))
-        && signature
-            .success_steps
-            .iter()
-            .all(|n| step_concluded(steps, n, StepConclusion::Success))
-    {
+    // An empty step list is ABSENCE OF EVIDENCE, not evidence of absence. The
+    // jobs API showed us no steps; that is not the same as the job having run
+    // none. Escalating it is a false alarm, and it breaks the property this
+    // module promises — undercount, never false-alarm. The uninspectable green
+    // is reported by the caller on stderr, so `no-silent-skip` still holds.
+    //
+    // This arm must stay EXPLICIT and must return early. `[].iter().all(..)` is
+    // vacuously true in Rust, so merely deleting it would let the empty case
+    // fall through to `AllStepsSkipped` and reach the identical wrong verdict
+    // under a different name.
+    if steps.is_empty() {
+        return PolarityVerdict::Genuine;
+    }
+
+    let cause = if signature.matches(steps) {
         Some(VacuityCause::StubbedAfterSkippedScan)
     } else if steps.iter().all(|s| s.conclusion == StepConclusion::Skipped) {
         Some(VacuityCause::AllStepsSkipped)
@@ -498,17 +523,28 @@ mod tests {
     // ---- the other two step-observable causes -------------------------------
 
     #[test]
-    fn no_steps_recorded_is_vacuous() {
+    fn no_steps_recorded_is_not_vacuous() {
+        // Absence of evidence is not evidence of vacuity. An empty step list
+        // means the jobs API told us nothing, so the only honest verdict is the
+        // undercount. Guards the property the directive promises.
+        let v = classify_steps(&[]);
+        assert_eq!(
+            v,
+            PolarityVerdict::Genuine,
+            "an uninspectable green must never be escalated; got {v:?}"
+        );
+    }
+
+    #[test]
+    fn an_empty_step_list_does_not_leak_into_all_steps_skipped() {
+        // `[].iter().all(..)` is vacuously TRUE, so removing the empty-list arm
+        // rather than returning early would silently reclassify this case as
+        // `AllStepsSkipped` — the same false alarm under a different label.
+        // This test is what stops that regression being invisible.
         let v = classify_steps(&[]);
         assert!(
-            matches!(
-                v,
-                PolarityVerdict::Vacuous {
-                    cause: VacuityCause::NoStepsRecorded,
-                    ..
-                }
-            ),
-            "got {v:?}"
+            !matches!(v, PolarityVerdict::Vacuous { .. }),
+            "empty steps must not reach ANY vacuity cause; got {v:?}"
         );
     }
 
@@ -556,7 +592,7 @@ mod tests {
     #[test]
     fn declared_and_unmatched_is_not_applicable() {
         let v = classify(
-            &[],  // would otherwise be NoStepsRecorded — applicability wins
+            &[],  // uninspectable; Axis 0 answers before steps are consulted
             &sig(),
             &Applicability {
                 runs_for_operator_types: vec!["platform_maintainer".into()],

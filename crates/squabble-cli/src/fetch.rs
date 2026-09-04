@@ -120,7 +120,16 @@ struct JobView {
 /// here would mean a green check is never inspected, which is precisely the
 /// failure this module exists to catch.
 fn job_id_from_details_url(url: &str) -> Option<u64> {
-    url.split("/job/").nth(1)?.split('/').next()?.parse().ok()
+    // The id is terminated by a path separator OR by a query/fragment. GitHub
+    // routinely appends `?check_suite_focus=true`, and cutting only on `/`
+    // leaves that in the digits, so `parse` fails and the check is skipped —
+    // an undercount that is silent by construction.
+    url.split("/job/")
+        .nth(1)?
+        .split(['/', '?', '#'])
+        .next()?
+        .parse()
+        .ok()
 }
 
 /// The checks that concluded `success` and can actually be inspected.
@@ -322,6 +331,23 @@ mod polarity_plumbing_tests {
     }
 
     #[test]
+    fn a_query_string_or_fragment_does_not_hide_the_job_id() {
+        // GitHub appends `?check_suite_focus=true` to details URLs as a matter
+        // of course. Cutting the id on `/` alone leaves the suffix attached,
+        // `parse::<u64>` fails, and the green is skipped without a word — the
+        // exact silent undercount this module exists to prevent.
+        let base = "https://github.com/hyperpolymath/standards/actions/runs/33817314194/job/100852208701";
+        for suffix in ["?check_suite_focus=true", "#step:4:1", "?a=1#step:2:9"] {
+            let url = format!("{base}{suffix}");
+            assert_eq!(
+                job_id_from_details_url(&url),
+                Some(100852208701),
+                "suffix {suffix} must not hide the job id"
+            );
+        }
+    }
+
+    #[test]
     fn a_details_url_with_no_job_segment_yields_none() {
         // A status context posted by an app has no job, so there are no steps
         // to inspect. It must be skipped, not guessed at.
@@ -385,8 +411,8 @@ mod polarity_plumbing_tests {
 
     #[test]
     fn a_payload_with_no_steps_parses_to_an_empty_list() {
-        // `NoStepsRecorded` is a real vacuity cause, so this must parse rather
-        // than error.
+        // An absent `steps` array is a legitimate payload — the caller reports
+        // it as an uninspectable green — so this must parse rather than error.
         let steps = parse_steps(r#"{"id": 1, "conclusion": "success"}"#).expect("valid");
         assert!(steps.is_empty());
     }

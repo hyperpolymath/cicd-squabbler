@@ -190,9 +190,19 @@ evidence-required = ["run-count", "stub-rate", "upstream-exists", "target-tech-p
 #   "Run Patch Bridge triage"  / "Create stub report (when unavailable)"                 27/33
 # Neither is covered here. The matcher quantifies with `all`, so one signature
 # describes one scanner; and each scanner is a separate JOB, hence a separate
-# check, so those checks classify `Genuine` today. That is an UNDERCOUNT, never
-# a false alarm. A second signature needs a repeatable table in this file plus a
-# parser change, so it is filed rather than bodged in.
+# check, so an unmatched scanner is NOT escalated on the signature. That is an
+# UNDERCOUNT, never a false alarm — with one stated exception: a job that
+# concluded success having recorded steps, every one of them SKIPPED, is
+# reported `all-steps-skipped` whether or not any signature matched. That is
+# not a false alarm either; a job that ran nothing enforced nothing, and the
+# finding stands on its own terms without naming a scanner.
+#
+# A green whose job records NO steps at all is the opposite case: absence of
+# evidence, not evidence of absence. It is reported to the operator on stderr
+# and classified `Genuine`, never escalated.
+#
+# A second signature needs a repeatable table in this file plus a parser
+# change, so it is filed rather than bodged in.
 signature-covers = ["hypatia"]
 signature-not-yet-covered = ["panic-attack", "patch-bridge"]
 

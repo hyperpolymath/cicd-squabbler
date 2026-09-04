@@ -142,14 +142,29 @@ fn classify_greens(args: &FightArgs, greens: &[fetch::GreenCheck]) -> Vec<Move> 
                 continue;
             }
         };
+        if steps.is_empty() {
+            // The jobs API returned no steps. That is absence of evidence, not
+            // evidence the job ran nothing, so `classify` refuses to escalate
+            // it — but `no-silent-skip` still owes the operator a word, exactly
+            // as the fetch-error branch above does.
+            eprintln!(
+                "squabble fight: green check `{}` recorded no steps — not inspectable, not judged",
+                g.name
+            );
+            continue;
+        }
         // One run inspected, and it is the run being judged. `upstream-exists`
         // and `target-tech-present` are not observable from the jobs API — no
         // gate declares the globs that would make them computable — so they are
         // reported `unmeasured` rather than asserted, which also keeps the
         // recommendation on the non-destructive branch.
+        //
+        // With `run_count == 1` the stub rate can only be 0.0 or 1.0, and it is
+        // measured from the same predicate `classify` uses rather than assumed:
+        // hardcoding 1.0 reported stub evidence for jobs that genuinely ran.
         let evidence = Evidence {
             run_count: 1,
-            stub_rate: 1.0,
+            stub_rate: if signature.matches(&steps) { 1.0 } else { 0.0 },
             upstream_exists: None,
             target_tech_present: None,
         };
