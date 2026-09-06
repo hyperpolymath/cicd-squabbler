@@ -64,6 +64,7 @@ let base    = import "../_base.ncl" in
       allow_network = false,
       allow_filesystem_write = false,   # evidence sinks are indirected
       allow_subprocess = true,
+      signature_required = true,
     },
   },
 

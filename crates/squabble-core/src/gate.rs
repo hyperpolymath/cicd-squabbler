@@ -26,7 +26,6 @@ pub enum CheckRun {
     Passed,
 }
 
-
 /// Why a required context shows [`CheckRun::Missing`].
 ///
 /// `Missing` is the gate's most common stuck state and its least actionable one:
@@ -234,9 +233,15 @@ mod tests {
     #[test]
     fn missing_cause_is_optional_and_does_not_alter_gate_state() {
         // A diagnosis explains a stuck gate; it must never move it.
-        let undiagnosed = Gate::new(vec![RequiredCheck::new("scan / gitleaks", CheckRun::Missing)]);
-        let diagnosed = Gate::new(vec![RequiredCheck::new("scan / gitleaks", CheckRun::Missing)
-            .with_cause(MissingCause::DeadActionPin)]);
+        let undiagnosed = Gate::new(vec![RequiredCheck::new(
+            "scan / gitleaks",
+            CheckRun::Missing,
+        )]);
+        let diagnosed = Gate::new(vec![RequiredCheck::new(
+            "scan / gitleaks",
+            CheckRun::Missing,
+        )
+        .with_cause(MissingCause::DeadActionPin)]);
         assert_eq!(undiagnosed.evaluate(), GateState::Blocked);
         assert_eq!(diagnosed.evaluate(), GateState::Blocked);
         assert_eq!(diagnosed.evaluate(), undiagnosed.evaluate());
@@ -244,7 +249,9 @@ mod tests {
 
     #[test]
     fn remedy_is_offered_only_for_diagnosed_missing_checks() {
-        assert!(RequiredCheck::new("x", CheckRun::Missing).remedy().is_none());
+        assert!(RequiredCheck::new("x", CheckRun::Missing)
+            .remedy()
+            .is_none());
         assert!(RequiredCheck::new("x", CheckRun::Passed)
             .with_cause(MissingCause::NoSuchJob)
             .remedy()
@@ -270,7 +277,11 @@ mod tests {
                 RequiredCheck::new("a", CheckRun::Passed),
                 RequiredCheck::new("b", CheckRun::Missing).with_cause(cause),
             ]);
-            assert_ne!(g.evaluate(), GateState::Green, "{cause:?} must not reach Green");
+            assert_ne!(
+                g.evaluate(),
+                GateState::Green,
+                "{cause:?} must not reach Green"
+            );
         }
     }
 }

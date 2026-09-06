@@ -11,9 +11,10 @@ K9!
 let methodology_guard = {
   pedigree = {
     schema_version = "1.0.0",
+    component_type = "validated-config",
     security = {
       leash = 'Yard,
-      trust_level = "read-only comparison",
+      trust_level = "validated-config",
       allow_network = false,
       allow_filesystem_write = false,
       allow_subprocess = false,
@@ -22,6 +23,7 @@ let methodology_guard = {
       name = "methodology-guard",
       version = "1.0.0",
       description = "Validates that agent work respects declared methodology constraints",
+      author = "{{AUTHOR}} <{{AUTHOR_EMAIL}}>",
     },
   },
 

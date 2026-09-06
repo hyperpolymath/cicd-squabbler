@@ -164,12 +164,26 @@ validate_k9() {
     local has_signature_field=false
     local in_pedigree=false
     local pedigree_depth=0
+    local pedigree_alias=""
+
+    # Resolve a simple top-level pedigree alias (for example,
+    # `pedigree = component_pedigree`) before scanning the file. The aliased
+    # block can be declared before the exported record, so this must be a
+    # separate pass.
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*pedigree[[:space:]]*=[[:space:]]*([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*,?[[:space:]]*(#.*)?$ ]]; then
+            pedigree_alias="${BASH_REMATCH[1]}"
+            has_pedigree=true
+            break
+        fi
+    done < "$file"
 
     line_num=0
     while IFS= read -r line; do
         line_num=$((line_num + 1))
 
-        # Detect pedigree block start. Note: do NOT `continue` here — the
+        # Detect a literal pedigree block or the declaration of a resolved
+        # pedigree alias. Note: do NOT `continue` here — the
         # `pedigree = {` line itself contains the opening brace that
         # establishes the block. Falling through to the brace counter
         # below makes depth start at 1, so a subsequent `security = {…},`
@@ -179,7 +193,8 @@ validate_k9() {
         # brace, depth started at 0, and the first nested block's close
         # prematurely terminated the validator's view of the pedigree —
         # making `pedigree.metadata.name` invisible.
-        if [[ "$line" =~ ^[[:space:]]*pedigree[[:space:]]*= ]]; then
+        if [[ "$line" =~ ^[[:space:]]*pedigree[[:space:]]*=.*\{ ]] || \
+           [[ -n "$pedigree_alias" && "$line" =~ ^[[:space:]]*let[[:space:]]+$pedigree_alias[[:space:]]*=[[:space:]]*\{ ]]; then
             has_pedigree=true
             in_pedigree=true
             pedigree_depth=0

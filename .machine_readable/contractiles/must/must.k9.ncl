@@ -73,6 +73,7 @@ let base    = import "../_base.ncl" in
         'external_api,
         'exploit_attempt,          # that's trust's safe_hacking territory
       ],
+      signature_required = true,
     },
   },
 
