@@ -1,5 +1,19 @@
 K9!
 # Local repository session checks (thin policy layer)
+#
+# pedigree (K9 self-description; see .machine_readable/self-validating/README.adoc)
+pedigree = {
+  schema_version = "1.0.0",
+  security = {
+    leash = 'Kennel,
+  },
+  metadata = {
+    name = "custom-checks",
+    version = "0.1.0",
+    description = "Local repository session checks (thin policy layer)",
+  },
+}
+
 version: "0.1"
 
 checks:
