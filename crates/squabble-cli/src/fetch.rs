@@ -468,7 +468,7 @@ mod polarity_plumbing_tests {
             .parent()
             .and_then(|p| p.parent())
             .expect("workspace root");
-        let sig = squabble_fight::gate_triage::load_signature(root);
+        let sig = squabble_fight::gate_triage::load_signatures(root);
         let verdict = squabble_core::polarity::classify(
             &steps,
             &sig,
@@ -506,7 +506,7 @@ mod polarity_plumbing_tests {
             .parent()
             .and_then(|p| p.parent())
             .expect("workspace root");
-        let sig = squabble_fight::gate_triage::load_signature(root);
+        let sig = squabble_fight::gate_triage::load_signatures(root);
         let verdict = squabble_core::polarity::classify(
             &steps,
             &sig,
