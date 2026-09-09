@@ -15,6 +15,7 @@ use squabble_core::moves::Move;
 use squabble_core::outcome::Escalation;
 use squabble_core::polarity::Evidence;
 use squabble_core::outcome::Outcome;
+use squabble_core::polarity::{Applicability, Evidence, RepoDeclaration};
 use squabble_fight::context::RepoContext;
 use std::path::PathBuf;
 use std::process::ExitCode;

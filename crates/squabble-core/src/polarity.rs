@@ -492,7 +492,10 @@ pub fn classify(
 
     let cause = if signature.matches(steps) {
         Some(VacuityCause::StubbedAfterSkippedScan)
-    } else if steps.iter().all(|s| s.conclusion == StepConclusion::Skipped) {
+    } else if steps
+        .iter()
+        .all(|s| s.conclusion == StepConclusion::Skipped)
+    {
         Some(VacuityCause::AllStepsSkipped)
     } else {
         None
@@ -669,7 +672,10 @@ mod tests {
         // A skip is half the signature, so anything we do not model must never
         // be mistaken for one.
         assert_eq!(StepConclusion::parse(None), StepConclusion::Other);
-        assert_eq!(StepConclusion::parse(Some("neutral")), StepConclusion::Other);
+        assert_eq!(
+            StepConclusion::parse(Some("neutral")),
+            StepConclusion::Other
+        );
         assert_eq!(
             StepConclusion::parse(Some("skipped")),
             StepConclusion::Skipped
@@ -830,7 +836,9 @@ mod tests {
             Recommendation::MakeItGreatInPractice
         );
         assert!(
-            unmeasured.describe().contains("target-tech-present=unmeasured"),
+            unmeasured
+                .describe()
+                .contains("target-tech-present=unmeasured"),
             "got `{}`",
             unmeasured.describe()
         );
@@ -878,13 +886,11 @@ mod tests {
     #[test]
     fn genuine_and_not_applicable_project_to_nothing() {
         assert!(PolarityVerdict::Genuine.to_move("c").is_none());
-        assert!(
-            PolarityVerdict::NotApplicable {
-                declaration: "d".into()
-            }
-            .to_move("c")
-            .is_none()
-        );
+        assert!(PolarityVerdict::NotApplicable {
+            declaration: "d".into()
+        }
+        .to_move("c")
+        .is_none());
     }
 
     // ---- the Rust witness of the SPARK theorem ------------------------------

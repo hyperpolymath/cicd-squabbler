@@ -344,7 +344,8 @@ mod polarity_plumbing_tests {
     #[test]
     fn a_job_id_is_read_from_a_real_details_url() {
         // Shape taken from a live `gh pr view --json statusCheckRollup`.
-        let url = "https://github.com/hyperpolymath/standards/actions/runs/33817314194/job/100852208701";
+        let url =
+            "https://github.com/hyperpolymath/standards/actions/runs/33817314194/job/100852208701";
         assert_eq!(job_id_from_details_url(url), Some(100852208701));
     }
 
@@ -354,7 +355,8 @@ mod polarity_plumbing_tests {
         // of course. Cutting the id on `/` alone leaves the suffix attached,
         // `parse::<u64>` fails, and the green is skipped without a word — the
         // exact silent undercount this module exists to prevent.
-        let base = "https://github.com/hyperpolymath/standards/actions/runs/33817314194/job/100852208701";
+        let base =
+            "https://github.com/hyperpolymath/standards/actions/runs/33817314194/job/100852208701";
         for suffix in ["?check_suite_focus=true", "#step:4:1", "?a=1#step:2:9"] {
             let url = format!("{base}{suffix}");
             assert_eq!(
@@ -374,19 +376,14 @@ mod polarity_plumbing_tests {
             None
         );
         assert_eq!(
-            job_id_from_details_url(
-                "https://github.com/o/r/actions/runs/1"
-            ),
+            job_id_from_details_url("https://github.com/o/r/actions/runs/1"),
             None
         );
     }
 
     #[test]
     fn an_external_job_url_is_not_treated_as_a_github_actions_job() {
-        assert_eq!(
-            job_id_from_details_url("https://ci.example/job/42"),
-            None
-        );
+        assert_eq!(job_id_from_details_url("https://ci.example/job/42"), None);
     }
 
     #[test]
