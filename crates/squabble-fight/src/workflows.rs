@@ -45,6 +45,10 @@ pub struct WorkflowInfo {
     pub reusable_repos: Vec<String>,
     /// True if the file declares an `on.*.paths` trigger filter.
     pub path_filtered: bool,
+    /// Executable policy contradicts the canonical descriptile location.
+    pub retired_descriptile_policy: bool,
+    /// A bare jobs block contains only whitespace or commented examples.
+    pub empty_jobs: bool,
     pub kind: WorkflowKind,
 }
 
@@ -117,6 +121,25 @@ impl WorkflowFacts {
     pub fn classify(&self, check: &RequiredCheck, slug: &str) -> Option<Move> {
         let name = check.required_context.as_str();
         let w = self.find_emitting(name)?;
+
+        if w.retired_descriptile_policy {
+            return Some(Move::FlagNonFunctionalGate {
+                check: name.to_string(),
+                evidence: format!(
+                    "`{}` requires a retired descriptile path; reconcile its policy with .machine_readable/descriptiles/ and SD004 before retrying",
+                    w.file
+                ),
+            });
+        }
+        if w.empty_jobs {
+            return Some(Move::FlagNonFunctionalGate {
+                check: name.to_string(),
+                evidence: format!(
+                    "`{}` contains only commented jobs; GitHub cannot create a check from this template",
+                    w.file
+                ),
+            });
+        }
 
         // 1. Owned upstream: the job delegates to a reusable workflow living in
         //    another repo. The fix belongs there, not on this PR.
@@ -252,8 +275,50 @@ fn parse_workflow(file: &str, text: &str) -> WorkflowInfo {
         job_names,
         reusable_repos,
         path_filtered,
+        retired_descriptile_policy: has_retired_descriptile_policy(text),
+        empty_jobs: has_empty_jobs(text),
         kind,
     }
+}
+
+fn has_retired_descriptile_policy(text: &str) -> bool {
+    text.lines().any(|line| {
+        let line = line.trim();
+        !line.starts_with('#')
+            && (line.contains("-f ") || line.contains("-e ") || line.contains("check_file "))
+            && [
+                "STATE",
+                "META",
+                "ECOSYSTEM",
+                "AGENTIC",
+                "NEUROSYM",
+                "PLAYBOOK",
+                "ANCHOR",
+            ]
+            .iter()
+            .any(|name| {
+                line.contains(&format!(".machine_readable/{name}.a2ml"))
+                    || line.contains(&format!(".machine_readable/6a2/{name}.a2ml"))
+            })
+    })
+}
+
+fn has_empty_jobs(text: &str) -> bool {
+    let mut in_jobs = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if in_jobs {
+            // A non-comment indented value is outside this narrow diagnosis.
+            return !line.starts_with(char::is_whitespace);
+        }
+        if line == "jobs:" {
+            in_jobs = true;
+        }
+    }
+    in_jobs
 }
 
 /// Extract `owner/repo` from a reusable-workflow `uses:` line, i.e. one whose
@@ -535,5 +600,42 @@ jobs:
                 "hyperpolymath/ipv6-only"
             )
             .is_none());
+    }
+    #[test]
+    fn retired_policy_is_a_gate_conflict_with_a_canonical_negative_control() {
+        let bad = "name: Compliance\njobs:\n  compliance:\n    steps:\n      - run: test -f .machine_readable/STATE.a2ml\n";
+        let parsed = parse_workflow("compliance.yml", bad);
+        assert!(parsed.retired_descriptile_policy);
+        let facts = WorkflowFacts {
+            workflows: vec![parsed],
+        };
+        assert!(matches!(
+            facts.classify(&req("compliance", CheckRun::Missing), "owner/repo"),
+            Some(Move::FlagNonFunctionalGate { .. })
+        ));
+        let fixed = bad.replace(
+            ".machine_readable/STATE",
+            ".machine_readable/descriptiles/STATE",
+        );
+        assert!(!parse_workflow("compliance.yml", &fixed).retired_descriptile_policy);
+        assert!(!has_retired_descriptile_policy(
+            "# test -f .machine_readable/STATE.a2ml"
+        ));
+    }
+
+    #[test]
+    fn commented_jobs_cannot_supply_a_check() {
+        let template = "name: E2E\njobs:\n  # test:\n  #   runs-on: ubuntu-latest\n";
+        let parsed = parse_workflow("e2e.yml", template);
+        assert!(parsed.empty_jobs);
+        let facts = WorkflowFacts {
+            workflows: vec![parsed],
+        };
+        assert!(matches!(
+            facts.classify(&req("E2E", CheckRun::Missing), "owner/repo"),
+            Some(Move::FlagNonFunctionalGate { .. })
+        ));
+        assert!(!has_empty_jobs("jobs:\n  test:\n    steps: []\n"));
+        assert!(!has_empty_jobs("# jobs:\n"));
     }
 }
