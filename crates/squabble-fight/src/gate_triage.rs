@@ -62,7 +62,9 @@ evidence-required = ["run-count", "stub-rate", "upstream-exists", "target-tech-p
         // `signature-skipped-steps` and `signature-success-steps` share a long
         // prefix; a sloppy prefix match would merge them.
         let sig = parse_signature(DIRECTIVE);
-        assert!(!sig.skipped_steps.contains(&"Create stub findings".to_string()));
+        assert!(!sig
+            .skipped_steps
+            .contains(&"Create stub findings".to_string()));
         assert!(!sig.success_steps.contains(&"Run Hypatia scan".to_string()));
     }
 
