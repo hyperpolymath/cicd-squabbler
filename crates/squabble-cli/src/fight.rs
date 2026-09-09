@@ -13,6 +13,7 @@ use crate::fetch;
 use squabble_core::gate::Gate;
 use squabble_core::moves::Move;
 use squabble_core::outcome::Escalation;
+use squabble_core::polarity::Evidence;
 use squabble_core::outcome::Outcome;
 use squabble_core::polarity::{Applicability, Evidence, RepoDeclaration};
 use squabble_fight::context::RepoContext;
@@ -117,16 +118,25 @@ pub fn run(rest: &[String]) -> ExitCode {
 /// `fight` only ever classifies reds, so a check that could not run reports
 /// green and is never inspected. This is the missing polarity.
 fn classify_greens(args: &FightArgs, greens: &[fetch::GreenCheck]) -> Vec<Move> {
-    let signature = squabble_fight::gate_triage::load_signature(&args.repo_root);
+    let signature = squabble_fight::gate_triage::load_signatures(&args.repo_root);
     if !signature.is_usable() {
         // Fail-safe: no directive means "detect no vacuity", never "detect it
         // everywhere". It also costs zero API calls on repos without one.
         return Vec::new();
     }
-    // No gate declares an applicability predicate today, so Axis 0 falls
-    // through to the signature. Stated explicitly rather than assumed.
-    let applicability = Applicability::default();
-    let declared = RepoDeclaration::default();
+    // Axis 0, read from the directive rather than defaulted. Both loads are
+    // fail-safe: an absent predicate short-circuits in `applicability_verdict`
+    // ("applies here"), and an absent manifest key stays `None` rather than
+    // becoming a mismatch.
+    //
+    // Honest about reach: measured 2026-09-09, no repo declares
+    // `runs-on-channels` / `runs-for-operator-types` and no manifest carries
+    // `@gitforge_OperatorType` / `@channel`, so this reads empty everywhere
+    // today and changes no verdict. The point is that a declaration written
+    // tomorrow now takes effect, which passing `Default::default()` made
+    // impossible.
+    let applicability = squabble_fight::gate_triage::load_applicability(&args.repo_root);
+    let declared = squabble_fight::gate_triage::load_declaration(&args.repo_root);
 
     let mut moves = Vec::new();
     for g in greens {

@@ -137,6 +137,88 @@ impl VacuitySignature {
     }
 }
 
+/// One scanner's signature, plus the scanner it names.
+///
+/// The name is carried for the *directive*'s sake — so a table entry is
+/// self-describing and a census line can be attached to it — not for the
+/// verdict. Each scanner is a separate JOB hence a separate check, so the
+/// check name already identifies which scanner went vacuous; putting the
+/// name in the cause would duplicate that and force `VacuityCause` to stop
+/// being `Copy`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScannerSignature {
+    /// The scanner this entry describes, e.g. `"hypatia"`. Documentation and
+    /// diagnostics only — never matched against.
+    pub scanner: String,
+    /// The step-name conjunction for that scanner.
+    pub signature: VacuitySignature,
+}
+
+/// Every scanner signature the host knows about.
+///
+/// # Why a set, and why the two quantifiers differ
+///
+/// [`VacuitySignature::matches`] is a CONJUNCTION: all of *this* scanner's
+/// steps must line up, because a partial match is a legitimately optional
+/// step rather than vacuity. That is exactly why one signature can only ever
+/// describe one scanner — and the `static-analysis-gate.yml` workflow carries
+/// three stub paths, in three separate jobs.
+///
+/// So the set quantifies with `any`: a job is vacuous if it matches ANY
+/// scanner's signature, having matched that scanner's steps in full.
+///
+/// The disjunction cannot leak across scanners. [`step_concluded`] returns
+/// `false` for a step that is absent from the list, so signature A cannot
+/// match a job that never recorded A's steps — the panic-attack job cannot be
+/// judged by the hypatia signature. That is asserted in the tests, not
+/// assumed.
+///
+/// An empty set is *unusable*, preserving the fail-safe: no directive means
+/// "detect no vacuity", never "detect vacuity everywhere".
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SignatureSet {
+    pub signatures: Vec<ScannerSignature>,
+}
+
+impl SignatureSet {
+    /// Build a set from `(scanner, signature)` pairs.
+    pub fn new(entries: Vec<ScannerSignature>) -> Self {
+        SignatureSet { signatures: entries }
+    }
+
+    /// A one-scanner set — the shape the host had before multi-scanner
+    /// support, kept so a single signature is still expressible directly.
+    pub fn single(scanner: &str, signature: VacuitySignature) -> Self {
+        SignatureSet {
+            signatures: vec![ScannerSignature {
+                scanner: scanner.to_string(),
+                signature,
+            }],
+        }
+    }
+
+    /// Usable when **at least one** member is usable.
+    ///
+    /// Not `all`: a directive that describes three scanners and fumbles one
+    /// should still detect the other two. An unusable member matches nothing
+    /// (that guard lives in [`VacuitySignature::matches`]), so carrying it is
+    /// inert rather than dangerous.
+    pub fn is_usable(&self) -> bool {
+        self.signatures.iter().any(|s| s.signature.is_usable())
+    }
+
+    /// Does any member match `steps`?
+    pub fn matches(&self, steps: &[StepOutcome]) -> bool {
+        self.matching(steps).is_some()
+    }
+
+    /// Which member matched, if any — the same question as [`Self::matches`],
+    /// but retaining the scanner name for diagnostics.
+    pub fn matching(&self, steps: &[StepOutcome]) -> Option<&ScannerSignature> {
+        self.signatures.iter().find(|s| s.signature.matches(steps))
+    }
+}
+
 /// What a gate declares about *where it applies* — the directive's
 /// `@gitforge_OperatorType` / `@channel` axis.
 ///
@@ -384,7 +466,7 @@ fn applicability_verdict(
 /// module has no opinion about them.
 pub fn classify(
     steps: &[StepOutcome],
-    signature: &VacuitySignature,
+    signature: &SignatureSet,
     applicability: &Applicability,
     declared: &RepoDeclaration,
     evidence: Evidence,
@@ -440,6 +522,13 @@ mod tests {
         VacuitySignature::new(&["Run Hypatia scan"], &["Create stub findings"])
     }
 
+    /// The same signature as a one-scanner set — the shape `classify` now
+    /// takes. Kept separate from `sig()` so the tests that exercise the
+    /// CONJUNCTION still speak to a single `VacuitySignature` directly.
+    fn sigset() -> SignatureSet {
+        SignatureSet::single("hypatia", sig())
+    }
+
     fn ev(tech: bool, upstream: bool, rate: f64) -> Evidence {
         Evidence {
             run_count: 4,
@@ -452,7 +541,7 @@ mod tests {
     fn classify_steps(steps: &[StepOutcome]) -> PolarityVerdict {
         classify(
             steps,
-            &sig(),
+            &sigset(),
             &Applicability::default(),
             &RepoDeclaration::default(),
             ev(true, true, 1.0),
@@ -508,7 +597,7 @@ mod tests {
         // green into a finding. `is_usable` is what stops that.
         let v = classify(
             &[StepOutcome::new("Build", StepConclusion::Success)],
-            &VacuitySignature::default(),
+            &SignatureSet::default(),
             &Applicability::default(),
             &RepoDeclaration::default(),
             ev(true, true, 0.0),
@@ -598,8 +687,8 @@ mod tests {
     #[test]
     fn declared_and_unmatched_is_not_applicable() {
         let v = classify(
-            &[], // uninspectable; Axis 0 answers before steps are consulted
-            &sig(),
+            &[],  // uninspectable; Axis 0 answers before steps are consulted
+            &sigset(),
             &Applicability {
                 runs_for_operator_types: vec!["platform_maintainer".into()],
                 runs_on_channels: vec![],
@@ -620,7 +709,7 @@ mod tests {
     fn an_unmatched_channel_is_also_not_applicable() {
         let v = classify(
             &[],
-            &sig(),
+            &sigset(),
             &Applicability {
                 runs_for_operator_types: vec![],
                 runs_on_channels: vec!["nightly".into(), "alpha".into()],
@@ -647,7 +736,7 @@ mod tests {
                 StepOutcome::new("Run Hypatia scan", StepConclusion::Skipped),
                 StepOutcome::new("Create stub findings", StepConclusion::Success),
             ],
-            &sig(),
+            &sigset(),
             &Applicability::default(),
             &RepoDeclaration {
                 operator_type: Some("user".into()),
@@ -668,7 +757,7 @@ mod tests {
                 StepOutcome::new("Run Hypatia scan", StepConclusion::Skipped),
                 StepOutcome::new("Create stub findings", StepConclusion::Success),
             ],
-            &sig(),
+            &sigset(),
             &Applicability {
                 runs_for_operator_types: vec!["developer".into()],
                 runs_on_channels: vec!["alpha".into()],
@@ -688,7 +777,7 @@ mod tests {
         // that can only escalate, never green.
         let v = classify(
             &[StepOutcome::new("Build", StepConclusion::Success)],
-            &sig(),
+            &sigset(),
             &Applicability {
                 runs_on_channels: vec!["nightly".into()],
                 runs_for_operator_types: vec![],
@@ -830,5 +919,43 @@ mod tests {
             before,
             "polarity classification must never move the proved gate state"
         );
+    }
+
+    // ---- the set quantifies with ANY, the member with ALL -------------------
+
+    #[test]
+    fn an_unusable_member_cannot_drag_the_set_down() {
+        // A directive that describes three scanners and fumbles one must still
+        // detect the other two. The fumbled member matches nothing anyway.
+        let set = SignatureSet::new(vec![
+            ScannerSignature {
+                scanner: "broken".to_string(),
+                signature: VacuitySignature::new(&["Run something"], &[]),
+            },
+            ScannerSignature {
+                scanner: "hypatia".to_string(),
+                signature: sig(),
+            },
+        ]);
+        assert!(set.is_usable());
+        assert_eq!(
+            set.matching(&[
+                StepOutcome { name: "Run Hypatia scan".into(), conclusion: StepConclusion::Skipped },
+                StepOutcome { name: "Create stub findings".into(), conclusion: StepConclusion::Success },
+            ])
+            .map(|s| s.scanner.as_str()),
+            Some("hypatia")
+        );
+    }
+
+    #[test]
+    fn an_empty_set_matches_nothing() {
+        // Fail-safe, at the type that `classify` now takes.
+        let set = SignatureSet::default();
+        assert!(!set.is_usable());
+        assert!(!set.matches(&[StepOutcome {
+            name: "Run Hypatia scan".into(),
+            conclusion: StepConclusion::Skipped
+        }]));
     }
 }
