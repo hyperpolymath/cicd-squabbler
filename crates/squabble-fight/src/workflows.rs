@@ -284,22 +284,50 @@ fn parse_workflow(file: &str, text: &str) -> WorkflowInfo {
 fn has_retired_descriptile_policy(text: &str) -> bool {
     text.lines().any(|line| {
         let line = line.trim();
-        !line.starts_with('#')
-            && (line.contains("-f ") || line.contains("-e ") || line.contains("check_file "))
-            && [
-                "STATE",
-                "META",
-                "ECOSYSTEM",
-                "AGENTIC",
-                "NEUROSYM",
-                "PLAYBOOK",
-                "ANCHOR",
-            ]
-            .iter()
-            .any(|name| {
-                line.contains(&format!(".machine_readable/{name}.a2ml"))
-                    || line.contains(&format!(".machine_readable/6a2/{name}.a2ml"))
-            })
+        let line = line
+            .strip_prefix("- run:")
+            .or_else(|| line.strip_prefix("run:"))
+            .unwrap_or(line)
+            .trim();
+        let mut words = line.split_whitespace().peekable();
+        if matches!(words.peek(), Some(&"if" | &"elif" | &"while" | &"until")) {
+            words.next();
+        }
+        if words.peek() == Some(&"!") {
+            words.next();
+        }
+        let target = match words.next() {
+            Some("check_file") => words.next(),
+            Some("test" | "[" | "[[") => {
+                if words.peek() == Some(&"!") {
+                    words.next();
+                }
+                if matches!(words.next(), Some("-f" | "-e")) {
+                    words.next()
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        let Some(target) = target else {
+            return false;
+        };
+        let target = target.trim_end_matches(';').trim_matches(['\'', '"']);
+        [
+            "STATE",
+            "META",
+            "ECOSYSTEM",
+            "AGENTIC",
+            "NEUROSYM",
+            "PLAYBOOK",
+            "ANCHOR",
+        ]
+        .iter()
+        .any(|name| {
+            target == format!(".machine_readable/{name}.a2ml")
+                || target == format!(".machine_readable/6a2/{name}.a2ml")
+        })
     })
 }
 
@@ -620,6 +648,9 @@ jobs:
         assert!(!parse_workflow("compliance.yml", &fixed).retired_descriptile_policy);
         assert!(!has_retired_descriptile_policy(
             "# test -f .machine_readable/STATE.a2ml"
+        ));
+        assert!(!has_retired_descriptile_policy(
+            "- run: echo 'test -f .machine_readable/STATE.a2ml'"
         ));
     }
 
