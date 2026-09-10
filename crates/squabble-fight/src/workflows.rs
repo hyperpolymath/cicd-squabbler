@@ -284,11 +284,26 @@ fn parse_workflow(file: &str, text: &str) -> WorkflowInfo {
 fn has_retired_descriptile_policy(text: &str) -> bool {
     text.lines().any(|line| {
         let line = line.trim();
-        let line = line
+        let scalar = line
             .strip_prefix("- run:")
-            .or_else(|| line.strip_prefix("run:"))
-            .unwrap_or(line)
-            .trim();
+            .or_else(|| line.strip_prefix("run:"));
+        // Decode YAML quoting before interpreting the shell command. Stripping
+        // delimiters alone loses escapes and can turn quoted prose into code.
+        let decoded;
+        let line = if let Some(scalar) = scalar {
+            let scalar = scalar.trim();
+            if scalar.starts_with(['\'', '"']) {
+                let Ok(value) = serde_yaml_ng::from_str::<String>(scalar) else {
+                    return false;
+                };
+                decoded = value;
+                decoded.trim()
+            } else {
+                scalar
+            }
+        } else {
+            line
+        };
         let mut words = line.split_whitespace().peekable();
         if matches!(words.peek(), Some(&"if" | &"elif" | &"while" | &"until")) {
             words.next();
@@ -342,7 +357,10 @@ fn has_empty_jobs(text: &str) -> bool {
             // A non-comment indented value is outside this narrow diagnosis.
             return !line.starts_with(char::is_whitespace);
         }
-        if line == "jobs:" {
+        if line.strip_prefix("jobs:").is_some_and(|rest| {
+            let rest = rest.trim();
+            rest.is_empty() || rest.starts_with('#')
+        }) {
             in_jobs = true;
         }
     }
@@ -652,6 +670,17 @@ jobs:
         assert!(!has_retired_descriptile_policy(
             "- run: echo 'test -f .machine_readable/STATE.a2ml'"
         ));
+        for scalar in [
+            r#"run: "test -f .machine_readable/STATE.a2ml""#,
+            r#"run: 'test -f .machine_readable/STATE.a2ml'"#,
+            r#"run: "test\x20-f\u0020.machine_readable/STATE.a2ml""#,
+            r#"run: "test -f \".machine_readable/STATE.a2ml\"""#,
+        ] {
+            assert!(has_retired_descriptile_policy(scalar), "{scalar}");
+        }
+        assert!(!has_retired_descriptile_policy(
+            r#"- run: "printf '%s\n' '# test -f .machine_readable/STATE.a2ml'""#
+        ));
     }
 
     #[test]
@@ -668,5 +697,10 @@ jobs:
         ));
         assert!(!has_empty_jobs("jobs:\n  test:\n    steps: []\n"));
         assert!(!has_empty_jobs("# jobs:\n"));
+        assert!(has_empty_jobs("jobs: # template\n  # test:\n"));
+        assert!(!has_empty_jobs(
+            "jobs: # real jobs\n  test:\n    steps: []\n"
+        ));
+        assert!(!has_empty_jobs("jobs: { test: {} }\n"));
     }
 }
