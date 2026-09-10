@@ -45,6 +45,10 @@ pub struct WorkflowInfo {
     pub reusable_repos: Vec<String>,
     /// True if the file declares an `on.*.paths` trigger filter.
     pub path_filtered: bool,
+    /// Executable policy contradicts the canonical descriptile location.
+    pub retired_descriptile_policy: bool,
+    /// A bare jobs block contains only whitespace or commented examples.
+    pub empty_jobs: bool,
     pub kind: WorkflowKind,
 }
 
@@ -117,6 +121,25 @@ impl WorkflowFacts {
     pub fn classify(&self, check: &RequiredCheck, slug: &str) -> Option<Move> {
         let name = check.required_context.as_str();
         let w = self.find_emitting(name)?;
+
+        if w.retired_descriptile_policy {
+            return Some(Move::FlagNonFunctionalGate {
+                check: name.to_string(),
+                evidence: format!(
+                    "`{}` requires a retired descriptile path; reconcile its policy with .machine_readable/descriptiles/ and SD004 before retrying",
+                    w.file
+                ),
+            });
+        }
+        if w.empty_jobs {
+            return Some(Move::FlagNonFunctionalGate {
+                check: name.to_string(),
+                evidence: format!(
+                    "`{}` contains only commented jobs; GitHub cannot create a check from this template",
+                    w.file
+                ),
+            });
+        }
 
         // 1. Owned upstream: the job delegates to a reusable workflow living in
         //    another repo. The fix belongs there, not on this PR.
@@ -252,8 +275,96 @@ fn parse_workflow(file: &str, text: &str) -> WorkflowInfo {
         job_names,
         reusable_repos,
         path_filtered,
+        retired_descriptile_policy: has_retired_descriptile_policy(text),
+        empty_jobs: has_empty_jobs(text),
         kind,
     }
+}
+
+fn has_retired_descriptile_policy(text: &str) -> bool {
+    text.lines().any(|line| {
+        let line = line.trim();
+        let scalar = line
+            .strip_prefix("- run:")
+            .or_else(|| line.strip_prefix("run:"));
+        // Decode YAML quoting before interpreting the shell command. Stripping
+        // delimiters alone loses escapes and can turn quoted prose into code.
+        let decoded;
+        let line = if let Some(scalar) = scalar {
+            let scalar = scalar.trim();
+            if scalar.starts_with(['\'', '"']) {
+                let Ok(value) = serde_yaml_ng::from_str::<String>(scalar) else {
+                    return false;
+                };
+                decoded = value;
+                decoded.trim()
+            } else {
+                scalar
+            }
+        } else {
+            line
+        };
+        let mut words = line.split_whitespace().peekable();
+        if matches!(words.peek(), Some(&"if" | &"elif" | &"while" | &"until")) {
+            words.next();
+        }
+        if words.peek() == Some(&"!") {
+            words.next();
+        }
+        let target = match words.next() {
+            Some("check_file") => words.next(),
+            Some("test" | "[" | "[[") => {
+                if words.peek() == Some(&"!") {
+                    words.next();
+                }
+                if matches!(words.next(), Some("-f" | "-e")) {
+                    words.next()
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        let Some(target) = target else {
+            return false;
+        };
+        let target = target.trim_end_matches(';').trim_matches(['\'', '"']);
+        [
+            "STATE",
+            "META",
+            "ECOSYSTEM",
+            "AGENTIC",
+            "NEUROSYM",
+            "PLAYBOOK",
+            "ANCHOR",
+        ]
+        .iter()
+        .any(|name| {
+            target == format!(".machine_readable/{name}.a2ml")
+                || target == format!(".machine_readable/6a2/{name}.a2ml")
+        })
+    })
+}
+
+fn has_empty_jobs(text: &str) -> bool {
+    let mut in_jobs = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if in_jobs {
+            // A non-comment indented value is outside this narrow diagnosis.
+            return !line.starts_with(char::is_whitespace);
+        }
+        if line.strip_prefix("jobs:").is_some_and(|rest| {
+            let rest = rest.trim();
+            rest.is_empty() || rest.starts_with('#')
+        }) {
+            in_jobs = true;
+        }
+    }
+    in_jobs
 }
 
 /// Extract `owner/repo` from a reusable-workflow `uses:` line, i.e. one whose
@@ -535,5 +646,61 @@ jobs:
                 "hyperpolymath/ipv6-only"
             )
             .is_none());
+    }
+    #[test]
+    fn retired_policy_is_a_gate_conflict_with_a_canonical_negative_control() {
+        let bad = "name: Compliance\njobs:\n  compliance:\n    steps:\n      - run: test -f .machine_readable/STATE.a2ml\n";
+        let parsed = parse_workflow("compliance.yml", bad);
+        assert!(parsed.retired_descriptile_policy);
+        let facts = WorkflowFacts {
+            workflows: vec![parsed],
+        };
+        assert!(matches!(
+            facts.classify(&req("compliance", CheckRun::Missing), "owner/repo"),
+            Some(Move::FlagNonFunctionalGate { .. })
+        ));
+        let fixed = bad.replace(
+            ".machine_readable/STATE",
+            ".machine_readable/descriptiles/STATE",
+        );
+        assert!(!parse_workflow("compliance.yml", &fixed).retired_descriptile_policy);
+        assert!(!has_retired_descriptile_policy(
+            "# test -f .machine_readable/STATE.a2ml"
+        ));
+        assert!(!has_retired_descriptile_policy(
+            "- run: echo 'test -f .machine_readable/STATE.a2ml'"
+        ));
+        for scalar in [
+            r#"run: "test -f .machine_readable/STATE.a2ml""#,
+            r#"run: 'test -f .machine_readable/STATE.a2ml'"#,
+            r#"run: "test\x20-f\u0020.machine_readable/STATE.a2ml""#,
+            r#"run: "test -f \".machine_readable/STATE.a2ml\"""#,
+        ] {
+            assert!(has_retired_descriptile_policy(scalar), "{scalar}");
+        }
+        assert!(!has_retired_descriptile_policy(
+            r#"- run: "printf '%s\n' '# test -f .machine_readable/STATE.a2ml'""#
+        ));
+    }
+
+    #[test]
+    fn commented_jobs_cannot_supply_a_check() {
+        let template = "name: E2E\njobs:\n  # test:\n  #   runs-on: ubuntu-latest\n";
+        let parsed = parse_workflow("e2e.yml", template);
+        assert!(parsed.empty_jobs);
+        let facts = WorkflowFacts {
+            workflows: vec![parsed],
+        };
+        assert!(matches!(
+            facts.classify(&req("E2E", CheckRun::Missing), "owner/repo"),
+            Some(Move::FlagNonFunctionalGate { .. })
+        ));
+        assert!(!has_empty_jobs("jobs:\n  test:\n    steps: []\n"));
+        assert!(!has_empty_jobs("# jobs:\n"));
+        assert!(has_empty_jobs("jobs: # template\n  # test:\n"));
+        assert!(!has_empty_jobs(
+            "jobs: # real jobs\n  test:\n    steps: []\n"
+        ));
+        assert!(!has_empty_jobs("jobs: { test: {} }\n"));
     }
 }

@@ -327,6 +327,8 @@ mod tests {
             job_names: vec![],
             reusable_repos: reusable.iter().map(|s| s.to_string()).collect(),
             path_filtered,
+            retired_descriptile_policy: false,
+            empty_jobs: false,
             kind,
         }
     }

@@ -254,7 +254,10 @@ census = "33/33"
         // per key, every scanner would get hypatia's steps.
         let set = parse_signatures(DIRECTIVE);
         let pa = &set.signatures[1].signature;
-        assert_eq!(pa.skipped_steps, vec!["Run panic-attack assail".to_string()]);
+        assert_eq!(
+            pa.skipped_steps,
+            vec!["Run panic-attack assail".to_string()]
+        );
         assert!(
             !pa.skipped_steps.contains(&"Run Hypatia scan".to_string()),
             "panic-attack must not inherit hypatia's steps"
@@ -329,7 +332,11 @@ signature-success-steps = ["Create stub findings (when Hypatia unavailable)"]
         both.push_str("\nsignature-skipped-steps = [\"Run Hypatia scan\"]\n");
         both.push_str("signature-success-steps = [\"Create stub findings\"]\n");
         let set = parse_signatures(&both);
-        assert_eq!(set.signatures.len(), 2, "the legacy pair must not add a third");
+        assert_eq!(
+            set.signatures.len(),
+            2,
+            "the legacy pair must not add a third"
+        );
     }
 
     // ---- ground truth ------------------------------------------------------
