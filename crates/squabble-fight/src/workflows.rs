@@ -118,6 +118,9 @@ impl WorkflowFacts {
     /// workflow never triggered off-path), so the appliable pass-through move is
     /// proposed only then — a check that actually ran and *Failed* is a
     /// different problem the filter cannot explain.
+    ///
+    /// A workflow that checks a retired descriptile path, or has only commented
+    /// jobs, is classified as a non-functional gate regardless of [`CheckRun`].
     pub fn classify(&self, check: &RequiredCheck, slug: &str) -> Option<Move> {
         let name = check.required_context.as_str();
         let w = self.find_emitting(name)?;
@@ -287,6 +290,11 @@ enum BlockState {
     Other(usize),
 }
 
+/// Return whether a `run` scalar directly checks a known descriptile at either
+/// retired `.machine_readable` location.
+///
+/// Quoted inline scalars are YAML-decoded. Text outside `run` scalars and
+/// commands that do not begin with a supported file-existence check are ignored.
 fn has_retired_descriptile_policy(text: &str) -> bool {
     let mut state = BlockState::None;
 
@@ -384,6 +392,7 @@ fn has_retired_descriptile_policy(text: &str) -> bool {
     })
 }
 
+/// Return whether a bare top-level `jobs:` block contains no uncommented job.
 fn has_empty_jobs(text: &str) -> bool {
     let mut in_jobs = false;
     for line in text.lines() {
