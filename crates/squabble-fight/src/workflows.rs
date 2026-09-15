@@ -281,30 +281,68 @@ fn parse_workflow(file: &str, text: &str) -> WorkflowInfo {
     }
 }
 
+enum BlockState {
+    None,
+    Run(usize),
+    Other(usize),
+}
+
 fn has_retired_descriptile_policy(text: &str) -> bool {
+    let mut state = BlockState::None;
+
     text.lines().any(|line| {
-        let line = line.trim();
-        let scalar = line
-            .strip_prefix("- run:")
-            .or_else(|| line.strip_prefix("run:"));
-        // Decode YAML quoting before interpreting the shell command. Stripping
-        // delimiters alone loses escapes and can turn quoted prose into code.
-        let decoded;
-        let line = if let Some(scalar) = scalar {
-            let scalar = scalar.trim();
-            if scalar.starts_with(['\'', '"']) {
-                let Ok(value) = serde_yaml_ng::from_str::<String>(scalar) else {
-                    return false;
-                };
-                decoded = value;
-                decoded.trim()
-            } else {
-                scalar
+        if line.trim().is_empty() {
+            return false;
+        }
+        let indent = line.chars().take_while(|c| c.is_whitespace()).count();
+        let trimmed = line[indent..].trim_end();
+
+        let check_line = match state {
+            BlockState::Run(min_indent) if indent > min_indent => {
+                Some(trimmed.to_string())
             }
-        } else {
-            line
+            BlockState::Other(min_indent) if indent > min_indent => {
+                return false;
+            }
+            _ => {
+                state = BlockState::None;
+                
+                let is_run_key = trimmed.starts_with("- run:") || trimmed.starts_with("run:");
+                let is_block_start = trimmed.ends_with('|') || trimmed.ends_with('>') || trimmed.ends_with("|-") || trimmed.ends_with(">-");
+
+                if is_run_key {
+                    let scalar = trimmed.strip_prefix("- run:").or_else(|| trimmed.strip_prefix("run:")).unwrap().trim_start();
+                    if scalar.starts_with('|') || scalar.starts_with('>') {
+                        state = BlockState::Run(indent);
+                        None
+                    } else {
+                        let mut decoded = String::new();
+                        let scalar_trim = scalar.trim();
+                        if scalar_trim.starts_with(['\'', '"']) {
+                            if let Ok(value) = serde_yaml_ng::from_str::<String>(scalar_trim) {
+                                decoded = value;
+                            } else {
+                                return false;
+                            }
+                        } else {
+                            decoded = scalar_trim.to_string();
+                        }
+                        Some(decoded.trim().to_string())
+                    }
+                } else {
+                    if is_block_start {
+                        state = BlockState::Other(indent);
+                    }
+                    None
+                }
+            }
         };
-        let mut words = line.split_whitespace().peekable();
+
+        let Some(check_line) = check_line else {
+            return false;
+        };
+
+        let mut words = check_line.split_whitespace().peekable();
         if matches!(words.peek(), Some(&"if" | &"elif" | &"while" | &"until")) {
             words.next();
         }
