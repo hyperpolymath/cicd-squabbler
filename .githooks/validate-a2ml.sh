@@ -89,7 +89,9 @@ report_issue() {
 }
 
 # ---------------------------------------------------------------------------
-# Validator: check a single .a2ml or .deed file
+# Validates one .a2ml or .deed file and emits GitHub annotations for findings.
+# Usage: validate_a2ml <file>
+# Updates FILES_SCANNED and the warning/error counters; strict mode promotes warnings.
 # ---------------------------------------------------------------------------
 validate_a2ml() {
     local file="$1"
