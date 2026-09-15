@@ -55,12 +55,12 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@v2.9.1
+        uses: step-security/harden-runner@5c7944e73c4c2a096b17a9cb74d65b6c2bbafbde
         with:
           egress-policy: audit
       - name: Fetch Dependabot metadata
         id: meta
-        uses: dependabot/fetch-metadata@v3.1.0
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
       # --- Policy gate -------------------------------------------------------
