@@ -35,10 +35,10 @@ jobs:
       - name: Check for A2ML files
         id: detect
         run: |
-          COUNT=$(find . -name '*.a2ml' -not -path './.git/*' | wc -l)
+          COUNT=$(find . -type f \( -name '*.a2ml' -o -name '*.deed' \) -not -path './.git/*' | wc -l)
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           if [ "$COUNT" -eq 0 ]; then
-            echo "::warning::No .a2ml manifest files found. Every RSR repo should have 0-AI-MANIFEST.a2ml"
+            echo "::warning::No .deed manifest files found. Every RSR repo should have 0-AI-MANIFEST.deed (.a2ml is legacy and no longer authored)"
           fi
 
       - name: Validate A2ML manifests
@@ -51,14 +51,14 @@ jobs:
             cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
           ## A2ML Validation
 
-          :warning: **No .a2ml files found.** Every RSR-compliant repo should have at least `0-AI-MANIFEST.a2ml`.
+          :warning: **No manifest found.** Every RSR-compliant repo should have at least `0-AI-MANIFEST.deed`. (`.a2ml` still validates as legacy but is no longer authored.)
 
-          Create one with: `a2mliser init` or copy from [rsr-template-repo](https://github.com/hyperpolymath/rsr-template-repo).
+          Copy one from [rsr-template-repo](https://github.com/hyperpolymath/rsr-template-repo).
           EOF
           else
             echo "## A2ML Validation" >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "Scanned **${A2ML_COUNT}** .a2ml file(s). See step output for details." >> "$GITHUB_STEP_SUMMARY"
+            echo "Scanned **${A2ML_COUNT}** manifest file(s) (.deed, or legacy .a2ml). See step output for details." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   # ---------------------------------------------------------------------------
@@ -125,26 +125,45 @@ jobs:
           # Inline invisible character detection (from empty-linter's core patterns).
           # Checks for: zero-width spaces, zero-width joiners, BOM, soft hyphens,
           # non-breaking spaces, null bytes, and other invisible Unicode in source files.
+          PATTERNS='(*UTF)[\x00-\x08\x0B\x0C\x0E-\x1F\x{a0}\x{ad}\x{200b}-\x{200f}\x{202a}-\x{202f}\x{2060}\x{2066}-\x{2069}\x{feff}]'
           set +e
-          PATTERNS='\xc2\xa0|\xe2\x80\x8b|\xe2\x80\x8c|\xe2\x80\x8d|\xef\xbb\xbf|\xc2\xad|\xe2\x80\x8e|\xe2\x80\x8f|\xe2\x80\xaa|\xe2\x80\xab|\xe2\x80\xac|\xe2\x80\xad|\xe2\x80\xae|\x00'
-          find "$GITHUB_WORKSPACE" \
-            -not -path '*/.git/*' -not -path '*/node_modules/*' \
-            -not -path '*/.deno/*' -not -path '*/target/*' \
-            -not -path '*/_build/*' -not -path '*/deps/*' \
-            -not -path '*/external_corpora/*' -not -path '*/.lake/*' \
-            -type f \( -name '*.rs' -o -name '*.ex' -o -name '*.exs' -o -name '*.res' \
-              -o -name '*.js' -o -name '*.ts' -o -name '*.json' -o -name '*.toml' \
-              -o -name '*.yml' -o -name '*.yaml' -o -name '*.md' -o -name '*.adoc' \
-              -o -name '*.idr' -o -name '*.zig' -o -name '*.v' -o -name '*.jl' \
-              -o -name '*.gleam' -o -name '*.hs' -o -name '*.ml' -o -name '*.sh' \) \
-            -exec grep -Prl "$PATTERNS" {} \; > /tmp/empty-lint-results.txt 2>/dev/null
-          EL_EXIT=$?
+          grep -aPrl \
+            --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.deno \
+            --exclude-dir=target --exclude-dir=_build --exclude-dir=deps \
+            --exclude-dir=external_corpora --exclude-dir=.lake \
+            --include='*.rs' --include='*.ex' --include='*.exs' --include='*.res' \
+            --include='*.js' --include='*.ts' --include='*.json' --include='*.toml' \
+            --include='*.yml' --include='*.yaml' --include='*.md' --include='*.adoc' \
+            --include='*.idr' --include='*.zig' --include='*.v' --include='*.jl' \
+            --include='*.gleam' --include='*.hs' --include='*.ml' --include='*.sh' \
+            "$PATTERNS" "$GITHUB_WORKSPACE" > /tmp/empty-lint-results.txt 2>/tmp/empty-lint-errors.txt
+          GREP_EXIT=$?
           set -e
+
+          # GNU grep: 0 = matches, 1 = clean, >1 = scanner failure. A scanner
+          # failure must fail closed rather than being mistaken for a clean scan.
+          if [ "$GREP_EXIT" -gt 1 ]; then
+            cat /tmp/empty-lint-errors.txt >&2
+            echo "::error::invisible-character scan failed with exit $GREP_EXIT"
+            exit "$GREP_EXIT"
+          fi
 
           FINDINGS=$(wc -l < /tmp/empty-lint-results.txt 2>/dev/null || echo 0)
           echo "findings=$FINDINGS" >> "$GITHUB_OUTPUT"
-          echo "exit_code=$EL_EXIT" >> "$GITHUB_OUTPUT"
           echo "ready=true" >> "$GITHUB_OUTPUT"
+
+          # Blocking subset: C0 controls and NUL only (owner ruling 2026-08-28).
+          # Invisible Unicode (NBSP/BOM/zero-width) stays ADVISORY - about 2,100
+          # estate files carry it as legitimate typography in prose.
+          blocking=0
+          while IFS= read -r bf; do
+            [ -z "$bf" ] && continue
+            if grep -qaP '\x00|[\x01-\x08\x0B\x0C\x0E-\x1F]' "$bf"; then
+              blocking=$((blocking+1))
+              echo "::error file=${bf#$GITHUB_WORKSPACE/}::C0 control characters or NUL bytes - file corruption, blocks the gate"
+            fi
+          done < /tmp/empty-lint-results.txt
+          echo "blocking=$blocking" >> "$GITHUB_OUTPUT"
 
           # Emit annotations for each file with invisible chars
           while IFS= read -r filepath; do
@@ -152,6 +171,18 @@ jobs:
             REL_PATH="${filepath#$GITHUB_WORKSPACE/}"
             echo "::warning file=${REL_PATH}::Invisible Unicode characters detected (zero-width space, BOM, NBSP, etc.)"
           done < /tmp/empty-lint-results.txt
+
+          # Enforce (owner ruling 2026-08-28): C0/NUL corruption BLOCKS; other
+          # invisible Unicode stays advisory. Enforcement lives inside this step
+          # so a crash above fails the job directly - counts can never arrive
+          # empty into a separate check that then passes silently.
+          if [ "${blocking:-0}" -gt 0 ]; then
+            echo "## Empty-linter: BLOCKED - $blocking file(s) with C0/NUL corruption" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::$blocking file(s) contain C0 control characters or NUL bytes - corruption, not typography. See file annotations."
+            exit 1
+          elif [ "${FINDINGS:-0}" -gt 0 ]; then
+            echo "::notice::$FINDINGS file(s) carry invisible Unicode (NBSP/BOM/zero-width) - advisory only"
+          fi
 
       - name: Write summary
         run: |
@@ -301,7 +332,7 @@ jobs:
           MAX=6
 
           # A2ML manifest present?
-          if find . -name '*.a2ml' -not -path './.git/*' | head -1 | grep -q .; then
+          if find . -type f \( -name '*.a2ml' -o -name '*.deed' \) -not -path './.git/*' | head -1 | grep -q .; then
             SCORE=$((SCORE + 1))
             A2ML_STATUS=":white_check_mark:"
           else
@@ -355,7 +386,7 @@ jobs:
 
           | Tool/Format | Status | Notes |
           |-------------|--------|-------|
-          | A2ML manifest (0-AI-MANIFEST.a2ml) | ${A2ML_STATUS} | Required for all RSR repos |
+          | AI manifest (0-AI-MANIFEST.deed, or legacy .a2ml) | ${A2ML_STATUS} | Required for all RSR repos |
           | K9 contracts | ${K9_STATUS} | Required for repos with config files |
           | .editorconfig | ${EC_STATUS} | Required for all repos |
           | Groove endpoint | ${GROOVE_STATUS} | Required for service repos |

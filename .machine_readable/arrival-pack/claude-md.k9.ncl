@@ -4,7 +4,7 @@ K9!
 #
 # claude-md.k9.ncl — k9 contract for the CLAUDE.md arrival-pack drift check.
 #
-# Yard-tier (pure evaluation / comparison; no exec, no network, no FS write):
+# Hunt-tier (guarded execution; no network, writes an intermediate data file):
 # the check regenerates the arrival-pack region from this repo's a2ml and asserts
 # the committed CLAUDE.md region byte-matches it. The runnable side is verify.sh;
 # writing (Hunt-tier) is generate.sh. This record documents and validates the
@@ -15,11 +15,12 @@ K9!
     contractile_verb = "trust",   # provenance: the view must equal its source
     semantics = "projection-fidelity",
     security = {
-      leash = 'Yard,
-      trust_level = "read-only comparison",
+      leash = 'Hunt,
+      trust_level = "guarded drift verification",
       allow_network = false,
-      allow_filesystem_write = false,
+      allow_filesystem_write = true,
       allow_subprocess = true,    # runs extract.sh + nickel to reproduce the view
+      signature_required = true,
     },
     metadata = {
       name = "claude-md-arrival-pack",

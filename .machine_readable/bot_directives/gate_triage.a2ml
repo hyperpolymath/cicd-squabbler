@@ -9,8 +9,8 @@
 # Origin: owner ruling 2026-09-03, given on the vacuous-Hypatia-gate options menu.
 
 [metadata]
-version = "0.2.0"
-last-updated = "2026-09-04"
+version = "0.3.0"
+last-updated = "2026-09-09"
 spec = "https://github.com/hyperpolymath/standards/blob/main/agentic-a2ml/docs/ADR-002-methodology-layer.adoc"
 status = "active"             # wired into `squabble fight`; see crates/squabble-core/src/polarity.rs
 
@@ -93,7 +93,7 @@ emits-evidence = true                 # a verdict without evidence is not a verd
 # Purpose: do not waste regular users' time running maintainer-only checks.
 
 [gate-triage.applicability]
-manifest-file = "0.1-AI-MANIFEST.a2ml"
+manifest-file = "0-AI-MANIFEST.a2ml"   # corrected 2026-09-09: the 0.1- name never existed in this repo
 operator-type-key = "@gitforge_OperatorType"
 channel-key = "@channel"
 operator-types = ["user", "developer", "platform_maintainer"]
@@ -170,41 +170,44 @@ note = "This is a contradiction with the environment declaration, NOT a judgemen
 
 [gate-triage.detection]
 source = "actions jobs API step conclusions"
-
-# GROUND TRUTH, not a paraphrase. Census of 33 local `static-analysis-gate.yml`
-# copies, 2026-09-04: both names below appear 33/33 with ZERO variants. The
-# matcher in `squabble-core::polarity::step_concluded` is an EXACT compare, so
-# the abbreviated form this file carried until now ("Create stub findings")
-# matched no real job on earth — every green check would have classified
-# `Genuine`, forever, and the vacuity classifier would have been its own fake
-# green. Do not shorten these for readability.
-signature-skipped-steps = ["Run Hypatia scan"]
-signature-success-steps = ["Create stub findings (when Hypatia unavailable)"]
+# GROUND TRUTH, not a paraphrase. The step names live in the
+# `[[gate-triage.detection.signatures]]` tables at the END of this section
+# (an array-of-tables terminates its parent, so nothing may follow them).
+#
+# The matcher in `squabble-core::polarity::step_concluded` is an EXACT compare,
+# so the abbreviated form this file carried before 0.2.0 ("Create stub
+# findings") matched no real job on earth — every green check would have
+# classified `Genuine`, forever, and the vacuity classifier would have been its
+# own fake green. Do not shorten these for readability, and do not "tidy" the
+# parentheticals: they are part of the step name.
+#
+# The flat `signature-skipped-steps` / `signature-success-steps` keys are GONE
+# as of 0.3.0. Leaving them beside the tables would have parsed hypatia twice.
 check-conclusion-when-vacuous = "success"
 polarity = "green"                    # NOT red — this is the gap in `fight`
 evidence-required = ["run-count", "stub-rate", "upstream-exists", "target-tech-present"]
-
-# Coverage, stated honestly. The same workflow carries two more stub paths of
-# identical shape, found by the same census:
-#   "Run panic-attack assail"  / "Create stub findings (when panic-attack unavailable)"  33/33
-#   "Run Patch Bridge triage"  / "Create stub report (when unavailable)"                 27/33
-# Neither is covered here. The matcher quantifies with `all`, so one signature
-# describes one scanner; and each scanner is a separate JOB, hence a separate
-# check, so an unmatched scanner is NOT escalated on the signature. That is an
-# UNDERCOUNT, never a false alarm — with one stated exception: a job that
+# Coverage, stated honestly. All three of the workflow's stub paths are now
+# described, one table each, at the end of this section. The matcher quantifies
+# with `all` WITHIN a signature, so one signature still describes exactly one
+# scanner; the host quantifies with `any` ACROSS them. Each scanner is a
+# separate JOB hence a separate check, so the check name identifies which one
+# went vacuous and the cause does not need to name it.
+#
+# The disjunction cannot leak. `step_concluded` is false for an absent step, so
+# the hypatia signature cannot match the panic-attack job — it never recorded
+# hypatia's steps. Asserted in `polarity.rs`, not assumed.
+#
+# One exception to "signature or nothing" stands unchanged: a job that
 # concluded success having recorded steps, every one of them SKIPPED, is
-# reported `all-steps-skipped` whether or not any signature matched. That is
-# not a false alarm either; a job that ran nothing enforced nothing, and the
-# finding stands on its own terms without naming a scanner.
+# reported `all-steps-skipped` whether or not any signature matched. A job that
+# ran nothing enforced nothing, and that finding stands without naming a
+# scanner.
 #
 # A green whose job records NO steps at all is the opposite case: absence of
 # evidence, not evidence of absence. It is reported to the operator on stderr
 # and classified `Genuine`, never escalated.
-#
-# A second signature needs a repeatable table in this file plus a parser
-# change, so it is filed rather than bodged in.
-signature-covers = ["hypatia"]
-signature-not-yet-covered = ["panic-attack", "patch-bridge"]
+signature-covers = ["hypatia", "panic-attack", "patch-bridge"]
+signature-not-yet-covered = []
 
 # Measurability, stated honestly (Doctrine #10, no overclaim).
 # `run-count` and `stub-rate` are NOT a measured history. `squabble fight`
@@ -219,8 +222,56 @@ evidence-measurable-by-host = ["run-count", "stub-rate"]
 evidence-unmeasured-by-host = ["upstream-exists", "target-tech-present"]
 evidence-single-run-only = ["run-count", "stub-rate"]
 
-# Applicability (axis 0) is CORE-ONLY. `classify()` takes an `Applicability` and
-# a `RepoDeclaration`, but `squabble fight` passes the defaults, so the owner's
-# operator-type / channel axis cannot fire in production yet. Declared here so
-# the gap is visible instead of being implied to work.
-applicability-wired-into-host = false
+# Applicability (axis 0) is now READ BY THE HOST: `squabble fight` loads the
+# gate predicate from `[gate-triage.applicability]` below and the repo's own
+# declaration from the manifest, instead of passing `Default::default()`.
+#
+# What that does NOT mean. The plumbing exists; the DATA does not. Measured
+# 2026-09-09: this repo's manifest carries no `@gitforge_OperatorType` and no
+# `@channel` key — it carries no `@` keys at all — and no gate in the estate
+# declares `runs-on-channels` or `runs-for-operator-types`. An undeclared
+# predicate short-circuits in `applicability_verdict`, so axis 0 still cannot
+# fire on any repo today, and wiring it changed no verdict. It fires the day
+# someone writes a declaration, which was previously impossible.
+applicability-read-by-host = true
+applicability-can-fire-today = false   # no repo declares the keys; measured 2026-09-09
+
+# ============================================================================
+# THE SIGNATURES — one table per scanner. MUST BE LAST IN THIS SECTION.
+# ============================================================================
+# An array-of-tables terminates its parent table, so any key written after
+# these would silently belong to the last signature instead of to
+# `[gate-triage.detection]`. Append new scanners here; add nothing after them.
+#
+# GROUND TRUTH: every string below was read out of this repo's own
+# `.github/workflows/static-analysis-gate.yml` on 2026-09-09 (job blocks
+# `panic-attack-assail`, `hypatia-scan`, `patch-bridge-triage`), and the test
+# `the_repos_own_directive_names_real_workflow_steps` re-reads that same file
+# on every run. It is not a transcription of a ruling — that is precisely the
+# mistake PR #60 nearly shipped.
+#
+# `census` records how many of the 33 local `static-analysis-gate.yml` copies
+# carried the pair on 2026-09-04. It is documentation of reach, not a matcher
+# input: patch-bridge's 27/33 means six copies predate that job, so those six
+# are an UNDERCOUNT, never a mismatch.
+
+[[gate-triage.detection.signatures]]
+scanner = "hypatia"
+skipped-steps = ["Run Hypatia scan"]
+success-steps = ["Create stub findings (when Hypatia unavailable)"]
+job = "hypatia-scan"
+census = "33/33"
+
+[[gate-triage.detection.signatures]]
+scanner = "panic-attack"
+skipped-steps = ["Run panic-attack assail"]
+success-steps = ["Create stub findings (when panic-attack unavailable)"]
+job = "panic-attack-assail"
+census = "33/33"
+
+[[gate-triage.detection.signatures]]
+scanner = "patch-bridge"
+skipped-steps = ["Run Patch Bridge triage"]
+success-steps = ["Create stub report (when unavailable)"]
+job = "patch-bridge-triage"
+census = "27/33"
