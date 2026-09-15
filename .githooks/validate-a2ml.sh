@@ -196,7 +196,7 @@ validate_a2ml() {
         # requirement, which DEED-GRAMMAR-SPEC <<version-field>> makes REQUIRED
         # on all four heads. Accepting it let a registry-only atlas head pass
         # with no schema version at all.
-        if [[ "$line" =~ ^[[:space:]]*:schema-version[[:space:]] ]]; then
+        if [[ "$line" =~ (^|[[:space:]]):schema-version([[:space:]]|$) ]]; then
             has_version=true
         fi
     done < "$file"
