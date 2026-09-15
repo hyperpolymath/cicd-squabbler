@@ -286,109 +286,124 @@ fn parse_workflow(file: &str, text: &str) -> WorkflowInfo {
 
 enum BlockState {
     None,
-    Run(usize),
+    Run(usize, String),
     Other(usize),
 }
 
 /// Return whether a `run` scalar directly checks a known descriptile at either
 /// retired `.machine_readable` location.
 ///
-/// Quoted inline scalars are YAML-decoded. Text outside `run` scalars and
+/// Quoted inline and block scalars are YAML-decoded. Text outside `run` scalars and
 /// commands that do not begin with a supported file-existence check are ignored.
 fn has_retired_descriptile_policy(text: &str) -> bool {
     let mut state = BlockState::None;
 
-    text.lines().any(|line| {
+    for line in text.lines() {
         if line.trim().is_empty() {
-            return false;
+            if let BlockState::Run(_, scalar) = &mut state {
+                scalar.push('\n');
+            }
+            continue;
         }
         let indent = line.chars().take_while(|c| c.is_whitespace()).count();
         let trimmed = line[indent..].trim_end();
 
-        let check_line = match state {
-            BlockState::Run(min_indent) if indent > min_indent => {
-                Some(trimmed.to_string())
+        match &mut state {
+            BlockState::Run(min_indent, scalar) if indent > *min_indent => {
+                scalar.push_str(line);
+                scalar.push('\n');
+                continue;
             }
-            BlockState::Other(min_indent) if indent > min_indent => {
-                return false;
-            }
+            BlockState::Other(min_indent) if indent > *min_indent => continue,
             _ => {
+                if let BlockState::Run(_, scalar) = &state {
+                    if scalar_has_retired_descriptile_policy(scalar) {
+                        return true;
+                    }
+                }
                 state = BlockState::None;
-                
-                let is_run_key = trimmed.starts_with("- run:") || trimmed.starts_with("run:");
-                let is_block_start = trimmed.ends_with('|') || trimmed.ends_with('>') || trimmed.ends_with("|-") || trimmed.ends_with(">-");
+            }
+        }
 
-                if is_run_key {
-                    let scalar = trimmed.strip_prefix("- run:").or_else(|| trimmed.strip_prefix("run:")).unwrap().trim_start();
-                    if scalar.starts_with('|') || scalar.starts_with('>') {
-                        state = BlockState::Run(indent);
-                        None
-                    } else {
-                        let mut decoded = String::new();
-                        let scalar_trim = scalar.trim();
-                        if scalar_trim.starts_with(['\'', '"']) {
-                            if let Ok(value) = serde_yaml_ng::from_str::<String>(scalar_trim) {
-                                decoded = value;
-                            } else {
-                                return false;
-                            }
-                        } else {
-                            decoded = scalar_trim.to_string();
-                        }
-                        Some(decoded.trim().to_string())
-                    }
+        let is_run_key = trimmed.starts_with("- run:") || trimmed.starts_with("run:");
+        let is_block_start = trimmed.ends_with('|')
+            || trimmed.ends_with('>')
+            || trimmed.ends_with("|-")
+            || trimmed.ends_with(">-");
+
+        if is_run_key {
+            let scalar = trimmed
+                .strip_prefix("- run:")
+                .or_else(|| trimmed.strip_prefix("run:"))
+                .unwrap()
+                .trim_start();
+            if scalar.starts_with('|') || scalar.starts_with('>') {
+                state = BlockState::Run(indent, format!("{scalar}\n"));
+            } else {
+                let decoded = if scalar.trim().starts_with(['\'', '"']) {
+                    let Ok(value) = serde_yaml_ng::from_str::<String>(scalar.trim()) else {
+                        continue;
+                    };
+                    value
                 } else {
-                    if is_block_start {
-                        state = BlockState::Other(indent);
-                    }
-                    None
+                    scalar.trim().to_string()
+                };
+                if command_has_retired_descriptile_policy(&decoded) {
+                    return true;
                 }
             }
-        };
-
-        let Some(check_line) = check_line else {
-            return false;
-        };
-
-        let mut words = check_line.split_whitespace().peekable();
-        if matches!(words.peek(), Some(&"if" | &"elif" | &"while" | &"until")) {
-            words.next();
+        } else if is_block_start {
+            state = BlockState::Other(indent);
         }
-        if words.peek() == Some(&"!") {
-            words.next();
-        }
-        let target = match words.next() {
-            Some("check_file") => words.next(),
-            Some("test" | "[" | "[[") => {
-                if words.peek() == Some(&"!") {
-                    words.next();
-                }
-                if matches!(words.next(), Some("-f" | "-e")) {
-                    words.next()
-                } else {
-                    None
-                }
+    }
+
+    matches!(state, BlockState::Run(_, ref scalar) if scalar_has_retired_descriptile_policy(scalar))
+}
+
+fn scalar_has_retired_descriptile_policy(scalar: &str) -> bool {
+    serde_yaml_ng::from_str::<String>(scalar)
+        .is_ok_and(|decoded| decoded.lines().any(command_has_retired_descriptile_policy))
+}
+
+fn command_has_retired_descriptile_policy(command: &str) -> bool {
+    let mut words = command.split_whitespace().peekable();
+    if matches!(words.peek(), Some(&"if" | &"elif" | &"while" | &"until")) {
+        words.next();
+    }
+    if words.peek() == Some(&"!") {
+        words.next();
+    }
+    let target = match words.next() {
+        Some("check_file") => words.next(),
+        Some("test" | "[" | "[[") => {
+            if words.peek() == Some(&"!") {
+                words.next();
             }
-            _ => None,
-        };
-        let Some(target) = target else {
-            return false;
-        };
-        let target = target.trim_end_matches(';').trim_matches(['\'', '"']);
-        [
-            "STATE",
-            "META",
-            "ECOSYSTEM",
-            "AGENTIC",
-            "NEUROSYM",
-            "PLAYBOOK",
-            "ANCHOR",
-        ]
-        .iter()
-        .any(|name| {
-            target == format!(".machine_readable/{name}.a2ml")
-                || target == format!(".machine_readable/6a2/{name}.a2ml")
-        })
+            if matches!(words.next(), Some("-f" | "-e")) {
+                words.next()
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    let Some(target) = target else {
+        return false;
+    };
+    let target = target.trim_end_matches(';').trim_matches(['\'', '"']);
+    [
+        "STATE",
+        "META",
+        "ECOSYSTEM",
+        "AGENTIC",
+        "NEUROSYM",
+        "PLAYBOOK",
+        "ANCHOR",
+    ]
+    .iter()
+    .any(|name| {
+        target == format!(".machine_readable/{name}.a2ml")
+            || target == format!(".machine_readable/6a2/{name}.a2ml")
     })
 }
 
@@ -727,6 +742,26 @@ jobs:
         }
         assert!(!has_retired_descriptile_policy(
             r#"- run: "printf '%s\n' '# test -f .machine_readable/STATE.a2ml'""#
+        ));
+    }
+
+    #[test]
+    fn folded_retired_policy_is_a_non_functional_gate() {
+        let workflow = r#"name: Compliance
+jobs:
+  compliance:
+    steps:
+      - run: >-
+          test -f
+          .machine_readable/STATE.a2ml
+"#;
+        let facts = WorkflowFacts {
+            workflows: vec![parse_workflow("compliance.yml", workflow)],
+        };
+
+        assert!(matches!(
+            facts.classify(&req("compliance", CheckRun::Missing), "owner/repo"),
+            Some(Move::FlagNonFunctionalGate { .. })
         ));
     }
 
