@@ -112,6 +112,10 @@ impl WorkflowFacts {
     /// workflow could be attributed — the caller then falls back to the pure
     /// engine's conservative default rather than guessing.
     ///
+    /// Workflows marked as using a retired descriptile policy or lacking
+    /// uncommented job definitions are flagged as non-functional before
+    /// ownership and lane classification.
+    ///
     /// `slug` is the current repo's `owner/repo`; a reusable workflow whose
     /// `owner/repo` differs is owned upstream. The check's realised [`CheckRun`]
     /// matters: the path-filter trap only manifests as a *Missing* check (the
