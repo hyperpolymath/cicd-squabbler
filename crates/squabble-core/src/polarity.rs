@@ -183,7 +183,9 @@ pub struct SignatureSet {
 impl SignatureSet {
     /// Build a set from `(scanner, signature)` pairs.
     pub fn new(entries: Vec<ScannerSignature>) -> Self {
-        SignatureSet { signatures: entries }
+        SignatureSet {
+            signatures: entries,
+        }
     }
 
     /// A one-scanner set — the shape the host had before multi-scanner
@@ -687,7 +689,7 @@ mod tests {
     #[test]
     fn declared_and_unmatched_is_not_applicable() {
         let v = classify(
-            &[],  // uninspectable; Axis 0 answers before steps are consulted
+            &[], // uninspectable; Axis 0 answers before steps are consulted
             &sigset(),
             &Applicability {
                 runs_for_operator_types: vec!["platform_maintainer".into()],
@@ -940,8 +942,14 @@ mod tests {
         assert!(set.is_usable());
         assert_eq!(
             set.matching(&[
-                StepOutcome { name: "Run Hypatia scan".into(), conclusion: StepConclusion::Skipped },
-                StepOutcome { name: "Create stub findings".into(), conclusion: StepConclusion::Success },
+                StepOutcome {
+                    name: "Run Hypatia scan".into(),
+                    conclusion: StepConclusion::Skipped
+                },
+                StepOutcome {
+                    name: "Create stub findings".into(),
+                    conclusion: StepConclusion::Success
+                },
             ])
             .map(|s| s.scanner.as_str()),
             Some("hypatia")
