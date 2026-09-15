@@ -45,6 +45,10 @@ pub struct WorkflowInfo {
     pub reusable_repos: Vec<String>,
     /// True if the file declares an `on.*.paths` trigger filter.
     pub path_filtered: bool,
+    /// Executable policy contradicts the canonical descriptile location.
+    pub retired_descriptile_policy: bool,
+    /// A bare jobs block contains only whitespace or commented examples.
+    pub empty_jobs: bool,
     pub kind: WorkflowKind,
 }
 
@@ -108,15 +112,41 @@ impl WorkflowFacts {
     /// workflow could be attributed — the caller then falls back to the pure
     /// engine's conservative default rather than guessing.
     ///
+    /// Workflows marked as using a retired descriptile policy or lacking
+    /// uncommented job definitions are flagged as non-functional before
+    /// ownership and lane classification.
+    ///
     /// `slug` is the current repo's `owner/repo`; a reusable workflow whose
     /// `owner/repo` differs is owned upstream. The check's realised [`CheckRun`]
     /// matters: the path-filter trap only manifests as a *Missing* check (the
     /// workflow never triggered off-path), so the appliable pass-through move is
     /// proposed only then — a check that actually ran and *Failed* is a
     /// different problem the filter cannot explain.
+    ///
+    /// A workflow that checks a retired descriptile path, or has only commented
+    /// jobs, is classified as a non-functional gate regardless of [`CheckRun`].
     pub fn classify(&self, check: &RequiredCheck, slug: &str) -> Option<Move> {
         let name = check.required_context.as_str();
         let w = self.find_emitting(name)?;
+
+        if w.retired_descriptile_policy {
+            return Some(Move::FlagNonFunctionalGate {
+                check: name.to_string(),
+                evidence: format!(
+                    "`{}` requires a retired descriptile path; reconcile its policy with .machine_readable/descriptiles/ and SD004 before retrying",
+                    w.file
+                ),
+            });
+        }
+        if w.empty_jobs {
+            return Some(Move::FlagNonFunctionalGate {
+                check: name.to_string(),
+                evidence: format!(
+                    "`{}` contains only commented jobs; GitHub cannot create a check from this template",
+                    w.file
+                ),
+            });
+        }
 
         // 1. Owned upstream: the job delegates to a reusable workflow living in
         //    another repo. The fix belongs there, not on this PR.
@@ -252,8 +282,165 @@ fn parse_workflow(file: &str, text: &str) -> WorkflowInfo {
         job_names,
         reusable_repos,
         path_filtered,
+        retired_descriptile_policy: has_retired_descriptile_policy(text),
+        empty_jobs: has_empty_jobs(text),
         kind,
     }
+}
+
+enum BlockState {
+    None,
+    Run { min_indent: usize, scalar: String },
+    Other(usize),
+}
+
+/// Return whether a `run` scalar directly checks a known descriptile at either
+/// retired `.machine_readable` location.
+///
+/// Quoted inline scalars are YAML-decoded. Text outside `run` scalars and
+/// commands that do not begin with a supported file-existence check are ignored.
+fn has_retired_descriptile_policy(text: &str) -> bool {
+    let mut state = BlockState::None;
+
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            if let BlockState::Run { scalar, .. } = &mut state {
+                scalar.push('\n');
+            }
+            continue;
+        }
+        let indent = line.chars().take_while(|c| c.is_whitespace()).count();
+        let trimmed = line[indent..].trim_end();
+
+        match &mut state {
+            BlockState::Run { min_indent, scalar } if indent > *min_indent => {
+                scalar.push_str(line);
+                scalar.push('\n');
+                continue;
+            }
+            BlockState::Other(min_indent) if indent > *min_indent => {
+                continue;
+            }
+            BlockState::Run { scalar, .. } => {
+                if decoded_scalar_has_retired_policy(scalar) {
+                    return true;
+                }
+            }
+            BlockState::None | BlockState::Other(_) => {}
+        }
+        state = BlockState::None;
+
+        let is_run_key = trimmed.starts_with("- run:") || trimmed.starts_with("run:");
+        let is_block_start = trimmed.ends_with('|')
+            || trimmed.ends_with('>')
+            || trimmed.ends_with("|-")
+            || trimmed.ends_with(">-");
+
+        if is_run_key {
+            let scalar = trimmed
+                .strip_prefix("- run:")
+                .or_else(|| trimmed.strip_prefix("run:"))
+                .unwrap()
+                .trim_start();
+            if scalar.starts_with('|') || scalar.starts_with('>') {
+                state = BlockState::Run {
+                    min_indent: indent,
+                    scalar: format!("{scalar}\n"),
+                };
+            } else {
+                let scalar_trim = scalar.trim();
+                let decoded = if scalar_trim.starts_with(['\'', '"']) {
+                    let Ok(value) = serde_yaml_ng::from_str::<String>(scalar_trim) else {
+                        continue;
+                    };
+                    value
+                } else {
+                    scalar_trim.to_string()
+                };
+                if command_has_retired_policy(decoded.trim()) {
+                    return true;
+                }
+            }
+        } else if is_block_start {
+            state = BlockState::Other(indent);
+        }
+    }
+
+    matches!(state, BlockState::Run { ref scalar, .. } if decoded_scalar_has_retired_policy(scalar))
+}
+
+/// Return whether a YAML block scalar contains a recognised retired-path check.
+/// Invalid scalars and scalars without a matching command line return `false`.
+fn decoded_scalar_has_retired_policy(scalar: &str) -> bool {
+    serde_yaml_ng::from_str::<String>(scalar)
+        .is_ok_and(|decoded| decoded.lines().any(command_has_retired_policy))
+}
+
+/// Return whether a command starts with a supported existence check for a
+/// retired descriptile path. Shell condition keywords and negation are allowed
+/// before `check_file`, `test`, `[` or `[[` checks.
+fn command_has_retired_policy(command: &str) -> bool {
+    let mut words = command.split_whitespace().peekable();
+    if matches!(words.peek(), Some(&"if" | &"elif" | &"while" | &"until")) {
+        words.next();
+    }
+    if words.peek() == Some(&"!") {
+        words.next();
+    }
+    let target = match words.next() {
+        Some("check_file") => words.next(),
+        Some("test" | "[" | "[[") => {
+            if words.peek() == Some(&"!") {
+                words.next();
+            }
+            if matches!(words.next(), Some("-f" | "-e")) {
+                words.next()
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    let Some(target) = target else {
+        return false;
+    };
+    let target = target.trim_end_matches(';').trim_matches(['\'', '"']);
+    [
+        "STATE",
+        "META",
+        "ECOSYSTEM",
+        "AGENTIC",
+        "NEUROSYM",
+        "PLAYBOOK",
+        "ANCHOR",
+    ]
+    .iter()
+    .any(|name| {
+        target == format!(".machine_readable/{name}.a2ml")
+            || target == format!(".machine_readable/6a2/{name}.a2ml")
+    })
+}
+
+/// Return whether a bare top-level `jobs:` block contains no uncommented job.
+fn has_empty_jobs(text: &str) -> bool {
+    let mut in_jobs = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if in_jobs {
+            // A non-comment indented value is outside this narrow diagnosis.
+            return !line.starts_with(char::is_whitespace);
+        }
+        if line.strip_prefix("jobs:").is_some_and(|rest| {
+            let rest = rest.trim();
+            rest.is_empty() || rest.starts_with('#')
+        }) {
+            in_jobs = true;
+        }
+    }
+    in_jobs
 }
 
 /// Extract `owner/repo` from a reusable-workflow `uses:` line, i.e. one whose
@@ -535,5 +722,81 @@ jobs:
                 "hyperpolymath/ipv6-only"
             )
             .is_none());
+    }
+    #[test]
+    fn retired_policy_is_a_gate_conflict_with_a_canonical_negative_control() {
+        let bad = "name: Compliance\njobs:\n  compliance:\n    steps:\n      - run: test -f .machine_readable/STATE.a2ml\n";
+        let parsed = parse_workflow("compliance.yml", bad);
+        assert!(parsed.retired_descriptile_policy);
+        let facts = WorkflowFacts {
+            workflows: vec![parsed],
+        };
+        assert!(matches!(
+            facts.classify(&req("compliance", CheckRun::Missing), "owner/repo"),
+            Some(Move::FlagNonFunctionalGate { .. })
+        ));
+        let fixed = bad.replace(
+            ".machine_readable/STATE",
+            ".machine_readable/descriptiles/STATE",
+        );
+        assert!(!parse_workflow("compliance.yml", &fixed).retired_descriptile_policy);
+        assert!(!has_retired_descriptile_policy(
+            "# test -f .machine_readable/STATE.a2ml"
+        ));
+        assert!(!has_retired_descriptile_policy(
+            "- run: echo 'test -f .machine_readable/STATE.a2ml'"
+        ));
+        for scalar in [
+            r#"run: "test -f .machine_readable/STATE.a2ml""#,
+            r#"run: 'test -f .machine_readable/STATE.a2ml'"#,
+            r#"run: "test\x20-f\u0020.machine_readable/STATE.a2ml""#,
+            r#"run: "test -f \".machine_readable/STATE.a2ml\"""#,
+        ] {
+            assert!(has_retired_descriptile_policy(scalar), "{scalar}");
+        }
+        assert!(!has_retired_descriptile_policy(
+            r#"- run: "printf '%s\n' '# test -f .machine_readable/STATE.a2ml'""#
+        ));
+    }
+
+    #[test]
+    fn folded_retired_policy_command_is_a_non_functional_gate() {
+        let workflow = r#"name: Compliance
+jobs:
+  compliance:
+    steps:
+      - run: >
+          test -f
+          .machine_readable/STATE.a2ml
+"#;
+        let facts = WorkflowFacts {
+            workflows: vec![parse_workflow("compliance.yml", workflow)],
+        };
+
+        assert!(matches!(
+            facts.classify(&req("compliance", CheckRun::Missing), "owner/repo"),
+            Some(Move::FlagNonFunctionalGate { .. })
+        ));
+    }
+
+    #[test]
+    fn commented_jobs_cannot_supply_a_check() {
+        let template = "name: E2E\njobs:\n  # test:\n  #   runs-on: ubuntu-latest\n";
+        let parsed = parse_workflow("e2e.yml", template);
+        assert!(parsed.empty_jobs);
+        let facts = WorkflowFacts {
+            workflows: vec![parsed],
+        };
+        assert!(matches!(
+            facts.classify(&req("E2E", CheckRun::Missing), "owner/repo"),
+            Some(Move::FlagNonFunctionalGate { .. })
+        ));
+        assert!(!has_empty_jobs("jobs:\n  test:\n    steps: []\n"));
+        assert!(!has_empty_jobs("# jobs:\n"));
+        assert!(has_empty_jobs("jobs: # template\n  # test:\n"));
+        assert!(!has_empty_jobs(
+            "jobs: # real jobs\n  test:\n    steps: []\n"
+        ));
+        assert!(!has_empty_jobs("jobs: { test: {} }\n"));
     }
 }
