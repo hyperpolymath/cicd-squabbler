@@ -24,8 +24,12 @@ use std::process::Command;
 
 #[derive(Debug, Deserialize)]
 struct RollupEntry {
+    // GitHub's rollup is a union: commit statuses use context/state, while
+    // check runs use name/conclusion. CodeRabbit commonly supplies a status.
+    #[serde(alias = "context")]
     name: String,
     status: Option<String>,
+    #[serde(alias = "state")]
     conclusion: Option<String>,
     /// `https://github.com/O/R/actions/runs/<run>/job/<job>` — the only place
     /// the rollup exposes a job id, which is what the jobs API needs.
@@ -269,6 +273,35 @@ pub fn run_with_greens(slug: &str, pr: &str) -> Result<(Gate, Vec<GreenCheck>), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mixed_check_runs_and_commit_statuses_parse_without_losing_failures() {
+        let json = r#"{"baseRefName":"main","statusCheckRollup":[
+            {"__typename":"CheckRun","name":"CI","status":"COMPLETED","conclusion":"SUCCESS"},
+            {"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS"},
+            {"__typename":"StatusContext","context":"External review","state":"FAILURE"},
+            {"__typename":"StatusContext","context":"Pending review","state":"PENDING"}
+        ]}"#;
+        let parsed: PrView = serde_json::from_str(json).expect("both GitHub rollup variants");
+        assert_eq!(parsed.status_check_rollup.len(), 4);
+        assert_eq!(
+            parse_rollup(&parsed.status_check_rollup[0]),
+            CheckRun::Passed
+        );
+        assert_eq!(
+            parse_rollup(&parsed.status_check_rollup[1]),
+            CheckRun::Passed
+        );
+        assert_eq!(
+            parse_rollup(&parsed.status_check_rollup[2]),
+            CheckRun::Failed
+        );
+        assert_eq!(
+            parse_rollup(&parsed.status_check_rollup[3]),
+            CheckRun::Pending
+        );
+        assert!(greens_from_rollup(&parsed.status_check_rollup).is_empty());
+    }
 
     fn entry(name: &str, status: Option<&str>, conclusion: Option<&str>) -> RollupEntry {
         RollupEntry {
