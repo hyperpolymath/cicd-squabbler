@@ -369,11 +369,16 @@ fn has_retired_descriptile_policy(text: &str) -> bool {
     matches!(state, BlockState::Run { ref scalar, .. } if decoded_scalar_has_retired_policy(scalar))
 }
 
+/// Return whether a YAML block scalar contains a recognised retired-path check.
+/// Invalid scalars and scalars without a matching command line return `false`.
 fn decoded_scalar_has_retired_policy(scalar: &str) -> bool {
     serde_yaml_ng::from_str::<String>(scalar)
         .is_ok_and(|decoded| decoded.lines().any(command_has_retired_policy))
 }
 
+/// Return whether a command starts with a supported existence check for a
+/// retired descriptile path. Shell condition keywords and negation are allowed
+/// before `check_file`, `test`, `[` or `[[` checks.
 fn command_has_retired_policy(command: &str) -> bool {
     let mut words = command.split_whitespace().peekable();
     if matches!(words.peek(), Some(&"if" | &"elif" | &"while" | &"until")) {
