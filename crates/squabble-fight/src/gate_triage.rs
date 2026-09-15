@@ -53,8 +53,7 @@ pub fn load_signatures(repo_root: &Path) -> SignatureSet {
 /// `is_usable()` on the set honest about how many scanners are really covered.
 pub fn parse_signatures(raw: &str) -> SignatureSet {
     let mut out = Vec::new();
-    for chunk in raw.split(SIGNATURE_TABLE).skip(1) {
-        let body = until_next_header(chunk);
+    for body in signature_bodies(raw) {
         let signature = VacuitySignature {
             skipped_steps: extract_array(body, "skipped-steps"),
             success_steps: extract_array(body, "success-steps"),
@@ -144,6 +143,52 @@ fn until_next_header(chunk: &str) -> &str {
         at += line.len();
     }
     &chunk[..end]
+}
+
+/// The body text of every `[[gate-triage.detection.signatures]]` table.
+///
+/// Line-oriented on purpose. Splitting the raw directive on the header
+/// *string* also cuts at every prose mention of it — and this directive
+/// documents its own table format in a comment **inside** the very section
+/// that holds the tables. The parser therefore opened a scanner at its own
+/// documentation and handed that scanner whatever keys the enclosing section
+/// carried. A parser that reads its own documentation is its own fake green,
+/// which is the hazard `extract_scalar` already guards against by skipping
+/// commented lines.
+///
+/// Only a line that *is* the header opens a table; any other line that opens
+/// a table or section closes it, so one table's keys cannot be read out of
+/// the next. Trailing comments are stripped before the comparison, and a line
+/// that is wholly a comment is neither an opener nor a closer — a
+/// commented-out header must not silently terminate a real table.
+fn signature_bodies(raw: &str) -> Vec<&str> {
+    let mut bodies = Vec::new();
+    let mut open: Option<usize> = None;
+    let mut at = 0usize;
+    for line in raw.split_inclusive('\n') {
+        let code = code_of(line);
+        if code == SIGNATURE_TABLE {
+            if let Some(start) = open.take() {
+                bodies.push(&raw[start..at]);
+            }
+            open = Some(at + line.len());
+        } else if code.starts_with('[') {
+            if let Some(start) = open.take() {
+                bodies.push(&raw[start..at]);
+            }
+        }
+        at += line.len();
+    }
+    if let Some(start) = open {
+        bodies.push(&raw[start..]);
+    }
+    bodies
+}
+
+/// One line with any trailing comment removed. A wholly commented line yields
+/// `""`, which is neither the signature header nor a section opener.
+fn code_of(line: &str) -> &str {
+    line.split('#').next().unwrap_or("").trim()
 }
 
 /// The text of one `[section]`, from its header to the next header.
@@ -254,7 +299,10 @@ census = "33/33"
         // per key, every scanner would get hypatia's steps.
         let set = parse_signatures(DIRECTIVE);
         let pa = &set.signatures[1].signature;
-        assert_eq!(pa.skipped_steps, vec!["Run panic-attack assail".to_string()]);
+        assert_eq!(
+            pa.skipped_steps,
+            vec!["Run panic-attack assail".to_string()]
+        );
         assert!(
             !pa.skipped_steps.contains(&"Run Hypatia scan".to_string()),
             "panic-attack must not inherit hypatia's steps"
@@ -300,6 +348,72 @@ skipped-steps = ["Run something"]
     }
 
     #[test]
+    fn a_prose_mention_of_the_table_name_does_not_open_a_scanner() {
+        // The shipped directive documents the table format in a comment that
+        // sits INSIDE `[gate-triage.detection]` — the same section the tables
+        // live in. A parser that splits the file on the header string cuts at
+        // that comment too, opening a scanner whose body is the rest of the
+        // section, and handing it any step keys the section itself carries.
+        //
+        // Today the real directive survives only because every line after the
+        // mention happens to be commented and `extract_array` matches keys at
+        // line start. Add one section-level `skipped-steps` and a phantom
+        // scanner appears — silently, and named "unnamed".
+        let set = parse_signatures(
+            r#"
+[gate-triage.detection]
+source = "actions jobs API step conclusions"
+# GROUND TRUTH, not a paraphrase. The step names live in the
+# `[[gate-triage.detection.signatures]]` tables at the END of this section.
+default-scanner = "a section-level default, not a scanner in its own right"
+skipped-steps = ["Run hypatia scanner"]
+success-steps = ["Upload hypatia SARIF"]
+
+[[gate-triage.detection.signatures]]
+scanner = "hypatia"
+skipped-steps = ["Run hypatia scanner (a2ml)"]
+success-steps = ["Upload hypatia SARIF (a2ml)"]
+"#,
+        );
+        assert_eq!(
+            set.signatures.len(),
+            1,
+            "a comment naming the table header must not manufacture a scanner"
+        );
+        assert_eq!(
+            set.signatures[0].scanner, "hypatia",
+            "the only real table is the hypatia one"
+        );
+    }
+
+    #[test]
+    fn a_commented_out_header_neither_opens_nor_closes_a_table() {
+        // Commenting a table out must remove it, not truncate the table above
+        // it. The old string split did the opposite on both counts.
+        let set = parse_signatures(
+            r#"
+[[gate-triage.detection.signatures]]
+scanner = "live"
+skipped-steps = ["Run live scan"]
+# [[gate-triage.detection.signatures]]
+# scanner = "retired"
+success-steps = ["Upload live SARIF"]
+"#,
+        );
+        assert_eq!(
+            set.signatures.len(),
+            1,
+            "a commented-out header must not split the live table in two"
+        );
+        assert_eq!(set.signatures[0].scanner, "live");
+        assert_eq!(
+            set.signatures[0].signature.success_steps,
+            vec!["Upload live SARIF".to_string()],
+            "the key below the commented header still belongs to the live table"
+        );
+    }
+
+    #[test]
     fn an_absent_directive_detects_nothing() {
         // Fail-safe: no directive must mean "detect no vacuity", never
         // "detect vacuity everywhere".
@@ -329,7 +443,11 @@ signature-success-steps = ["Create stub findings (when Hypatia unavailable)"]
         both.push_str("\nsignature-skipped-steps = [\"Run Hypatia scan\"]\n");
         both.push_str("signature-success-steps = [\"Create stub findings\"]\n");
         let set = parse_signatures(&both);
-        assert_eq!(set.signatures.len(), 2, "the legacy pair must not add a third");
+        assert_eq!(
+            set.signatures.len(),
+            2,
+            "the legacy pair must not add a third"
+        );
     }
 
     // ---- ground truth ------------------------------------------------------
