@@ -112,6 +112,10 @@ impl WorkflowFacts {
     /// workflow could be attributed — the caller then falls back to the pure
     /// engine's conservative default rather than guessing.
     ///
+    /// Workflows marked as using a retired descriptile policy or lacking
+    /// uncommented job definitions are flagged as non-functional before
+    /// ownership and lane classification.
+    ///
     /// `slug` is the current repo's `owner/repo`; a reusable workflow whose
     /// `owner/repo` differs is owned upstream. The check's realised [`CheckRun`]
     /// matters: the path-filter trap only manifests as a *Missing* check (the
@@ -287,6 +291,11 @@ enum BlockState {
     Other(usize),
 }
 
+/// Detect file checks in executable `run` scalars that target retired
+/// descriptile paths.
+///
+/// Quoted inline scalars are YAML-decoded, while comments and non-`run` block
+/// scalars are ignored.
 fn has_retired_descriptile_policy(text: &str) -> bool {
     let mut state = BlockState::None;
 
@@ -384,6 +393,8 @@ fn has_retired_descriptile_policy(text: &str) -> bool {
     })
 }
 
+/// Return whether a top-level block-style `jobs:` section has no uncommented
+/// indented content.
 fn has_empty_jobs(text: &str) -> bool {
     let mut in_jobs = false;
     for line in text.lines() {
