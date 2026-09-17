@@ -112,6 +112,10 @@ impl WorkflowFacts {
     /// workflow could be attributed — the caller then falls back to the pure
     /// engine's conservative default rather than guessing.
     ///
+    /// Workflows marked as using a retired descriptile policy or lacking
+    /// uncommented job definitions are flagged as non-functional before
+    /// ownership and lane classification.
+    ///
     /// `slug` is the current repo's `owner/repo`; a reusable workflow whose
     /// `owner/repo` differs is owned upstream. The check's realised [`CheckRun`]
     /// matters: the path-filter trap only manifests as a *Missing* check (the
@@ -286,21 +290,21 @@ fn parse_workflow(file: &str, text: &str) -> WorkflowInfo {
 
 enum BlockState {
     None,
-    Run(usize, String),
+    Run { min_indent: usize, scalar: String },
     Other(usize),
 }
 
 /// Return whether a `run` scalar directly checks a known descriptile at either
 /// retired `.machine_readable` location.
 ///
-/// Quoted inline and block scalars are YAML-decoded. Text outside `run` scalars and
+/// Quoted inline scalars are YAML-decoded. Text outside `run` scalars and
 /// commands that do not begin with a supported file-existence check are ignored.
 fn has_retired_descriptile_policy(text: &str) -> bool {
     let mut state = BlockState::None;
 
     for line in text.lines() {
         if line.trim().is_empty() {
-            if let BlockState::Run(_, scalar) = &mut state {
+            if let BlockState::Run { scalar, .. } = &mut state {
                 scalar.push('\n');
             }
             continue;
@@ -309,21 +313,22 @@ fn has_retired_descriptile_policy(text: &str) -> bool {
         let trimmed = line[indent..].trim_end();
 
         match &mut state {
-            BlockState::Run(min_indent, scalar) if indent > *min_indent => {
+            BlockState::Run { min_indent, scalar } if indent > *min_indent => {
                 scalar.push_str(line);
                 scalar.push('\n');
                 continue;
             }
-            BlockState::Other(min_indent) if indent > *min_indent => continue,
-            _ => {
-                if let BlockState::Run(_, scalar) = &state {
-                    if scalar_has_retired_descriptile_policy(scalar) {
-                        return true;
-                    }
-                }
-                state = BlockState::None;
+            BlockState::Other(min_indent) if indent > *min_indent => {
+                continue;
             }
+            BlockState::Run { scalar, .. } => {
+                if decoded_scalar_has_retired_policy(scalar) {
+                    return true;
+                }
+            }
+            BlockState::None | BlockState::Other(_) => {}
         }
+        state = BlockState::None;
 
         let is_run_key = trimmed.starts_with("- run:") || trimmed.starts_with("run:");
         let is_block_start = trimmed.ends_with('|')
@@ -338,17 +343,21 @@ fn has_retired_descriptile_policy(text: &str) -> bool {
                 .unwrap()
                 .trim_start();
             if scalar.starts_with('|') || scalar.starts_with('>') {
-                state = BlockState::Run(indent, format!("{scalar}\n"));
+                state = BlockState::Run {
+                    min_indent: indent,
+                    scalar: format!("{scalar}\n"),
+                };
             } else {
-                let decoded = if scalar.trim().starts_with(['\'', '"']) {
-                    let Ok(value) = serde_yaml_ng::from_str::<String>(scalar.trim()) else {
+                let scalar_trim = scalar.trim();
+                let decoded = if scalar_trim.starts_with(['\'', '"']) {
+                    let Ok(value) = serde_yaml_ng::from_str::<String>(scalar_trim) else {
                         continue;
                     };
                     value
                 } else {
-                    scalar.trim().to_string()
+                    scalar_trim.to_string()
                 };
-                if command_has_retired_descriptile_policy(&decoded) {
+                if command_has_retired_policy(decoded.trim()) {
                     return true;
                 }
             }
@@ -357,15 +366,20 @@ fn has_retired_descriptile_policy(text: &str) -> bool {
         }
     }
 
-    matches!(state, BlockState::Run(_, ref scalar) if scalar_has_retired_descriptile_policy(scalar))
+    matches!(state, BlockState::Run { ref scalar, .. } if decoded_scalar_has_retired_policy(scalar))
 }
 
-fn scalar_has_retired_descriptile_policy(scalar: &str) -> bool {
+/// Return whether a YAML block scalar contains a recognised retired-path check.
+/// Invalid scalars and scalars without a matching command line return `false`.
+fn decoded_scalar_has_retired_policy(scalar: &str) -> bool {
     serde_yaml_ng::from_str::<String>(scalar)
-        .is_ok_and(|decoded| decoded.lines().any(command_has_retired_descriptile_policy))
+        .is_ok_and(|decoded| decoded.lines().any(command_has_retired_policy))
 }
 
-fn command_has_retired_descriptile_policy(command: &str) -> bool {
+/// Return whether a command starts with a supported existence check for a
+/// retired descriptile path. Shell condition keywords and negation are allowed
+/// before `check_file`, `test`, `[` or `[[` checks.
+fn command_has_retired_policy(command: &str) -> bool {
     let mut words = command.split_whitespace().peekable();
     if matches!(words.peek(), Some(&"if" | &"elif" | &"while" | &"until")) {
         words.next();
@@ -746,12 +760,12 @@ jobs:
     }
 
     #[test]
-    fn folded_retired_policy_is_a_non_functional_gate() {
+    fn folded_retired_policy_command_is_a_non_functional_gate() {
         let workflow = r#"name: Compliance
 jobs:
   compliance:
     steps:
-      - run: >-
+      - run: >
           test -f
           .machine_readable/STATE.a2ml
 "#;
