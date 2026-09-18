@@ -2,6 +2,7 @@
 SPDX-License-Identifier: CC-BY-SA-4.0
 Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 -->
+```
 # Clone the repository
 git clone https://{{FORGE}}/{{OWNER}}/{{REPO}}.git
 cd {{REPO}}
@@ -122,3 +123,4 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/):
 [optional body]
 
 [optional footer]
+```
