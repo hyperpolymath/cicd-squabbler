@@ -46,6 +46,7 @@ sonar-project.properties   # SonarCloud analysis config; the SonarQube scan acti
 .devcontainer/             # VS Code dev container spec; tool-required at root
 .git/
 .github/                   # CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md, workflows/
+www/                       # site-operations bundle; canonical .well-known/ lives at www/.well-known/ (issue #53)
 .machine_readable/         # AI manifests, contractiles, custom-format configs
 .well-known/
 build/                     # contractile.just, setup.sh, guix.scm, .guix-channel, Containerfile
