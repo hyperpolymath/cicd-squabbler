@@ -14,7 +14,7 @@
 -- A bare `idris2 --check src/interface/Abi/Foo.idr` still warns ("module name
 -- does not match file name") because Idris derives the expected module from the
 -- full path; that is expected. Use the package for a real typecheck:
---   idris2 --typecheck abi.ipkg      (or --build)
+--   idris2 --typecheck src/interface/abi.ipkg      (or --build)
 --
 -- The RSR validators accept either Abi/ (canonical, case-consistent) or a
 -- lowercase abi/ for downstream repos that ship lowercase — but never both.
@@ -27,7 +27,7 @@ authors = "Jonathan D.A. Jewell"
 
 brief = "Formally-typed ABI/FFI seam (Idris2 type + layout proofs) for an RSR-templated repository"
 
-sourcedir = "src/interface"
+sourcedir = "."
 
 depends = base
 

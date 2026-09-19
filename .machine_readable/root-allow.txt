@@ -29,7 +29,6 @@ CITATION.cff               # citation metadata (surfaced at root by #96)
 # ─── Build entry points (must live at root for their tooling) ────────────────
 Justfile                   # delegates phases to build/just/*.just
 coordination.k9            # repo-local session binding (template-mandated)
-abi.ipkg                   # Idris2 package for the ABI seam; sourcedir=src/interface (estate canon: root-level *-abi.ipkg). Single case-consistent src/interface/Abi/ dir. Typecheck: `idris2 --typecheck abi.ipkg`.
 
 # ─── Conventional dotfiles (tool-required at root) ───────────────────────────
 .editorconfig
@@ -86,7 +85,7 @@ CLAUDE.md
 #     these are this project's real top-level shape. Moving them would
 #     break every path that references them, to satisfy a map that was
 #     never written for it. Read from the estate-rules gate's own output.
-.githooks/                  # Top-level component directory of this project.
+.github/hooks/                  # Top-level component directory of this project.
 CODE_OF_CONDUCT.md          # Project documentation.
 GOVERNANCE.md               # Project documentation.
 MAINTAINERS                 # Project file that must remain at the repository root.
@@ -101,6 +100,5 @@ mise.toml                   # Build/tool manifest — must sit at the root to be
 ARCHITECTURE.adoc           # Project documentation (AsciiDoc-by-default).
 CHANGELOG.adoc              # Project documentation (AsciiDoc-by-default).
 CODE_OF_CONDUCT.adoc        # Project documentation (AsciiDoc-by-default).
-CONTRIBUTING.adoc           # Project documentation (AsciiDoc-by-default).
 SECURITY.adoc               # Project documentation (AsciiDoc-by-default).
 .mise.toml                  # Repo-specific mise config; must sit at the root to be found.
