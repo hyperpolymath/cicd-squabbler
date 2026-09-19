@@ -68,7 +68,7 @@ file. Bring a counter-example, a failing run, or a contradicting source.
 |===
 | Claim | Status | Evidence (command / `file:line`)
 | _e.g. The library builds clean_ | affirmed | `just build` at the anchor SHA
-| _e.g. The ABI seam typechecks_ | affirmed | `idris2 --typecheck abi.ipkg`
+| _e.g. The ABI seam typechecks_ | affirmed | `idris2 --typecheck src/interface/abi.ipkg`
 | _e.g. Feature X is complete_ | aspiration | README §… (not yet checked)
 |===
 
