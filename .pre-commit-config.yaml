@@ -18,12 +18,13 @@ repos:
       - id: check-added-large-files
         args: ['--maxkb=1024']
 
-  # --- A2ML manifest validation ---
-  - repo: https://github.com/hyperpolymath/a2ml-pre-commit
-    rev: 40adffc73f2d4be1e8dfda8a7de93e4fc11730dc  # a2ml-pre-commit @ main 2026-06-23
-    hooks:
-      - id: validate-a2ml
-        name: Validate A2ML manifests
+  # --- Manifest validation (DEED grammar) ---
+  # The A2ML manifests hook was removed estate-wide on 2026-09-15 (owner
+  # ruling R-H3: a2ml is retired, DEED is the grammar — standards #836/#837).
+  # Its provider repo (hyperpolymath/a2ml-pre-commit) no longer resolves, so
+  # the entry is dropped here rather than left to break `pre-commit install`.
+  # A grammar-faithful .deed validator returns per R-H2; until then the DEED
+  # manifest gate is CI-side: dogfood-gate.yml -> .github/hooks/validate-deed.sh.
 
   # --- K9 contract validation ---
   - repo: https://github.com/hyperpolymath/k9-pre-commit
