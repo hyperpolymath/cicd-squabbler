@@ -58,7 +58,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@v2.9.1
+        uses: step-security/harden-runner@v2.16.0
         with:
           egress-policy: audit
       - name: Fetch Dependabot metadata
