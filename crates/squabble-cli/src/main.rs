@@ -11,6 +11,21 @@
 //! the report — the CLI's only network I/O beyond `gh`. Applying a move is
 //! still the next implementation step (see docs/CHARTER.adoc) — this binary
 //! fails loudly rather than pretending to land anything.
+//!
+//! # Exit codes
+//!
+//! - `0` — success.
+//! - `2` — a genuine failure: bad usage, `gh` failed, unparseable input.
+//! - `3` — **no gate**: the PR's base branch carries no `required_status_checks`
+//!   ruleset rule, so there is nothing to triage.
+//!
+//! `3` exists because `2` used to cover both. A caller that cannot separate
+//! "there is nothing here to triage" from "the tool is broken" must either mute
+//! real breakage or fail the build on a true non-finding. CI callers should
+//! treat `3` as a reportable finding and any other non-zero as a failure.
+//!
+//! Note `3` says nothing about *classic* branch protection, which lives behind
+//! a different endpoint and is invisible to the rules API this binary queries.
 
 #[cfg(feature = "boj")]
 mod boj;
@@ -51,7 +66,9 @@ fn main() -> ExitCode {
                  squabble fetch <owner>/<repo> <pr-number>\n  \
                  squabble diagnose <gate.json>\n  \
                  squabble {}\n  \
-                 squabble --version\n",
+                 squabble --version\n\n\
+                 EXIT CODES:\n  \
+                 0 ok · 2 failure · 3 no `required_status_checks` rule on the base branch\n",
                 env!("CARGO_PKG_VERSION"),
                 fight::USAGE.trim_start_matches("usage: squabble ")
             );
@@ -74,7 +91,7 @@ fn run_fetch(slug: &str, pr: &str) -> ExitCode {
         },
         Err(e) => {
             eprintln!("squabble fetch: {e}");
-            ExitCode::from(2)
+            ExitCode::from(e.exit_code())
         }
     }
 }

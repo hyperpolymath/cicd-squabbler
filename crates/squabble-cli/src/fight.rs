@@ -46,7 +46,7 @@ pub fn run(rest: &[String]) -> ExitCode {
         Ok(g) => g,
         Err(e) => {
             eprintln!("squabble fight: {e}");
-            return ExitCode::from(2);
+            return ExitCode::from(e.exit_code());
         }
     };
 
@@ -221,7 +221,7 @@ fn attach_vacuity(outcome: &mut Outcome, moves: &[Move]) {
     }
 }
 
-fn load_gate(args: &FightArgs) -> Result<(Gate, Vec<fetch::GreenCheck>), String> {
+fn load_gate(args: &FightArgs) -> Result<(Gate, Vec<fetch::GreenCheck>), fetch::FetchError> {
     if let Some(path) = &args.gate_file {
         let text =
             std::fs::read_to_string(path).map_err(|e| format!("cannot read `{path}`: {e}"))?;
@@ -229,13 +229,13 @@ fn load_gate(args: &FightArgs) -> Result<(Gate, Vec<fetch::GreenCheck>), String>
         // classify — an honest empty set, not a silent skip.
         return serde_json::from_str(&text)
             .map(|g| (g, Vec::new()))
-            .map_err(|e| format!("`{path}` is not a valid gate: {e}"));
+            .map_err(|e| fetch::FetchError::Failed(format!("`{path}` is not a valid gate: {e}")));
     }
     match &args.pr {
         Some(pr) => fetch::run_with_greens(&args.slug, pr),
-        None => Err(format!(
+        None => Err(fetch::FetchError::Failed(format!(
             "need a PR number (live) or `--gate <file>` (offline).\n{USAGE}"
-        )),
+        ))),
     }
 }
 

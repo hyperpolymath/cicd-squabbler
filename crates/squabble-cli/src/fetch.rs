@@ -207,11 +207,76 @@ fn run_gh(args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Why a fetch produced no gate.
+///
+/// `NoGate` is a **finding**, not a malfunction: the base branch carries no
+/// `required_status_checks` ruleset rule, so there is genuinely nothing to
+/// triage. Everything else — `gh` failing, a malformed slug, JSON that will
+/// not parse — is `Failed`.
+///
+/// They are separate variants because they were previously the same one.
+/// `fetch` returned a bare `String` for both, the CLI mapped every error to
+/// exit 2, and so a caller had to choose between treating a real breakage as
+/// a clean skip or treating a true non-finding as a broken build. Both are
+/// wrong. A consumer cannot ask a question the producer never answers, so the
+/// answer is given here rather than guessed downstream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FetchError {
+    /// No `required_status_checks` rule applies to the PR's base branch.
+    NoGate { slug: String, branch: String },
+    /// Any other failure. Carries the message it always carried.
+    Failed(String),
+}
+
+impl FetchError {
+    /// Exit code for "there is no gate here" — a reportable non-finding.
+    pub const NO_GATE_EXIT: u8 = 3;
+    /// Exit code for a genuine malfunction. Unchanged, so existing callers
+    /// that only know about 2 keep failing on exactly what they failed on.
+    pub const FAILED_EXIT: u8 = 2;
+
+    /// The process exit code this error should produce.
+    pub fn exit_code(&self) -> u8 {
+        match self {
+            Self::NoGate { .. } => Self::NO_GATE_EXIT,
+            Self::Failed(_) => Self::FAILED_EXIT,
+        }
+    }
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // Deliberately says "ruleset rule", not "unprotected branch".
+            // Classic branch protection lives behind a different endpoint
+            // (`repos/{slug}/branches/{b}/protection`) and is invisible to the
+            // rules API this function queries — measured 2026-09-21 on a repo
+            // whose live 6-context ruleset gate reads as 404 "Branch not
+            // protected" there. Calling the branch unprotected on this
+            // evidence would be a false statement about a gated branch.
+            Self::NoGate { slug, branch } => write!(
+                f,
+                "no `required_status_checks` ruleset rule applies to `{slug}` branch \
+                 `{branch}` — nothing to squabble over. (Classic branch protection is a \
+                 separate API and is not visible to this query.)"
+            ),
+            Self::Failed(msg) => f.write_str(msg),
+        }
+    }
+}
+
+/// Lets `?` keep working on the many helpers that still yield `String`.
+impl From<String> for FetchError {
+    fn from(msg: String) -> Self {
+        Self::Failed(msg)
+    }
+}
+
 /// Fetch a live PR's gate from GitHub via `gh` and return it as a [`Gate`].
 ///
 /// `slug` is `owner/repo`. Requires `gh` to be authenticated for that repo —
 /// the same precondition every other `gh`-based estate tool already has.
-pub fn run(slug: &str, pr: &str) -> Result<Gate, String> {
+pub fn run(slug: &str, pr: &str) -> Result<Gate, FetchError> {
     run_with_greens(slug, pr).map(|(gate, _greens)| gate)
 }
 
@@ -221,7 +286,7 @@ pub fn run(slug: &str, pr: &str) -> Result<Gate, String> {
 /// The green set is what [`squabble_core::polarity`] classifies. `fight` only
 /// ever looks at reds, so a gate that could not run reports green and is never
 /// inspected — that is the whole fake-green class.
-pub fn run_with_greens(slug: &str, pr: &str) -> Result<(Gate, Vec<GreenCheck>), String> {
+pub fn run_with_greens(slug: &str, pr: &str) -> Result<(Gate, Vec<GreenCheck>), FetchError> {
     let (owner, repo) = slug
         .split_once('/')
         .ok_or_else(|| format!("expected `owner/repo`, got `{slug}`"))?;
@@ -257,11 +322,10 @@ pub fn run_with_greens(slug: &str, pr: &str) -> Result<(Gate, Vec<GreenCheck>), 
         .collect();
 
     if required_contexts.is_empty() {
-        return Err(format!(
-            "no `required_status_checks` rule found on `{owner}/{repo}` branch `{}` — \
-             an unprotected branch has no gate to squabble over",
-            pr_view.base_ref_name
-        ));
+        return Err(FetchError::NoGate {
+            slug: format!("{owner}/{repo}"),
+            branch: pr_view.base_ref_name.clone(),
+        });
     }
 
     Ok((
@@ -273,6 +337,68 @@ pub fn run_with_greens(slug: &str, pr: &str) -> Result<(Gate, Vec<GreenCheck>), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- FetchError: the whole point is that these two are distinguishable ---
+
+    /// The mutant this guards against: someone "simplifying" the codes back to
+    /// a single value. If both constants become 2, every caller silently
+    /// returns to being unable to tell a non-finding from a breakage — the
+    /// exact defect this type exists to remove — and nothing else in the suite
+    /// would notice.
+    #[test]
+    fn no_gate_and_failure_do_not_share_an_exit_code() {
+        assert_ne!(
+            FetchError::NO_GATE_EXIT,
+            FetchError::FAILED_EXIT,
+            "a shared exit code makes the two outcomes indistinguishable to any caller"
+        );
+    }
+
+    #[test]
+    fn each_variant_maps_to_its_own_exit_code() {
+        let no_gate = FetchError::NoGate {
+            slug: "o/r".into(),
+            branch: "main".into(),
+        };
+        assert_eq!(no_gate.exit_code(), 3);
+        assert_eq!(FetchError::Failed("gh exploded".into()).exit_code(), 2);
+    }
+
+    /// `?` converts every `String` error in this module through `From`. If that
+    /// conversion ever produced `NoGate`, a genuine breakage would be reported
+    /// as a clean non-finding and the build would go green on a broken tool.
+    #[test]
+    fn an_arbitrary_error_string_becomes_failed_never_no_gate() {
+        let e: FetchError = String::from("could not parse ruleset response").into();
+        assert_eq!(
+            e,
+            FetchError::Failed("could not parse ruleset response".into())
+        );
+        assert_eq!(e.exit_code(), FetchError::FAILED_EXIT);
+    }
+
+    /// Measured 2026-09-21: a branch with a live 6-context `required_status_checks`
+    /// ruleset reads as 404 "Branch not protected" on the classic protection
+    /// endpoint. The two APIs are disjoint, so absence of a *ruleset* rule is not
+    /// evidence the branch is unprotected, and this message must not say it is.
+    #[test]
+    fn the_no_gate_message_does_not_claim_the_branch_is_unprotected() {
+        let msg = FetchError::NoGate {
+            slug: "hyperpolymath/MetaManifold-WebUI".into(),
+            branch: "main".into(),
+        }
+        .to_string();
+        assert!(msg.contains("hyperpolymath/MetaManifold-WebUI"), "{msg}");
+        assert!(msg.contains("main"), "{msg}");
+        assert!(
+            msg.contains("ruleset"),
+            "must say which surface it queried: {msg}"
+        );
+        assert!(
+            !msg.contains("unprotected"),
+            "claims the branch is unprotected on evidence that cannot show it: {msg}"
+        );
+    }
 
     #[test]
     fn mixed_check_runs_and_commit_statuses_parse_without_losing_failures() {
