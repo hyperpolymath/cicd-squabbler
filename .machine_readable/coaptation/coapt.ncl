@@ -24,8 +24,11 @@ let facts = facts_doc.facts in
 # --- fact lookup table -------------------------------------------------------
 let facts_by_id = std.array.fold_left (fun acc f => acc & { "%{f.id}" = f }) {} facts in
 let lookup = fun id =>
-  if std.record.has_field id facts_by_id then facts_by_id."%{id}"
-  else { id = id, value = "", present = false } in
+  if std.record.has_field id facts_by_id then
+    facts_by_id."%{id}"
+  else
+    { id = id, value = "", present = false }
+in
 
 # --- predicate evaluation (does a single witness hold?) ----------------------
 let eval_w = fun w =>
@@ -40,31 +43,49 @@ let eval_w = fun w =>
     'equals => f.value == arg,
     'contains => std.string.contains arg f.value,
     'not_contains => !(std.string.contains arg f.value),
-  } in
+  }
+in
 
 # --- per-clause evaluation (Coverage) ----------------------------------------
-let evals = std.array.map
-  (fun c =>
-    let mapped = std.record.has_field c.id wmap in
-    let entry = if mapped then wmap."%{c.id}" else { kind = "auto", witnesses = [] } in
-    let base_kind =
-      if entry.kind != "auto" then entry.kind
-      else if c.has_probe then "probe"
-      else "unmeasured" in
-    let sat =
-      if base_kind == "descriptile" then std.array.all eval_w entry.witnesses
-      else false in
-    let st =
-      if c.verb == "bust" then (if base_kind == "descriptile" && sat then "alarm" else "latent")
-      else if c.verb == "dust" then "expected"
-      else if c.verb == "intend" then (if c.is_wish then "wish:" ++ c.status else "intent:" ++ c.status)
-      else if base_kind == "descriptile" then (if sat then "witnessed" else "refuted")
-      else if base_kind == "none" then "gap"
-      else if base_kind == "probe" then "probe-deferred"
-      else "unmeasured" in
-    { id = c.id, verb = c.verb, status = st, kind = base_kind, wsat = sat, c_status = c.status, is_wish = c.is_wish }
-  )
-  clauses in
+let evals =
+  std.array.map
+    (fun c =>
+      let mapped = std.record.has_field c.id wmap in
+      let entry = if mapped then wmap."%{c.id}" else { kind = "auto", witnesses = [] } in
+      let base_kind =
+        if entry.kind != "auto" then
+          entry.kind
+        else if c.has_probe then
+          "probe"
+        else
+          "unmeasured"
+      in
+      let sat =
+        if base_kind == "descriptile" then
+          std.array.all eval_w entry.witnesses
+        else
+          false
+      in
+      let st =
+        if c.verb == "bust" then
+          (if base_kind == "descriptile" && sat then "alarm" else "latent")
+        else if c.verb == "dust" then
+          "expected"
+        else if c.verb == "intend" then
+          (if c.is_wish then "wish:" ++ c.status else "intent:" ++ c.status)
+        else if base_kind == "descriptile" then
+          (if sat then "witnessed" else "refuted")
+        else if base_kind == "none" then
+          "gap"
+        else if base_kind == "probe" then
+          "probe-deferred"
+        else
+          "unmeasured"
+      in
+      { id = c.id, verb = c.verb, status = st, kind = base_kind, wsat = sat, c_status = c.status, is_wish = c.is_wish }
+    )
+    clauses
+in
 
 # --- rollups -----------------------------------------------------------------
 let count = fun pred arr => std.array.length (std.array.filter pred arr) in
@@ -103,7 +124,8 @@ let action =
   else if band == "amber" then
     "advisory — soft drift within bands (posture/intend). Open an advisory issue; no re-anchor."
   else
-    "none — the descriptile self-model coapts with the contractile set-point within tolerance." in
+    "none — the descriptile self-model coapts with the contractile set-point within tolerance."
+in
 
 # --- render ------------------------------------------------------------------
 let clause_lines = std.string.join "\n" (std.array.map (fun e => e.id ++ " = " ++ e.status) evals) in
