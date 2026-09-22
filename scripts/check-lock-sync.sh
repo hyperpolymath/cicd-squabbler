@@ -70,16 +70,14 @@ if [ ! -f "$LOCK" ]; then
 fi
 
 shopt -s nullglob
-WORKFLOWS=("$WF_DIR"/*.yml "$WF_DIR"/*.yaml)
-if [[ "${#WORKFLOWS[@]}" -eq 0 ]]; then
+mapfile -t WORKFLOWS < <(printf '%s\n' "$WF_DIR"/*.yml "$WF_DIR"/*.yaml | sort -u)
+if [ "${#WORKFLOWS[@]}" -eq 0 ]; then
   echo "check-lock-sync: FATAL: no workflow files under $WF_DIR" >&2
   exit 1
 fi
 
 read -r -d '' PROG <<'AWK' || true
-# Normalise an external `uses:` reference to owner/repository@ref,
-# discarding any action subpath. Return an empty string for local actions or
-# values without a repository path and ref.
+# owner/repo[/subpath...]@ref  ->  owner/repo@ref   ("" if not an external ref)
 function norm(r,   at, path, ref, n, parts) {
   at = 0
   for (n = length(r); n > 0; n--) { if (substr(r, n, 1) == "@") { at = n; break } }
@@ -89,6 +87,20 @@ function norm(r,   at, path, ref, n, parts) {
   if (substr(path, 1, 2) == "./" || substr(path, 1, 2) == "$/") return ""   # local action
   if (split(path, parts, "/") < 2) return ""
   return parts[1] "/" parts[2] "@" ref
+}
+
+# Fold case on the OWNER/REPO segment only, for comparison keys. GitHub resolves
+# owner and repository names case-insensitively, and this is measured, not assumed:
+# metadatastician/pong-ping's lockfile records sonarsource/sonarqube-scan-action@v8.2.1
+# while sonarqube.yml says SonarSource/..., and at commit cd5f90f that workflow ran
+# SUCCESS while codeql.yml at the SAME commit was startup_failure. A same-commit
+# control, so the case difference is provably not what kills a run.
+# The REF is NOT folded: git tags and branch names are case-sensitive.
+function ck(r,   at, s) {
+  at = 0
+  for (s = length(r); s > 0; s--) { if (substr(r, s, 1) == "@") { at = s; break } }
+  if (at == 0) return tolower(r)
+  return tolower(substr(r, 1, at - 1)) substr(r, at)
 }
 
 # ---------- pass 1: the lockfile ----------
@@ -102,12 +114,12 @@ FILENAME == lockfile {
     # "    'owner/repo@ref':"  -- a top-level dependency record
     if (match($0, /^    '([^']+)':/, m)) {
       depkey = m[1]
-      haverec[depkey] = 1
+      haverec[ck(depkey)] = 1; disp[ck(depkey)] = depkey
       next
     }
     # "            - 'owner/repo@ref'"  -- a nested uses: of that record
     if (match($0, /^            - '([^']+)'/, m) && depkey != "") {
-      r = m[1]
+      r = ck(m[1]); disp[r] = m[1]
       want[r] = 1
       wantsrc[r] = wantsrc[r] " dependencies:" depkey
       next
@@ -124,10 +136,10 @@ FILENAME == lockfile {
     next
   }
   if (match($0, /^        - '([^']+)'[[:space:]]*$/, m) && cur != "") {
-    lock[cur, m[1]] = 1
+    lr = ck(m[1]); disp[lr] = m[1]; lock[cur, lr] = 1
     lockcount[cur]++
-    want[m[1]] = 1                                  # clause 3: this must resolve too
-    wantsrc[m[1]] = wantsrc[m[1]] " " cur
+    want[lr] = 1
+    wantsrc[lr] = wantsrc[lr] " " cur
     next
   }
   next
@@ -144,7 +156,7 @@ FNR == 1 { wf = FILENAME }
     gsub(/[[:space:]]+$/, "", raw)
     if (raw ~ /^\$\//) { dollar[wf] = dollar[wf] " " raw; next }   # known corruption
     n = norm(raw)
-    if (n != "") { uses[wf, n] = 1; useslist[wf] = useslist[wf] " " n }
+    if (n != "") { uses[wf, ck(n)] = 1; useslist[wf] = useslist[wf] " " n }
   }
 }
 
@@ -168,7 +180,7 @@ END {
     for (j = 1; j <= nu; j++) {
       if (u[j] == "" || (u[j] in uniq)) continue
       uniq[u[j]] = 1
-      if (!((key SUBSEP u[j]) in lock)) missing = missing " " u[j]
+      if (!((key SUBSEP ck(u[j])) in lock)) missing = missing " " u[j]
     }
     if (missing != "") {
       if (!(key in seen_path))
@@ -183,7 +195,7 @@ END {
     for (k in lock) {
       split(k, kp, SUBSEP)
       if (kp[1] != key) continue
-      if (!((wf SUBSEP kp[2]) in uses)) orphan = orphan " " kp[2]
+      if (!((wf SUBSEP kp[2]) in uses)) orphan = orphan " " (kp[2] in disp ? disp[kp[2]] : kp[2])
     }
     if (orphan != "") {
       printf "FAIL %s\n     stale lockfile entries, no uses: references them:%s\n", key, orphan
@@ -210,7 +222,7 @@ END {
     if (r !~ /^[^\/]+\/[^\/@]+@/) continue      # not an OWNER/REPO@REF pin; not ours to resolve
     if (r in haverec) continue
     ndang++
-    dang = dang sprintf("\n       %s\n           named by:%s", r, wantsrc[r])
+    dang = dang sprintf("\n       %s\n           named by:%s", (r in disp ? disp[r] : r), wantsrc[r])
   }
   if (ndang > 0) {
     printf "FAIL actions.lock: DANGLING EDGES\n"
