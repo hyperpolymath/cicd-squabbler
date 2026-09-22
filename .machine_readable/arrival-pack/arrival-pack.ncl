@@ -14,15 +14,13 @@
 #
 # The a2ml files remain the single source of truth; this is a VIEW. Hand-editing
 # the emitted region is a flagged error (see claude-md.k9.ncl drift check).
-
 let data = import "claude-md-data.json" in
 
 # Pin to a Manifesto commit once the doctrine wording is ratified into the
 # owner's voice. Until then the estate-common block is explicitly DRAFT.
 let manifesto_pin = "DRAFT-unratified" in
 
-let provenance =
-  "CLADE@%{data.h_clade} ECOSYSTEM@%{data.h_eco} AGENTIC@%{data.h_agentic} STATE@%{data.h_state} ANCHOR@%{data.h_anchor}"
+let provenance = "CLADE@%{data.h_clade} ECOSYSTEM@%{data.h_eco} AGENTIC@%{data.h_agentic} STATE@%{data.h_state} ANCHOR@%{data.h_anchor}"
 in
 
 m%"
