@@ -77,7 +77,7 @@ if [[ "${#WORKFLOWS[@]}" -eq 0 ]]; then
 fi
 
 read -r -d '' PROG <<'AWK' || true
-# Normalise an external workflow `uses:` reference to owner/repository@ref,
+# Normalise an external `uses:` reference to owner/repository@ref,
 # discarding any action subpath. Return an empty string for local actions or
 # values without a repository path and ref.
 function norm(r,   at, path, ref, n, parts) {
