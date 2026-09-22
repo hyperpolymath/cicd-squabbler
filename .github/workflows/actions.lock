@@ -57,7 +57,7 @@ workflows:
     '.github/workflows/security-policy.yml':
         - 'actions/checkout@v7.0.1'
     '.github/workflows/standards-pipeline.yml':
-        - 'hyperpolymath/standards@2eb9bb19d43b6285466ca36b92d1324a09e7a207'
+        - 'hyperpolymath/standards@ed5e3f651305dd1ce0d0b5d2d08b97a963634632'
     '.github/workflows/static-analysis-gate.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/download-artifact@v8.0.1'
