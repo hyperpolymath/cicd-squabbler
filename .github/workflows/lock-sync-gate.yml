@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: MPL-2.0
-# This workflow is managed by gh actions-lock.
 name: Lock Sync Gate
 
 # Fails any pull request whose .github/workflows/actions.lock has drifted from
