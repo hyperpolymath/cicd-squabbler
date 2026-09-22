@@ -2,29 +2,67 @@
 # SPDX-License-Identifier: MPL-2.0
 #
 # check-lock-sync.sh — verify .github/workflows/actions.lock is in sync with the
-# workflow YAML, in BOTH directions, including job-level reusable-workflow refs.
+# workflow YAML, in BOTH directions (including job-level reusable-workflow refs),
+# AND that the lockfile is TRANSITIVELY CLOSED.
 #
-# Why this exists rather than `gh actions-lock --verify-local` alone:
-#   `gh actions-lock` v0.1.6 cannot see a job-level `uses:` (a reusable-workflow
-#   call). Measured on this repo, 2026-09-22:
-#     * mirror.yml's lock entry was stale by a whole SHA and died at startup with
-#       jobs=0, yet --verify-local reported "All 30 workflows have complete
-#       lockfile coverage" and fix mode did not repair it;
-#     * release.yml's job-level slsa-github-generator ref was absent from the
-#       lock, again unreported; and once added, --verify-local calls it `stale`
-#       with "no uses: in this workflow references it" — about a ref on line 144.
-#   GitHub's own startup enforcement DOES check those refs (that is what killed
-#   mirror.yml), so the tool is wrong in both directions and cannot be the
-#   authority. This script is.
+# Three clauses, each of which alone is insufficient:
 #
-# Exit 0 only when every workflow's `uses:` set equals its lockfile set exactly.
-# Any mismatch exits 1. There is no warn-only mode: a desync means GitHub will
-# refuse to start the run, so it must fail the job.
+#   1. every `uses:` in a workflow is locked under THAT workflow's own path;
+#   2. every lockfile entry is still referenced by its workflow (no orphans);
+#   3. every ref NAMED anywhere in the lockfile resolves to a top-level
+#      `dependencies:` record — the lockfile has no dangling edges.
+#
+# Clause 3 is not decoration. It is the clause that catches the failure mode that
+# clauses 1 and 2 are structurally blind to, and it was added only after that
+# blindness was measured. On hyperpolymath/cicd-squabbler, 2026-09-22:
+#
+#   commit    dangling-edge class                              result
+#   fe22bbc   workflows: -> dependencies: (ref listed, no record)   4 workflows startup_failure, jobs=0
+#   cfadcf9   dependencies: -> dependencies: (record added, its
+#             own nested uses: unrecorded)                          the same 4 still startup_failure
+#   5286aa5   none - transitively closed                            0 startup_failure, all 17 runs create jobs
+#
+# At fe22bbc AND cfadcf9 this script exited 0, `gh actions-lock --verify-local`
+# exited 0, and the Lock Sync Gate reported green - while GitHub was refusing to
+# start four workflows. Every local gate was green on a fatal commit. That is the
+# guard/consumer trap: the gate asked "is every uses: locked?" and GitHub asks
+# "is every locked ref RESOLVABLE?".
+#
+# The asymmetry that makes clause 3 mandatory, and counter-intuitive:
+#   * a job-level ref ABSENT from the lockfile entirely is HARMLESS;
+#   * a ref PRESENT in the lockfile but unresolvable is FATAL.
+# So adding entries without closing them is strictly worse than adding nothing.
+# Clause 1 demands entries be added; only clause 3 makes that demand safe. Shipping
+# clause 1 without clause 3 actively steers a developer into the fatal state:
+# Dependabot bumps a job-level ref -> clause 1 reds -> `gh actions-lock` is blind to
+# job-level refs and will not backfill -> the developer hand-adds the workflows:
+# entry to get green -> no dependencies: record -> CI dies silently, gate green.
+#
+# Exit 0 only when all three clauses hold. Any violation exits 1. There is no
+# warn-only mode: a desync means GitHub refuses to start the run, so it must fail
+# the job. A `::warning::` cannot fail a job and would be a vacuous gate.
 
 set -euo pipefail
 
 WF_DIR="${1:-.github/workflows}"
 LOCK="$WF_DIR/actions.lock"
+
+# gawk is required: the parser uses 3-argument match(), a GNU extension. mawk
+# (the Debian/Ubuntu default `awk`) does not support it, and a silent parse
+# failure here would read as a clean pass - the exact failure mode this script
+# exists to prevent. Probe it rather than trusting the name.
+AWK=""
+for cand in gawk awk; do
+  if command -v "$cand" >/dev/null 2>&1 \
+     && echo x | "$cand" '{ if (match($0, /(x)/, m) && m[1] == "x") exit 0; exit 1 }' 2>/dev/null; then
+    AWK="$cand"; break
+  fi
+done
+if [ -z "$AWK" ]; then
+  echo "check-lock-sync: FATAL: no awk supporting 3-argument match() (need gawk)" >&2
+  echo "check-lock-sync: install it with: sudo apt-get install -y gawk" >&2
+  exit 1
+fi
 
 if [ ! -f "$LOCK" ]; then
   echo "check-lock-sync: FATAL: no lockfile at $LOCK" >&2
@@ -38,7 +76,7 @@ if [ "${#WORKFLOWS[@]}" -eq 0 ]; then
   exit 1
 fi
 
-awk -v lockfile="$LOCK" '
+read -r -d '' PROG <<'AWK' || true
 # owner/repo[/subpath...]@ref  ->  owner/repo@ref   ("" if not an external ref)
 function norm(r,   at, path, ref, n, parts) {
   at = 0
@@ -53,20 +91,41 @@ function norm(r,   at, path, ref, n, parts) {
 
 # ---------- pass 1: the lockfile ----------
 FILENAME == lockfile {
-  if ($0 ~ /^workflows:[[:space:]]*$/) { inwf = 1; next }
-  if ($0 ~ /^[a-z_]+:/)                { inwf = 0; next }
+  if ($0 ~ /^workflows:[[:space:]]*$/)    { inwf = 1; indep = 0; next }
+  if ($0 ~ /^dependencies:[[:space:]]*$/) { inwf = 0; indep = 1; next }
+  if ($0 ~ /^[a-z_]+:/)                   { inwf = 0; indep = 0; next }
+
+  # --- the dependencies: section, for clause 3 ---
+  if (indep) {
+    # "    'owner/repo@ref':"  -- a top-level dependency record
+    if (match($0, /^    '([^']+)':/, m)) {
+      depkey = m[1]
+      haverec[depkey] = 1
+      next
+    }
+    # "            - 'owner/repo@ref'"  -- a nested uses: of that record
+    if (match($0, /^            - '([^']+)'/, m) && depkey != "") {
+      r = m[1]
+      want[r] = 1
+      wantsrc[r] = wantsrc[r] " dependencies:" depkey
+      next
+    }
+    next
+  }
+
   if (!inwf) next
 
   # "    '.github/workflows/x.yml':"  or  "... : []"
-  if (match($0, /^    '"'"'([^'"'"']+)'"'"':/, m)) {
+  if (match($0, /^    '([^']+)':/, m)) {
     cur = m[1]
     seen_path[cur] = 1
-    if ($0 ~ /\[\][[:space:]]*$/) cur_has_inline_empty = 1
     next
   }
-  if (match($0, /^        - '"'"'([^'"'"']+)'"'"'[[:space:]]*$/, m) && cur != "") {
+  if (match($0, /^        - '([^']+)'[[:space:]]*$/, m) && cur != "") {
     lock[cur, m[1]] = 1
     lockcount[cur]++
+    want[m[1]] = 1                                  # clause 3: this must resolve too
+    wantsrc[m[1]] = wantsrc[m[1]] " " cur
     next
   }
   next
@@ -79,7 +138,7 @@ FNR == 1 { wf = FILENAME }
   sub(/[[:space:]]+#.*$/, "", line)              # strip trailing comment
   if (match(line, /^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*(.+)$/, m)) {
     raw = m[1]
-    gsub(/^["'"'"']|["'"'"']$/, "", raw)
+    gsub(/^["']|["']$/, "", raw)
     gsub(/[[:space:]]+$/, "", raw)
     if (raw ~ /^\$\//) { dollar[wf] = dollar[wf] " " raw; next }   # known corruption
     n = norm(raw)
@@ -101,7 +160,7 @@ END {
       bad = 1
     }
 
-    # --- direction 1: every uses: must be locked under THIS path ---
+    # --- clause 1: every uses: must be locked under THIS path ---
     nu = split(useslist[wf], u, " ")
     delete uniq; missing = ""
     for (j = 1; j <= nu; j++) {
@@ -117,7 +176,7 @@ END {
       bad = 1
     }
 
-    # --- direction 2: every lock entry must be referenced by this workflow ---
+    # --- clause 2: every lock entry must be referenced by this workflow ---
     orphan = ""
     for (k in lock) {
       split(k, kp, SUBSEP)
@@ -141,17 +200,52 @@ END {
     if (!found) { printf "FAIL %s\n     lockfile entry for a workflow file that does not exist\n", p; bad = 1 }
   }
 
+  # --- clause 3: TRANSITIVE CLOSURE. Every ref named anywhere in the lockfile
+  #     must resolve to a top-level dependencies: record. A dangling edge makes
+  #     GitHub refuse the run at startup with jobs=0. ---
+  ndang = 0; dang = ""
+  for (r in want) {
+    if (r !~ /^[^\/]+\/[^\/@]+@/) continue      # not an OWNER/REPO@REF pin; not ours to resolve
+    if (r in haverec) continue
+    ndang++
+    dang = dang sprintf("\n       %s\n           named by:%s", r, wantsrc[r])
+  }
+  if (ndang > 0) {
+    printf "FAIL actions.lock: DANGLING EDGES\n"
+    printf "     %d ref(s) are named in the lockfile but have no top-level dependencies: record.%s\n", ndang, dang
+    bad = 1
+  }
+
+  # --- a dependencies: record nothing names is dead weight, not fatal: report only ---
+  nunref = 0
+  for (d in haverec) if (!(d in want)) nunref++
+
   if (bad) {
     print ""
-    print "actions.lock is OUT OF SYNC with the workflow YAML."
+    print "actions.lock is OUT OF SYNC with the workflow YAML, or is not transitively closed."
     print "GitHub refuses such a run at startup: zero jobs are created and the run"
     print "reports \"This run likely failed because of a workflow file issue.\""
-    print "Fix: run `gh actions-lock --no-migrate-local-actions`, then review the diff"
-    print "(it does not handle job-level reusable-workflow refs, and it can de-pin"
-    print "bare SHAs to floating tags - both must be corrected by hand)."
+    print ""
+    print "Fix, in this order:"
+    print "  1. `gh actions-lock --no-migrate-local-actions`, then review the diff. It does"
+    print "     NOT handle job-level reusable-workflow refs and it can de-pin bare SHAs to"
+    print "     floating tags - both must be corrected by hand."
+    print "  2. For any DANGLING EDGES above, add a top-level `dependencies:` record for each"
+    print "     ref. A leaf record may legally omit the nested `uses:` key entirely, so adding"
+    print "     leaves introduces no new dangling edges and closure terminates in one pass."
+    print "     Keys are sorted with LC_ALL=C collation (ASCII '-' 0x2d sorts before '@' 0x40)."
+    print "  3. Nested `uses:` entries must be bare OWNER/REPO@REF. A subpath pin such as"
+    print "     github/codeql-action/upload-sarif@<sha> is REJECTED by the schema; collapse it"
+    print "     to github/codeql-action@<sha>."
     exit 1
   }
-  print "actions.lock is in sync: every uses: is locked under its own workflow path,"
-  print "and every lockfile entry is referenced. Job-level reusable-workflow refs included."
+  printf "actions.lock is in sync and transitively closed:\n"
+  printf "  * every uses: is locked under its own workflow path (job-level reusable refs included)\n"
+  printf "  * every lockfile entry is still referenced\n"
+  printf "  * every ref named in the lockfile resolves to a dependencies: record (0 dangling edges)\n"
+  if (nunref > 0)
+    printf "  note: %d dependencies: record(s) are unreferenced - harmless, but prunable.\n", nunref
 }
-' "$LOCK" "${WORKFLOWS[@]}"
+AWK
+
+"$AWK" -v lockfile="$LOCK" "$PROG" "$LOCK" "${WORKFLOWS[@]}"
