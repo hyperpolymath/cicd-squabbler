@@ -57,8 +57,7 @@ workflows:
         - 'hyperpolymath/standards@8f2ee50841e216cd8c192eeb68953118190f105c'
     '.github/workflows/security-policy.yml':
         - 'actions/checkout@v7.0.1'
-    '.github/workflows/standards-pipeline.yml':
-        - 'hyperpolymath/standards@2eb9bb19d43b6285466ca36b92d1324a09e7a207'
+    '.github/workflows/standards-pipeline.yml': []
     '.github/workflows/static-analysis-gate.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/download-artifact@v8.0.1'
@@ -183,16 +182,6 @@ dependencies:
         commit: 'sha1-22e7bdb322c430c1d0dac6b3bb307f4bb139d0be'
         owner_id: 6759885
         repo_id: 1352485172
-    'hyperpolymath/standards@2eb9bb19d43b6285466ca36b92d1324a09e7a207':
-        ref: '2eb9bb19d43b6285466ca36b92d1324a09e7a207'
-        commit: 'sha1-2eb9bb19d43b6285466ca36b92d1324a09e7a207'
-        owner_id: 6759885
-        repo_id: 1116521501
-        uses:
-            - 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
-            - 'haskell-actions/setup@6037f33647c3f17758a2356c80fc4a53d7e0685d'
-            - 'hyperpolymath/standards@571cc734cd69fb846032ec77a662aa8ee4fc32cd'
-            - 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6'
     'hyperpolymath/standards@571cc734cd69fb846032ec77a662aa8ee4fc32cd':
         ref: '571cc734cd69fb846032ec77a662aa8ee4fc32cd'
         commit: 'sha1-571cc734cd69fb846032ec77a662aa8ee4fc32cd'
