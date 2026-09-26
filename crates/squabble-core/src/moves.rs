@@ -124,6 +124,55 @@ pub enum Move {
         disposition: OwnershipDisposition,
         rationale: String,
     },
+
+    /// Move 10 — *Actions-policy `startup_failure`, mode 2*: a tag-pinned
+    /// `uses:` under `sha_pinning_required=true` (issue #15). The repository
+    /// requires every action pinned to a full-length SHA, and this workflow's
+    /// `uses:` refs are tags/branches, so GitHub refuses to start the run
+    /// before any job exists. The winning move is to SHA-pin the offending
+    /// refs **at source** — the twin of [`Move::RepinReusableWorkflow`],
+    /// operated on this workflow's own `uses:` lines.
+    ///
+    /// Self-win (CI/gate configuration, in lane), propose-only in v0.1:
+    /// resolving each tag to its current SHA needs the network, so `--apply`
+    /// does not enact it; the report names the exact refs to pin. Pinning
+    /// *strengthens* the gate posture (immutable references) and touches no
+    /// required context, so it cannot be a bypass.
+    PinWorkflowActions { workflow: String, refs: Vec<String> },
+
+    /// Move 11 — *Actions-policy `startup_failure`, mode 1*: an external
+    /// `uses:` absent from a `selected` allowlist (issue #15). The repository
+    /// sets `allowed_actions=selected` with a `patterns_allowed` list that does
+    /// not cover an action or reusable workflow this check's workflow needs, so
+    /// the run is refused at startup. The move reconciles the *policy* to the
+    /// workflows' real needs by adding the minimal `owner/repo@*` patterns.
+    ///
+    /// A legitimate **non-bypass settings move**: it only lets a required
+    /// check *start*; it drops no required context and weakens no check —
+    /// `squabble ≠ bypass` holds because the green still comes from the check
+    /// genuinely passing afterwards. Changing repository Actions permissions
+    /// is an Administration-realm act, so the host proposes it (with the exact
+    /// patterns) and the owner effectuates it via the REST
+    /// `actions/permissions/selected-actions` endpoint — never via
+    /// `.github/settings.yml`, which cannot express Actions permissions.
+    ReconcileActionsPolicy {
+        blocked_ref: String,
+        add_patterns: Vec<String>,
+    },
+
+    /// Move 12 — *Actions-policy `startup_failure`, `selected`-with-empty-
+    /// `patterns_allowed` special case* (issue #15). An empty allowlist refuses
+    /// every non-GitHub-owned `uses:` at parse time — the whole
+    /// `startup_failure`/`jobs=0` silent-death class. Where the estate's
+    /// decision of record applies (**`allowed_actions=all` with
+    /// `sha_pinning_required=true` KEPT**), the reconciling posture is
+    /// `allowed_actions=all`, which makes the empty pattern list moot.
+    ///
+    /// Never proposed with pinning disabled: the posture *adds* a gate (SHA
+    /// pinning enforced) while restoring CI's ability to start. Like
+    /// [`Move::ReconcileActionsPolicy`] this is a legitimate non-bypass
+    /// settings move — checks do not get weaker, they get *possible*.
+    SetActionsAllowedAll,
 }
 
 /// A specialist group the squabbler can summon when a gate is out of its lane.
@@ -376,6 +425,26 @@ impl Move {
                 "assign `{check}` → `{owner}` [{}] — {rationale}",
                 disposition.describe()
             ),
+            Move::PinWorkflowActions { workflow, refs } => format!(
+                "SHA-pin {} tag-pinned `uses:` in `{workflow}` ({}) — the repo requires \
+                 full-length SHAs (`sha_pinning_required`), so tags refuse to start",
+                refs.len(),
+                refs.join(", ")
+            ),
+            Move::ReconcileActionsPolicy {
+                blocked_ref,
+                add_patterns,
+            } => format!(
+                "reconcile the Actions allowlist: add {} so `{blocked_ref}` can start \
+                 (`allowed_actions=selected` coverage gap; keep `sha_pinning_required=true`)",
+                add_patterns.join(", ")
+            ),
+            Move::SetActionsAllowedAll => {
+                "set `allowed_actions=all` while KEEPING `sha_pinning_required=true` — an \
+                 empty `selected` allowlist refuses every external `uses:` at startup; the \
+                 estate default posture makes it moot without weakening any check"
+                    .to_string()
+            }
         }
     }
 
@@ -446,6 +515,21 @@ mod tests {
                 rationale: "produced by the reusable governance workflow; fix belongs upstream"
                     .into(),
             },
+            // Issue #15: the Actions-policy moves. All three only let a required
+            // check START — none drops a required context or weakens a check, so
+            // the SPARK invariant (green ⇔ non-empty ∧ all passed) is untouched.
+            Move::PinWorkflowActions {
+                workflow: "codeql.yml".into(),
+                refs: vec![
+                    "github/codeql-action@v4.38.0".into(),
+                    "actions/checkout@v7.0.1".into(),
+                ],
+            },
+            Move::ReconcileActionsPolicy {
+                blocked_ref: "hyperpolymath/standards".into(),
+                add_patterns: vec!["hyperpolymath/standards@*".into()],
+            },
+            Move::SetActionsAllowedAll,
         ];
         assert!(moves.iter().all(Move::is_legitimate));
     }
@@ -532,5 +616,30 @@ mod tests {
         let json = serde_json::to_string(&m).expect("serialise");
         let back: Move = serde_json::from_str(&json).expect("deserialise");
         assert_eq!(m, back);
+    }
+
+    #[test]
+    fn actions_policy_moves_serialise_round_trip() {
+        // The evidence manifest must carry the Actions-policy moves unchanged
+        // (issue #15) — they are self-win settings/config proposals whose
+        // payload IS the actionable content (which refs, which patterns).
+        for m in [
+            Move::PinWorkflowActions {
+                workflow: "codeql.yml".into(),
+                refs: vec!["github/codeql-action@v4.38.0".into()],
+            },
+            Move::ReconcileActionsPolicy {
+                blocked_ref: "oven-sh/setup-bun".into(),
+                add_patterns: vec!["oven-sh/setup-bun@*".into()],
+            },
+            Move::SetActionsAllowedAll,
+        ] {
+            let json = serde_json::to_string(&m).expect("serialise");
+            let back: Move = serde_json::from_str(&json).expect("deserialise");
+            assert_eq!(m, back);
+        }
+        // The kebab-case wire names the JSON consumers see.
+        let json = serde_json::to_string(&Move::SetActionsAllowedAll).unwrap();
+        assert!(json.contains("\"kind\":\"set-actions-allowed-all\""), "{json}");
     }
 }
