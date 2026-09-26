@@ -7,3 +7,42 @@ Changelog], and this project adheres to
 https://semver.org/spec/v2.0.0.html[Semantic Versioning].
 
 === [Unreleased]
+
+==== Added
+
+* fetch: `PinWorkflowActions`, `ReconcileActionsPolicy` and
+  `SetActionsAllowedAll` moves, plus the Actions-policy why-probe
+  (`actions/permissions` + `.../selected-actions`) that fires when a required
+  context resolves to `STARTUP_FAILURE` — issue #15. Includes
+  `examples/actions-policy-deadlock.json` offline fixture coverage.
+* Structural scan now surfaces latent Actions-policy deadlocks (empty/gappy
+  `selected` allowlists, tag-pinned `uses:` under `sha_pinning_required`)
+  before any run refuses to start.
+* ADR 0002 (`docs/decisions/`), the spec for representing vacuous greens in
+  the `Outcome` contract — the spec-first remainder of issue #58.
+
+==== Fixed
+
+* fetch: classic branch protection is read as a gate surface. Absence from
+  the ruleset listing is no longer reported as "no gate"; a classic
+  `branches/{b}/protection` `required_status_checks` populates the gate
+  identically (contexts unioned when both mechanisms exist), and a 403 there
+  is a hard error, never a no-gate — issue #100.
+* `actions.lock` desync: `standards-pipeline.yml`'s job-level reusable ref
+  (`hyperpolymath/standards@ed5e3f65…`) was unlisted. Its entry and
+  dependency record (with transitive closure) are now present — Lock Sync
+  Gate red on `main`, issue #105.
+* All 27 workflow files whose `gh actions-lock` stamp had displaced the SPDX
+  header off line 1 now carry `# SPDX-License-Identifier: MPL-2.0` as byte 1
+  again — `lint-workflows / Check SPDX Headers` red on `main`, issue #105.
+* Unrendered `{{PLACEHOLDER}}` tokens across `.devcontainer/`, `.envrc`,
+  `.github/SUPPORT`, `.github/.mailmap`, `.github/MAINTAINERS`,
+  `.github/CODE_OF_CONDUCT.md`, `.github/copilot-instructions.md` and the
+  `.machine_readable/ai/` rule files.
+
+==== Removed
+
+* `step-security/harden-runner` from `dependabot-automerge.yml` (audit-mode
+  observability only): it is not on the estate actions allowlist, so the
+  governance Allowlist Preflight failed on every run — issue #105, resolution
+  option (b), reversible if the estate allowlists it instead.
