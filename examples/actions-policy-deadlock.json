@@ -1,0 +1,7 @@
+{
+  "_comment": "Issue #15 fixture — the Actions-policy startup_failure deadlock, offline. A STARTUP_FAILURE reads `failed` at the gate layer (the gate model deliberately knows no fourth state); the live rollup's STARTUP_FAILURE conclusion is host-side evidence, supplied to plan_with_policy via its `startup_failed` set, exactly as fetch::startup_failures_from_rollup produces it. `Secret Scanner` mirrors the dogfood target this repo itself showed (a standards-reusable caller refused by an empty `selected` allowlist); `analyze` mirrors the tag-pinned codeql.yml refused under sha_pinning_required. See the policy_plumbing/fixture tests in crates/squabble-fight.",
+  "checks": [
+    { "required_context": "Secret Scanner", "run": "failed" },
+    { "required_context": "analyze", "run": "failed" }
+  ]
+}
