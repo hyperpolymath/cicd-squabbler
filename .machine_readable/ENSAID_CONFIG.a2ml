@@ -89,7 +89,7 @@ version = "1.0.0"
 
 # Example: a custom portfolio for this project
 # [[portfolios.custom]]
-# id = "{{project}}-dev"
+# id = "cicd-squabbler-dev"
 # name = "cicd-squabbler Development"
 # description = "Panels for cicd-squabbler development"
 # panels = ["valence-shell", "editor-bridge", "build-dashboard"]
