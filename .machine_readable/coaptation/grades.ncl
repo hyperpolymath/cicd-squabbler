@@ -27,12 +27,12 @@
 # a human authority act (see coapt.sh --reanchor).
 {
   verb_grade = {
-    must   = "boolean_gate",
-    trust  = "boolean_gate_provenance",
+    must = "boolean_gate",
+    trust = "boolean_gate_provenance",
     adjust = "posture",
     intend = "tropical",
-    bust   = "alarm",
-    dust   = "expected",
+    bust = "alarm",
+    dust = "expected",
   },
 
   tolerances = {

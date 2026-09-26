@@ -25,7 +25,7 @@
   # --- MUST: presence obligations attested by the fact that we parsed the file ---
   "must.machine-readable-dir" = {
     kind = "descriptile",
-    witnesses = [ { fact = "state.status", op = 'present } ],
+    witnesses = [{ fact = "state.status", op = 'present }],
     note = "descriptiles parse ⇒ .machine_readable/ exists and is populated",
   },
   "must.six-directory-present" = {
@@ -38,7 +38,7 @@
   },
   "must.anchors-directory" = {
     kind = "descriptile",
-    witnesses = [ { fact = "anchor.authority", op = 'present } ],
+    witnesses = [{ fact = "anchor.authority", op = 'present }],
     note = "ANCHOR.a2ml was read from .machine_readable/descriptiles/anchors/",
   },
 
@@ -55,7 +55,7 @@
   # --- INTEND: a committed intent realised by the descriptive self-model ---
   "intend.repo-initialization" = {
     kind = "descriptile",
-    witnesses = [ { fact = "ecosystem.type", op = 'equals, arg = "repository-template" } ],
+    witnesses = [{ fact = "ecosystem.type", op = 'equals, arg = "repository-template" }],
     note = "ECOSYSTEM declares this repo IS a template ⇒ the init intent is realised",
   },
 
@@ -64,7 +64,7 @@
   # itself that is expected, but it is honestly a posture dip worth surfacing.
   "adjust.placeholder-drift" = {
     kind = "descriptile",
-    witnesses = [ { fact = "anchor.project", op = 'not_contains, arg = "{{" } ],
+    witnesses = [{ fact = "anchor.project", op = 'not_contains, arg = "{{" }],
     note = "ANCHOR.identity.project is un-substituted ({{PROJECT_NAME}}) ⇒ posture dip",
   },
 
@@ -72,17 +72,17 @@
   #     failure), not satisfaction. open-failures/last-result are the live signal. ---
   "bust.template-substitution-failure" = {
     kind = "descriptile",
-    witnesses = [ { fact = "state.open-failures", op = 'nonzero } ],
+    witnesses = [{ fact = "state.open-failures", op = 'nonzero }],
     note = "alarm iff STATE records open failures; else latent (declared, not active)",
   },
   "bust.sync-drift-between-repos" = {
     kind = "descriptile",
-    witnesses = [ { fact = "state.open-failures", op = 'nonzero } ],
+    witnesses = [{ fact = "state.open-failures", op = 'nonzero }],
     note = "alarm iff STATE records open failures; else latent",
   },
   "bust.contractile-parse-error" = {
     kind = "descriptile",
-    witnesses = [ { fact = "state.last-result", op = 'equals, arg = "fail" } ],
+    witnesses = [{ fact = "state.last-result", op = 'equals, arg = "fail" }],
     note = "alarm iff the last maintenance run failed; else latent",
   },
 }

@@ -26,6 +26,7 @@ workflows:
     '.github/workflows/instant-sync.yml': []
     '.github/workflows/label-triage.yml': []
     '.github/workflows/labels.yml': []
+    '.github/workflows/lock-sync-gate.yml': []
     '.github/workflows/mirror.yml':
         - 'hyperpolymath/standards@8f2ee50841e216cd8c192eeb68953118190f105c'
     '.github/workflows/openssf-compliance.yml':
@@ -56,6 +57,7 @@ workflows:
         - 'hyperpolymath/standards@8f2ee50841e216cd8c192eeb68953118190f105c'
     '.github/workflows/security-policy.yml':
         - 'actions/checkout@v7.0.1'
+    '.github/workflows/standards-pipeline.yml': []
     '.github/workflows/static-analysis-gate.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/download-artifact@v8.0.1'
@@ -175,11 +177,21 @@ dependencies:
         commit: 'sha1-abea47f85e598557f500fa1fd2ab7464fcb39406'
         owner_id: 1006268
         repo_id: 212984112
+    'haskell-actions/setup@6037f33647c3f17758a2356c80fc4a53d7e0685d':
+        ref: '6037f33647c3f17758a2356c80fc4a53d7e0685d'
+        commit: 'sha1-6037f33647c3f17758a2356c80fc4a53d7e0685d'
+        owner_id: 75048950
+        repo_id: 623796603
     'hyperpolymath/smtp-notify-action@v0.3.0':
         ref: 'v0.3.0'
         commit: 'sha1-22e7bdb322c430c1d0dac6b3bb307f4bb139d0be'
         owner_id: 6759885
         repo_id: 1352485172
+    'hyperpolymath/standards@571cc734cd69fb846032ec77a662aa8ee4fc32cd':
+        ref: '571cc734cd69fb846032ec77a662aa8ee4fc32cd'
+        commit: 'sha1-571cc734cd69fb846032ec77a662aa8ee4fc32cd'
+        owner_id: 6759885
+        repo_id: 1116521501
     'hyperpolymath/standards@8f2ee50841e216cd8c192eeb68953118190f105c':
         ref: '8f2ee50841e216cd8c192eeb68953118190f105c'
         commit: 'sha1-8f2ee50841e216cd8c192eeb68953118190f105c'
@@ -192,7 +204,7 @@ dependencies:
             - 'editorconfig-checker/action-editorconfig-checker@51f63319f592f97930c73d9c46184d20bd206393'
             - 'erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124'
             - 'goto-bus-stop/setup-zig@abea47f85e598557f500fa1fd2ab7464fcb39406'
-            - 'Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6'
+            - 'swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6'
             - 'webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555'
     'hyperpolymath/standards@da2c748aad55c1a1dcba00b60fe4a35017bc6540':
         ref: 'da2c748aad55c1a1dcba00b60fe4a35017bc6540'
@@ -211,6 +223,11 @@ dependencies:
         commit: 'sha1-2d1146689b8cda280b9bc96326124645441f03bc'
         owner_id: 67707773
         repo_id: 421101922
+    'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6':
+        ref: '0c5077e51419868618aeaa5fe8019c62421857d6'
+        commit: 'sha1-0c5077e51419868618aeaa5fe8019c62421857d6'
+        owner_id: 108928776
+        repo_id: 512644635
     'softprops/action-gh-release@v3.0.3':
         ref: 'v3.0.3'
         commit: 'sha1-efb35369e0ad2afab669f228072c1b0d510eae64'
@@ -221,6 +238,11 @@ dependencies:
         commit: 'sha1-fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594'
         owner_id: 88700172
         repo_id: 422287306
+    'swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6':
+        ref: '6323deb102c322ba6fcbdcafc7e3dddab59af2b6'
+        commit: 'sha1-6323deb102c322ba6fcbdcafc7e3dddab59af2b6'
+        owner_id: 580492
+        repo_id: 298565987
     'webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555':
         ref: 'e83874834305fe9a4a2997156cb26c5de65a8555'
         commit: 'sha1-e83874834305fe9a4a2997156cb26c5de65a8555'

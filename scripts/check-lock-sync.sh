@@ -89,6 +89,20 @@ function norm(r,   at, path, ref, n, parts) {
   return parts[1] "/" parts[2] "@" ref
 }
 
+# Fold case on the OWNER/REPO segment only, for comparison keys. GitHub resolves
+# owner and repository names case-insensitively, and this is measured, not assumed:
+# metadatastician/pong-ping's lockfile records sonarsource/sonarqube-scan-action@v8.2.1
+# while sonarqube.yml says SonarSource/..., and at commit cd5f90f that workflow ran
+# SUCCESS while codeql.yml at the SAME commit was startup_failure. A same-commit
+# control, so the case difference is provably not what kills a run.
+# The REF is NOT folded: git tags and branch names are case-sensitive.
+function ck(r,   at, s) {
+  at = 0
+  for (s = length(r); s > 0; s--) { if (substr(r, s, 1) == "@") { at = s; break } }
+  if (at == 0) return tolower(r)
+  return tolower(substr(r, 1, at - 1)) substr(r, at)
+}
+
 # ---------- pass 1: the lockfile ----------
 FILENAME == lockfile {
   if ($0 ~ /^workflows:[[:space:]]*$/)    { inwf = 1; indep = 0; next }
@@ -100,12 +114,12 @@ FILENAME == lockfile {
     # "    'owner/repo@ref':"  -- a top-level dependency record
     if (match($0, /^    '([^']+)':/, m)) {
       depkey = m[1]
-      haverec[depkey] = 1
+      haverec[ck(depkey)] = 1; disp[ck(depkey)] = depkey
       next
     }
     # "            - 'owner/repo@ref'"  -- a nested uses: of that record
     if (match($0, /^            - '([^']+)'/, m) && depkey != "") {
-      r = m[1]
+      r = ck(m[1]); disp[r] = m[1]
       want[r] = 1
       wantsrc[r] = wantsrc[r] " dependencies:" depkey
       next
@@ -122,10 +136,10 @@ FILENAME == lockfile {
     next
   }
   if (match($0, /^        - '([^']+)'[[:space:]]*$/, m) && cur != "") {
-    lock[cur, m[1]] = 1
+    lr = ck(m[1]); disp[lr] = m[1]; lock[cur, lr] = 1
     lockcount[cur]++
-    want[m[1]] = 1                                  # clause 3: this must resolve too
-    wantsrc[m[1]] = wantsrc[m[1]] " " cur
+    want[lr] = 1
+    wantsrc[lr] = wantsrc[lr] " " cur
     next
   }
   next
@@ -142,7 +156,7 @@ FNR == 1 { wf = FILENAME }
     gsub(/[[:space:]]+$/, "", raw)
     if (raw ~ /^\$\//) { dollar[wf] = dollar[wf] " " raw; next }   # known corruption
     n = norm(raw)
-    if (n != "") { uses[wf, n] = 1; useslist[wf] = useslist[wf] " " n }
+    if (n != "") { uses[wf, ck(n)] = 1; useslist[wf] = useslist[wf] " " n }
   }
 }
 
@@ -166,7 +180,7 @@ END {
     for (j = 1; j <= nu; j++) {
       if (u[j] == "" || (u[j] in uniq)) continue
       uniq[u[j]] = 1
-      if (!((key SUBSEP u[j]) in lock)) missing = missing " " u[j]
+      if (!((key SUBSEP ck(u[j])) in lock)) missing = missing " " u[j]
     }
     if (missing != "") {
       if (!(key in seen_path))
@@ -181,7 +195,7 @@ END {
     for (k in lock) {
       split(k, kp, SUBSEP)
       if (kp[1] != key) continue
-      if (!((wf SUBSEP kp[2]) in uses)) orphan = orphan " " kp[2]
+      if (!((wf SUBSEP kp[2]) in uses)) orphan = orphan " " (kp[2] in disp ? disp[kp[2]] : kp[2])
     }
     if (orphan != "") {
       printf "FAIL %s\n     stale lockfile entries, no uses: references them:%s\n", key, orphan
@@ -200,6 +214,33 @@ END {
     if (!found) { printf "FAIL %s\n     lockfile entry for a workflow file that does not exist\n", p; bad = 1 }
   }
 
+  # --- clause 4: COVERAGE. Every workflow FILE must have a key in the lockfile,
+  #     including one with no uses: at all - the value is then an empty list.
+  #     MEASURED 2026-09-22, single-variable flip on two independent repos:
+  #     hyperpolymath/verisimdb's lock-sync-gate.yml was startup_failure 7 times
+  #     running with ZERO uses: refs, and adding
+  #         '.github/workflows/lock-sync-gate.yml': []
+  #     flipped it to success; reproduced on hyperpolymath/blocky-writer, 2 of 2.
+  #     `gh actions-lock` already emits this empty-list form for other zero-uses:
+  #     workflows (labels.yml), so it is the generator's own convention, not ours.
+  #     Clauses 1-3 CANNOT catch this: they ask "is every uses: locked?", and a
+  #     workflow with no uses: satisfies them vacuously while GitHub still refuses
+  #     to start it. 13 repos passed clauses 1-3 with exactly this gap.
+  nunlisted = 0; unlisted = ""
+  for (i = 1; i < ARGC; i++) {
+    q = ARGV[i]; if (q == lockfile) continue
+    sub(/.*\//, "", q); q = ".github/workflows/" q
+    if (q in seen_path) continue
+    nunlisted++; unlisted = unlisted "\n       " q
+  }
+  if (nunlisted > 0) {
+    printf "FAIL actions.lock: UNLISTED WORKFLOWS\n"
+    printf "     %d workflow file(s) have no key in the lockfile. GitHub refuses such a\n", nunlisted
+    printf "     run at startup (jobs=0) even when the workflow has no uses: at all.\n"
+    printf "     The entry for a zero-uses: workflow is an empty list:%s\n", unlisted
+    bad = 1
+  }
+
   # --- clause 3: TRANSITIVE CLOSURE. Every ref named anywhere in the lockfile
   #     must resolve to a top-level dependencies: record. A dangling edge makes
   #     GitHub refuse the run at startup with jobs=0. ---
@@ -208,7 +249,7 @@ END {
     if (r !~ /^[^\/]+\/[^\/@]+@/) continue      # not an OWNER/REPO@REF pin; not ours to resolve
     if (r in haverec) continue
     ndang++
-    dang = dang sprintf("\n       %s\n           named by:%s", r, wantsrc[r])
+    dang = dang sprintf("\n       %s\n           named by:%s", (r in disp ? disp[r] : r), wantsrc[r])
   }
   if (ndang > 0) {
     printf "FAIL actions.lock: DANGLING EDGES\n"
@@ -237,12 +278,17 @@ END {
     print "  3. Nested `uses:` entries must be bare OWNER/REPO@REF. A subpath pin such as"
     print "     github/codeql-action/upload-sarif@<sha> is REJECTED by the schema; collapse it"
     print "     to github/codeql-action@<sha>."
+    print "  4. For any UNLISTED WORKFLOWS above, add the path as a lockfile key. A workflow"
+    print "     with no uses: takes an empty list:  \x27.github/workflows/x.yml\x27: []"
+    print "     `gh actions-lock` has been observed to OMIT such a workflow entirely; that"
+    print "     omission is itself the defect, so re-running the tool may not add it."
     exit 1
   }
   printf "actions.lock is in sync and transitively closed:\n"
   printf "  * every uses: is locked under its own workflow path (job-level reusable refs included)\n"
   printf "  * every lockfile entry is still referenced\n"
   printf "  * every ref named in the lockfile resolves to a dependencies: record (0 dangling edges)\n"
+  printf "  * every workflow file has a lockfile key (zero-uses: workflows included)\n"
   if (nunref > 0)
     printf "  note: %d dependencies: record(s) are unreferenced - harmless, but prunable.\n", nunref
 }
