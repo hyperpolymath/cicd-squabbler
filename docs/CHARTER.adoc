@@ -109,6 +109,31 @@ live `Base` rulesets persist. Because the fix is purely list-trimming with a
 verifiable satisfaction condition, it is the ideal *first* squabbler move once
 the tool exists.
 
+. *Actions-policy `startup_failure` deadlock* (issue #15) → a required check
+refuses to *start* — zero jobs, no logs — because repository *settings*,
+not any workflow content, block it. Two measured modes, one why-probe
+(`actions/permissions` + `.../selected-actions`, read whenever a required
+context resolves to `STARTUP_FAILURE`):
++
+--
+Mode 1:: `allowed_actions=selected` with `patterns_allowed` not covering an
+  external `uses:` (empty list ⇒ every external refused at parse time).
+  Winning move: `ReconcileActionsPolicy` (add the missing `owner/repo@*`
+  patterns) — or, for the empty-list form, `SetActionsAllowedAll` (the
+  estate posture of record).
+Mode 2:: a tag-pinned `uses:` under `sha_pinning_required=true`, GitHub-owned
+  actions included (the pin rule has no ownership exception). Winning move:
+  `PinWorkflowActions` — SHA-pin the refs *at source*, the twin of move 3.
+--
++
+The tradeoff is stated plainly: the preferred posture is
+**`allowed_actions=all` while KEEPING `sha_pinning_required=true`** — never
+disable pinning — plus SHA-pin the workflow refs. `squabble ≠ bypass` holds:
+these moves only let a required check *start*; they drop no required context
+and weaken no check. Without either mode's evidence, or with the probe
+unavailable, classification degrades to the pre-#15 attribution (OwnedUpstream
+/ Escalate), never to an invented cause (fail-closed, no-silent-skip).
+
 == Outcome contract
 
 GREEN:: Landed via a permitted (arena) strategy on a legitimately satisfied gate.

@@ -13,3 +13,8 @@ rust-version.workspace = true
 [dependencies]
 squabble-core = { workspace = true }
 serde_yaml_ng = { workspace = true }
+
+[dev-dependencies]
+# The offline gate fixtures in examples/ parse with serde_json (issue #15
+# regression coverage reads examples/actions-policy-deadlock.json).
+serde_json = { workspace = true }

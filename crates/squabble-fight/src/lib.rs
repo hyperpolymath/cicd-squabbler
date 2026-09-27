@@ -37,7 +37,7 @@ use squabble_core::outcome::{Escalation, Outcome, OwnerAssignment, Report};
 use squabble_core::{diagnose_with_hints, Diagnosis};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use workflows::WorkflowFacts;
+use workflows::{ActionsPolicyFacts, WorkflowFacts};
 
 /// The pure planning core: classify every unsatisfied check and assemble the
 /// [`Outcome`]. Pure over its inputs (no IO beyond the structural file probes,
@@ -53,14 +53,43 @@ pub fn plan(
     context: &RepoContext,
     facts: &WorkflowFacts,
 ) -> Outcome {
+    plan_with_policy(gate, slug, repo_root, context, facts, None, &HashSet::new())
+}
+
+/// As [`plan`], with the Actions-policy why-probe inputs (issue #15) wired
+/// through to classification and to the structural scan:
+///
+/// * `policy` — the repository's live Actions permissions posture
+///   (`{allowed_actions, sha_pinning_required, patterns_allowed}`), or `None`
+///   when the probe was not applicable or failed. `None` degrades to exactly
+///   [`plan`]'s behaviour; a probe never *invents* a diagnosis.
+/// * `startup_failed` — the required contexts whose realised run concluded
+///   `STARTUP_FAILURE`, as observed on the rollup. Only for those does the
+///   policy attribution replace the OwnedUpstream/Escalate mis-attribution.
+pub fn plan_with_policy(
+    gate: &Gate,
+    slug: &str,
+    repo_root: &Path,
+    context: &RepoContext,
+    facts: &WorkflowFacts,
+    policy: Option<&ActionsPolicyFacts>,
+    startup_failed: &HashSet<String>,
+) -> Outcome {
     let unsatisfied: Vec<_> = gate.unsatisfied().cloned().collect();
 
     // 1. Per-check classification via workflow ground-truth → hints. The full
     //    check (not just its name) is passed so the classifier can see the
-    //    realised run — the path-filter trap is a *Missing*-only diagnosis.
+    //    realised run — the path-filter trap is a *Missing*-only diagnosis,
+    //    and the Actions-policy moves are STARTUP_FAILURE-only ones.
     let mut hints: HashMap<String, Move> = HashMap::new();
     for check in &unsatisfied {
-        if let Some(m) = facts.classify(check, slug) {
+        let m = facts.classify_with_policy(
+            check,
+            slug,
+            policy,
+            startup_failed.contains(&check.required_context),
+        );
+        if let Some(m) = m {
             hints.insert(check.required_context.clone(), m);
         }
     }
@@ -109,6 +138,7 @@ pub fn plan(
         &unsatisfied,
         facts,
         &selfwon_path_filter,
+        policy,
     );
     escalations.extend(extra_escalations);
     owner_assignments.extend(extra_owner_assignments);
@@ -162,6 +192,31 @@ pub fn plan_at_root(gate: &Gate, slug: &str, repo_root: &Path) -> (RepoContext, 
     (context, outcome)
 }
 
+/// As [`plan_at_root`], with the Actions-policy why-probe inputs (issue #15).
+/// The host obtains `policy` / `startup_failed` from its live fetch (see
+/// `squabble-cli`'s `fetch`); offline hosts keep calling [`plan_at_root`],
+/// which feeds empty inputs and classifies exactly as before.
+pub fn plan_at_root_with_policy(
+    gate: &Gate,
+    slug: &str,
+    repo_root: &Path,
+    policy: Option<&ActionsPolicyFacts>,
+    startup_failed: &HashSet<String>,
+) -> (RepoContext, Outcome) {
+    let context = RepoContext::load(repo_root);
+    let facts = WorkflowFacts::load(repo_root);
+    let outcome = plan_with_policy(
+        gate,
+        slug,
+        repo_root,
+        &context,
+        &facts,
+        policy,
+        startup_failed,
+    );
+    (context, outcome)
+}
+
 /// Plan with **no filesystem at all** — for hosts serving callers that have no
 /// local checkout (e.g. the App handling a cartridge request without
 /// `repo_root`). Deliberately does NOT probe the process's own working
@@ -188,6 +243,7 @@ fn structural_scan(
     unsatisfied: &[squabble_core::gate::RequiredCheck],
     facts: &WorkflowFacts,
     selfwon_path_filter: &HashSet<String>,
+    policy: Option<&ActionsPolicyFacts>,
 ) -> (Vec<Escalation>, Vec<OwnerAssignment>) {
     let mut escalations = Vec::new();
     let mut owner_assignments = Vec::new();
@@ -271,6 +327,78 @@ fn structural_scan(
         }
     }
 
+    // (d) Latent Actions-policy deadlocks (issue #15) — surfaced BEFORE any
+    //     check has startup_failure'd, from the live posture probe alone:
+    //     `allowed_actions=selected` whose `patterns_allowed` does not cover
+    //     an external `uses:` somewhere in the tree will refuse those runs at
+    //     startup. Settings are the owner's realm, so this is an assignment,
+    //     not a self-win proposal.
+    if let Some(p) = policy {
+        if p.is_selected() {
+            let mut uncovered: Vec<String> = facts
+                .workflows
+                .iter()
+                .filter_map(|w| p.first_uncovered(&w.external_uses).map(str::to_string))
+                .collect();
+            uncovered.sort();
+            uncovered.dedup();
+            if !uncovered.is_empty() {
+                owner_assignments.push(OwnerAssignment {
+                    check: "actions / repository permissions".to_string(),
+                    owner: slug.to_string(),
+                    disposition: OwnershipDisposition::MisconfiguredGate {
+                        detail: format!(
+                            "`allowed_actions=selected` patterns do not cover: {} — any run \
+                             using them is refused at startup (jobs=0)",
+                            uncovered.join(", ")
+                        ),
+                    },
+                    rationale: if p.patterns_allowed.is_empty() {
+                        "estate default is `allowed_actions=all` with `sha_pinning_required=true` \
+                         KEPT (issue #15 decision of record) — adopt that posture, or enumerate \
+                         owner/repo@* patterns explicitly"
+                            .to_string()
+                    } else {
+                        "add the missing `owner/repo@*` patterns to the selected-actions \
+                         allowlist (or adopt `allowed_actions=all` with pinning kept)"
+                            .to_string()
+                    },
+                });
+            }
+        }
+
+        // (e) Latent tag-pin refusals — tag/branch-pinned `uses:` under
+        //     `sha_pinning_required=true` will refuse at startup. These ARE
+        //     the squabbler's lane once they fail (PinWorkflowActions), so the
+        //     assignment points at the workflow files to pre-emptively pin.
+        if p.sha_pinning_required {
+            let mut pinned: Vec<String> = facts
+                .workflows
+                .iter()
+                .filter(|w| !w.tag_pinned_uses.is_empty())
+                .map(|w| format!("`{}` ({})", w.file, w.tag_pinned_uses.join(", ")))
+                .collect();
+            pinned.sort();
+            if !pinned.is_empty() {
+                owner_assignments.push(OwnerAssignment {
+                    check: "actions / SHA pinning".to_string(),
+                    owner: slug.to_string(),
+                    disposition: OwnershipDisposition::MisconfiguredGate {
+                        detail: format!(
+                            "tag/branch-pinned `uses:` under `sha_pinning_required=true`: {} — \
+                             these refuse to start on the next trigger",
+                            pinned.join("; ")
+                        ),
+                    },
+                    rationale: "SHA-pin the named refs at source (the squabbler's \
+                                PinWorkflowActions move, issue #15); pinning strengthens, \
+                                never weakens, the gate"
+                        .to_string(),
+                });
+            }
+        }
+    }
+
     (escalations, owner_assignments)
 }
 
@@ -326,6 +454,8 @@ mod tests {
             job_ids: job_ids.iter().map(|s| s.to_string()).collect(),
             job_names: vec![],
             reusable_repos: reusable.iter().map(|s| s.to_string()).collect(),
+            external_uses: vec![],
+            tag_pinned_uses: vec![],
             path_filtered,
             retired_descriptile_policy: false,
             empty_jobs: false,
@@ -491,5 +621,216 @@ mod tests {
             .owner_assignments
             .iter()
             .any(|o| matches!(&o.disposition, OwnershipDisposition::MisconfiguredGate { detail } if detail.contains("AGPL"))));
+    }
+}
+
+#[cfg(test)]
+mod policy_fixture_tests {
+    use super::*;
+    use squabble_core::gate::CheckRun;
+    use workflows::{ActionsPolicyFacts, WorkflowInfo, WorkflowKind};
+
+    /// A workflow whose `uses:` surface is specified explicitly — the parse
+    /// side is covered in workflows.rs; the planner works from the facts.
+    fn wf_uses(
+        file: &str,
+        name: &str,
+        job_ids: &[&str],
+        reusable: &[&str],
+        external: &[&str],
+        tag_pinned: &[&str],
+        kind: WorkflowKind,
+    ) -> WorkflowInfo {
+        WorkflowInfo {
+            file: file.to_string(),
+            name: Some(name.to_string()),
+            job_ids: job_ids.iter().map(|s| s.to_string()).collect(),
+            job_names: vec![],
+            reusable_repos: reusable.iter().map(|s| s.to_string()).collect(),
+            external_uses: external.iter().map(|s| s.to_string()).collect(),
+            tag_pinned_uses: tag_pinned.iter().map(|s| s.to_string()).collect(),
+            path_filtered: false,
+            retired_descriptile_policy: false,
+            empty_jobs: false,
+            kind,
+        }
+    }
+
+    /// The host facts matching `examples/actions-policy-deadlock.json`: the
+    /// `Secret Scanner` required context comes from a standards-reusable
+    /// caller (SHA-pinned — no mode-2 surface), `analyze` from a workflow
+    /// that tag-pins checkout and the codeql action.
+    fn fixture_facts() -> WorkflowFacts {
+        WorkflowFacts {
+            workflows: vec![
+                wf_uses(
+                    "secret-scanner.yml",
+                    "Secret Scanner",
+                    &["scan"],
+                    &["hyperpolymath/standards"],
+                    &["hyperpolymath/standards@8f2ee50841e216cd8c192eeb68953118190f105c"],
+                    &[],
+                    WorkflowKind::Security,
+                ),
+                wf_uses(
+                    "codeql.yml",
+                    "CodeQL Security Analysis",
+                    &["analyze"],
+                    &[],
+                    &["actions/checkout@v7.0.1", "github/codeql-action@v4.38.0"],
+                    &["actions/checkout@v7.0.1", "github/codeql-action@v4.38.0"],
+                    WorkflowKind::Security,
+                ),
+            ],
+        }
+    }
+
+    fn fixture_gate() -> Gate {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("workspace root");
+        let text = std::fs::read_to_string(root.join("examples/actions-policy-deadlock.json"))
+            .expect("the issue #15 fixture must exist");
+        serde_json::from_str(&text).expect("the fixture must parse as a gate")
+    }
+
+    #[test]
+    fn the_offline_fixture_diagnoses_to_the_new_moves() {
+        let gate = fixture_gate();
+        assert_eq!(gate.checks.len(), 2, "fixture drifted — keep facts in step");
+        assert!(gate
+            .checks
+            .iter()
+            .all(|c| c.run == CheckRun::Failed));
+
+        // The live-fetch inputs the fixture cannot carry: which contexts the
+        // rollup showed STARTUP_FAILURE for, and the posture the why-probe
+        // read. `selected` + empty patterns + pinning kept, the estate's
+        // measured outage posture.
+        let startup_failed: HashSet<String> = gate
+            .checks
+            .iter()
+            .map(|c| c.required_context.clone())
+            .collect();
+        let policy = ActionsPolicyFacts {
+            allowed_actions: "selected".into(),
+            sha_pinning_required: true,
+            github_owned_allowed: true,
+            patterns_allowed: vec![],
+        };
+
+        let report = {
+            let Outcome::Red { report } = plan_with_policy(
+                &gate,
+                "hyperpolymath/cicd-squabbler",
+                Path::new("/nonexistent"),
+                &RepoContext::default(),
+                &fixture_facts(),
+                Some(&policy),
+                &startup_failed,
+            ) else {
+                panic!("v0.1 always plans Red");
+            };
+            report
+        };
+
+        // 1. The mode-1 check is diagnosed to the settings move — NOT to
+        //    OwnedUpstream{standards}, the mis-attribution issue #15 names.
+        assert!(
+            report
+                .moves_attempted
+                .iter()
+                .any(|m| matches!(m, Move::SetActionsAllowedAll)),
+            "empty allowlist → SetActionsAllowedAll, got {:?}",
+            report.moves_attempted
+        );
+        assert!(!report
+            .owner_assignments
+            .iter()
+            .any(|o| matches!(&o.disposition, OwnershipDisposition::OwnedUpstream { repo } if repo == "hyperpolymath/standards")
+                && o.check.contains("Secret Scanner")));
+
+        // 2. The mode-2 check is diagnosed to the pin move — NOT to
+        //    Escalate{Security}, the other mis-attribution issue #15 names.
+        assert!(report.moves_attempted.iter().any(|m| matches!(
+            m,
+            Move::PinWorkflowActions { workflow, refs }
+                if workflow == "codeql.yml" && refs.contains(&"github/codeql-action@v4.38.0".to_string())
+        )));
+        assert!(!report
+            .escalations
+            .iter()
+            .any(|e| e.check == "analyze" && e.group == ExpertGroup::Security));
+    }
+
+    #[test]
+    fn the_same_fixture_without_the_probe_shows_the_old_misattribution() {
+        // Negative control, both directions at once: no posture, no observed
+        // startup failure → the planner falls back to exactly the
+        // attributions issue #15 calls wrong. Proves the fixture's checks CAN
+        // be re-diagnosed and that the probe inputs are what carries the
+        // redirect.
+        let gate = fixture_gate();
+        let Outcome::Red { report } = plan_with_policy(
+            &gate,
+            "hyperpolymath/cicd-squabbler",
+            Path::new("/nonexistent"),
+            &RepoContext::default(),
+            &fixture_facts(),
+            None,
+            &HashSet::new(),
+        ) else {
+            panic!("v0.1 always plans Red");
+        };
+        assert!(report
+            .owner_assignments
+            .iter()
+            .any(|o| matches!(&o.disposition, OwnershipDisposition::OwnedUpstream { .. })));
+        assert!(report
+            .escalations
+            .iter()
+            .any(|e| e.group == ExpertGroup::Security));
+        assert!(!report
+            .moves_attempted
+            .iter()
+            .any(|m| matches!(m, Move::SetActionsAllowedAll | Move::PinWorkflowActions { .. } | Move::ReconcileActionsPolicy { .. })));
+    }
+
+    #[test]
+    fn latent_policy_deadlocks_surface_before_any_startup_failure() {
+        // The structural-scan half of issue #15: with the live posture probed,
+        // tag-pins and allowlist gaps are put into the debate even when no
+        // check has (yet) refused to start. Gate: one unrelated red, so the
+        // probes are the only policy findings.
+        let gate = Gate::new(vec![squabble_core::gate::RequiredCheck::new(
+            "lint-shell",
+            CheckRun::Failed,
+        )]);
+        let policy = ActionsPolicyFacts {
+            allowed_actions: "selected".into(),
+            sha_pinning_required: true,
+            github_owned_allowed: true,
+            patterns_allowed: vec![],
+        };
+        let Outcome::Red { report } = plan_with_policy(
+            &gate,
+            "hyperpolymath/cicd-squabbler",
+            Path::new("/nonexistent"),
+            &RepoContext::default(),
+            &fixture_facts(),
+            Some(&policy),
+            &HashSet::new(),
+        ) else {
+            panic!("v0.1 always plans Red");
+        };
+        assert!(report
+            .owner_assignments
+            .iter()
+            .any(|o| o.check == "actions / repository permissions"));
+        assert!(report
+            .owner_assignments
+            .iter()
+            .any(|o| o.check == "actions / SHA pinning"));
     }
 }

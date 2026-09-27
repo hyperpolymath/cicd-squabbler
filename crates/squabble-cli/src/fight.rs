@@ -42,21 +42,50 @@ pub fn run(rest: &[String]) -> ExitCode {
         }
     };
 
-    let (gate, greens) = match load_gate(&args) {
-        Ok(g) => g,
+    let bundle = match load_bundle(&args) {
+        Ok(b) => b,
         Err(e) => {
             eprintln!("squabble fight: {e}");
             return ExitCode::from(e.exit_code());
         }
     };
 
-    let (context, mut outcome) = squabble_fight::plan_at_root(&gate, &args.slug, &args.repo_root);
+    // Issue #15: the Actions-policy why-probe. A probe failure must be
+    // narrated, never silently dropped (no-silent-skip) — classification then
+    // proceeds WITHOUT the posture, degraded to the same conservative
+    // attribution the engine always had.
+    let policy_facts = match &bundle.policy_probe {
+        fetch::PolicyProbe::Fetched(p) => Some(squabble_fight::workflows::ActionsPolicyFacts {
+            allowed_actions: p.allowed_actions.clone(),
+            sha_pinning_required: p.sha_pinning_required,
+            github_owned_allowed: p.github_owned_allowed,
+            patterns_allowed: p.patterns_allowed.clone(),
+        }),
+        fetch::PolicyProbe::Failed(e) => {
+            eprintln!(
+                "squabble fight: Actions-policy probe failed: {e} — \
+                 classifying without the live posture"
+            );
+            None
+        }
+        fetch::PolicyProbe::NotTriggered => None,
+    };
+    let startup_failed: std::collections::HashSet<String> =
+        bundle.startup_failed.iter().cloned().collect();
+
+    let (context, mut outcome) = squabble_fight::plan_at_root_with_policy(
+        &bundle.gate,
+        &args.slug,
+        &args.repo_root,
+        policy_facts.as_ref(),
+        &startup_failed,
+    );
 
     // `fight` classifies only reds, so a check that could not run reports green
     // and is never inspected. Surface those before anything else acts on the
     // outcome — including `--summon`, which must record its honest
     // non-dispatch for them.
-    let vacuity = classify_greens(&args, &greens);
+    let vacuity = classify_greens(&args, &bundle.greens);
     attach_vacuity(&mut outcome, &vacuity);
 
     // `--apply` enacts the appliable self-win moves (v0.1: path-filter strips)
@@ -221,18 +250,24 @@ fn attach_vacuity(outcome: &mut Outcome, moves: &[Move]) {
     }
 }
 
-fn load_gate(args: &FightArgs) -> Result<(Gate, Vec<fetch::GreenCheck>), fetch::FetchError> {
+fn load_bundle(args: &FightArgs) -> Result<fetch::FetchBundle, fetch::FetchError> {
     if let Some(path) = &args.gate_file {
         let text =
             std::fs::read_to_string(path).map_err(|e| format!("cannot read `{path}`: {e}"))?;
         // Offline mode inspects no live runs, so there are no green checks to
-        // classify — an honest empty set, not a silent skip.
-        return serde_json::from_str(&text)
-            .map(|g| (g, Vec::new()))
-            .map_err(|e| fetch::FetchError::Failed(format!("`{path}` is not a valid gate: {e}")));
+        // classify and no Actions posture to probe (issue #15 is a live-fetch
+        // concern) — an honest empty extension, not a silent skip.
+        let gate: Gate = serde_json::from_str(&text)
+            .map_err(|e| fetch::FetchError::Failed(format!("`{path}` is not a valid gate: {e}")))?;
+        return Ok(fetch::FetchBundle {
+            gate,
+            greens: Vec::new(),
+            startup_failed: Vec::new(),
+            policy_probe: fetch::PolicyProbe::NotTriggered,
+        });
     }
     match &args.pr {
-        Some(pr) => fetch::run_with_greens(&args.slug, pr),
+        Some(pr) => fetch::run_bundle(&args.slug, pr),
         None => Err(fetch::FetchError::Failed(format!(
             "need a PR number (live) or `--gate <file>` (offline).\n{USAGE}"
         ))),

@@ -1,0 +1,102 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+= Architecture Decision Record: 0002-vacuous-greens-in-outcome
+
+== 2. Representing vacuous greens in the Outcome contract (issue #58 spec)
+
+Date: 2026-09-26
+
+== Status
+
+Proposed (spec-first, per issue #58's go/no-go rule — implementation MUST NOT
+precede acceptance of this record).
+
+== Context
+
+`squabble fight` classifies *red* checks as self-win | escalate | assign-owner.
+A gate that could not run reports **green**, so the engine never used to look at
+it — the entire fake-green class (a scanner goes missing, a stub writes `[]`,
+the check goes green, and the gate silently stops being a gate). Detection of
+that class landed in #60: the fetch exposes inspectable greens (job id from
+`detailsUrl`), `squabble-core`'s `polarity` module classifies each green against
+the host-supplied signature from `.machine_readable/bot_directives/gate_triage.a2ml`
+(Axis-0 applicability checked first), and every `Vacuous` verdict projects to
+**one and only one** move — `EscalateToExpert{GateTriage, AssessConfidence}`
+carrying `run-count`, `stub-rate`, `upstream-exists`, `target-tech-present`.
+
+What #60 deliberately did **not** do: surface the finding in the machine
+contract when the *gate overall* is green. `Outcome` has exactly three terminal
+variants — `Green { landed_via, moves_applied }`, `Yellow { .. }`, `Red { report }` —
+and none can carry "green, but some green checks never ran". `fight.rs` currently
+narrates such findings to stderr only, noting they are "not represented in
+--json (that needs an Outcome change; see issue #58)". Issue #58's go/no-go
+rule says: *if the change needs a new state, write a spec first and stop.* This
+record is that spec.
+
+The constraint that makes this subtle: the SPARK machine in `spark/` proves
+`green ⇔ (non-empty ∧ all passed)` for `CheckRun`/`GateState`. Any new shape
+must be an annotation ABOUT greens, never a new gate colour (the outcome
+contract already forbids a fourth colour that means "gave up but called it
+green" — and a "VacuousGreen" outcome state would be precisely that, as well as
+forcing a SPARK re-proof).
+
+== Decision
+
+Extend `Outcome::Green` with an additive, defaulted annotation field, rather
+than adding a variant:
+
+[source,rust]
+----
+Outcome::Green {
+    landed_via: LandingStrategy,
+    moves_applied: Vec<Move>,
+    /// Greens that concluded `success` without doing their job, with
+    /// evidence. Empty ⇔ every inspected green is genuine. `#[serde(default)]`
+    /// keeps every previously-serialised Green readable.
+    #[serde(default)]
+    vacuous_greens: Vec<VacuousGreen>,
+}
+----
+
+with `VacuousGreen { check: String, evidence: String }` (the evidence string is
+the same four-field form the polarity module already emits), or reusing
+`Escalation` verbatim if reviewers prefer one shape for all hand-offs.
+
+Rules the extension must keep:
+
+. `vacuous_greens` is populated ONLY from `PolarityVerdict::Vacuous` verdicts —
+  the existing `to_move` projection — never from absence-of-steps (an
+  uninspectable green stays an stderr narration, per `no-silent-skip`).
+. The field NEVER changes which outcome variant is chosen, and NEVER counts as
+  `moves_applied`. The gate is still honestly Green: the required checks passed;
+  the annotation tells the human a passing check is not worth what it claims.
+. The SPARK proof is untouched: no new `CheckRun`, no new `GateState`, no call
+  into `Gate::evaluate`. The same precedent that admitted `MissingCause` and
+  the polarity module applies — an annotation `squabble-core` computes around
+  the gate, not a gate state.
+. `Outcome::Red` keeps today's behaviour (vacuity escalations already attach
+  to its report); this ADR changes nothing there.
+. Deletion of a worthless gate remains a *recommendation to the owner* in the
+  evidence text, never an enacted transition (issue #58 hard constraint).
+
+== Consequences
+
+=== Positive
+
+- `--json` consumers (rhodibot, hypatia, the estate dashboards) can read the
+  fake-green finding from the contract instead of scraping stderr.
+- The outcome contract keeps exactly three colours; the vacuous-gate class is
+  representable without a fourth that could be misread as "green anyway".
+- No SPARK re-proof cost; the proved invariant statement stays bit-identical.
+
+=== Negative
+
+- Additive wire change: hosts with strict decoders must tolerate the new field
+  (`#[serde(default)]` covers the read side only).
+- `Outcome::Green` now carries evidence-like payload; documentation must keep
+  repeating that the annotation is not a gate verdict.
+
+=== Neutral
+
+- `fight.rs`'s stderr narration can stay as the human secondary channel; the
+  struct field becomes the primary one.

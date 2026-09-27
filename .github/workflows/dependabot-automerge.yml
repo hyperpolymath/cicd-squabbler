@@ -1,5 +1,5 @@
-# This workflow is managed by gh actions-lock.
 # SPDX-License-Identifier: MPL-2.0
+# This workflow is managed by gh actions-lock.
 #
 # dependabot-automerge.yml — enable GitHub's native auto-merge on
 # Dependabot pull requests that match a declared severity / ecosystem
@@ -57,10 +57,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@v2.16.0
-        with:
-          egress-policy: audit
+      # RECORDED DECISION (issue #105, 2026-09-26): this job previously ran
+      # `step-security/harden-runner` in egress-AUDIT mode. That action is not
+      # on the estate allowlist (hyperpolymath/standards
+      # rhodium-standard-repositories/actions-allowlist/allowed-actions.json),
+      # so the governance Allowlist Preflight failed the repo on every run.
+      # The issue offered two resolutions: (a) allowlist it estate-wide, or
+      # (b) drop it here. Option (b) was taken: the step was observability
+      # only (audit mode enforces nothing), and an allowlist change is an
+      # estate decision that cannot be taken from a single repo. Reversing
+      # this is a one-line revert IF the estate chooses (a) and adds
+      # `step-security/harden-runner@*` to the allowlist.
       - name: Fetch Dependabot metadata
         id: meta
         uses: dependabot/fetch-metadata@v3.1.0

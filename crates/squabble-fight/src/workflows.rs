@@ -43,6 +43,16 @@ pub struct WorkflowInfo {
     pub job_names: Vec<String>,
     /// `owner/repo` of every reusable workflow this file `uses:`.
     pub reusable_repos: Vec<String>,
+    /// Every external (non-local) `uses:` ref, normalised to `owner/repo@ref`
+    /// with any subpath collapsed — the same key shape as the actions lockfile
+    /// and the estate allowlist. Input to the Actions-policy probes (issue
+    /// #15): the mode-1 classification matches these against
+    /// `patterns_allowed`.
+    pub external_uses: Vec<String>,
+    /// The subset of `external_uses` pinned to a tag or branch rather than a
+    /// 40-hex SHA. Under `sha_pinning_required=true` these refuse to start —
+    /// the mode-2 Actions-policy `startup_failure` (issue #15).
+    pub tag_pinned_uses: Vec<String>,
     /// True if the file declares an `on.*.paths` trigger filter.
     pub path_filtered: bool,
     /// Executable policy contradicts the canonical descriptile location.
@@ -50,6 +60,70 @@ pub struct WorkflowInfo {
     /// A bare jobs block contains only whitespace or commented examples.
     pub empty_jobs: bool,
     pub kind: WorkflowKind,
+}
+
+/// The repository's live Actions permissions posture — the *why* behind an
+/// Actions-policy `startup_failure`, fetched by the host from
+/// `repos/{o}/{r}/actions/permissions` (+ `.../selected-actions`) when a
+/// required context resolves to `STARTUP_FAILURE` (issue #15). Plain host
+/// data: carrying it here keeps `squabble-core` estate-free.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ActionsPolicyFacts {
+    /// `all`, `local_only`, or `selected`. Empty string = unknown.
+    pub allowed_actions: String,
+    /// Whether GitHub requires every `uses:` pinned to a full-length SHA.
+    pub sha_pinning_required: bool,
+    /// `github_owned_allowed` from the selected-actions endpoint.
+    pub github_owned_allowed: bool,
+    /// `patterns_allowed` (meaningful only when `allowed_actions == selected`).
+    pub patterns_allowed: Vec<String>,
+}
+
+impl ActionsPolicyFacts {
+    /// `allowed_actions=selected` — the mode-1 posture.
+    pub fn is_selected(&self) -> bool {
+        self.allowed_actions == "selected"
+    }
+
+    /// Is `owner_repo` (normalised `owner/repo`, no `@ref`) permitted by a
+    /// `selected` posture? Mirrors the estate preflight
+    /// (`standards` `scripts/check-allowed-actions.sh`): GitHub-owned
+    /// `actions/*` and `github/*` pass when `github_owned_allowed`; a pattern
+    /// covers when it is an exact `owner/repo`, an owner-wide `owner/*`, or a
+    /// trailing-`*` prefix form such as `r-lib/*`.
+    ///
+    /// Deliberately NOT consulted when the posture is not `selected` — under
+    /// `all` nothing is blocked; under `local_only` *everything* external is
+    /// blocked but that is out of issue #15's scope, so callers gate on
+    /// [`Self::is_selected`] first.
+    pub fn covers(&self, owner_repo: &str) -> bool {
+        let owner = owner_repo.split('/').next().unwrap_or("");
+        if self.github_owned_allowed && matches!(owner, "actions" | "github") {
+            return true;
+        }
+        self.patterns_allowed.iter().any(|p| {
+            let base = p.split('@').next().unwrap_or(p.as_str());
+            base == owner_repo
+                || base == format!("{owner}/*")
+                || base
+                    .strip_suffix('*')
+                    .is_some_and(|prefix| !prefix.is_empty() && owner_repo.starts_with(prefix))
+        })
+    }
+
+    /// The first `external_uses` entry (normalised `owner/repo@ref`) this
+    /// posture does NOT cover, as `owner/repo` — the minimal unit a
+    /// `ReconcileActionsPolicy` move must unblock. `None` under any posture
+    /// other than `selected`, or when everything used is covered.
+    pub fn first_uncovered<'a>(&self, external_uses: &'a [String]) -> Option<&'a str> {
+        if !self.is_selected() {
+            return None;
+        }
+        external_uses.iter().find_map(|u| {
+            let owner_repo = u.split('@').next().unwrap_or(u.as_str());
+            (!self.covers(owner_repo)).then_some(owner_repo)
+        })
+    }
 }
 
 impl WorkflowInfo {
@@ -126,8 +200,67 @@ impl WorkflowFacts {
     /// A workflow that checks a retired descriptile path, or has only commented
     /// jobs, is classified as a non-functional gate regardless of [`CheckRun`].
     pub fn classify(&self, check: &RequiredCheck, slug: &str) -> Option<Move> {
+        self.classify_with_policy(check, slug, None, false)
+    }
+
+    /// As [`Self::classify`], but with the Actions-policy why-probe (issue #15)
+    /// consulted first for a check whose realised run was a `STARTUP_FAILURE`.
+    ///
+    /// `startup_failed` must be true only when the host actually *observed*
+    /// that conclusion for this exact required context (the rollup carries
+    /// it); `policy` is the repository's live Actions permissions posture, or
+    /// `None` when the probe was unavailable/not attempted. With `None` the
+    /// classification degrades to exactly [`Self::classify`]'s behaviour —
+    /// probing never *invents* a diagnosis.
+    ///
+    /// Ordering when both modes fire for the same check: mode-1 (allowlist
+    /// reconciliation) precedes mode-2 (SHA-pinning), because the allowlist
+    /// rule is evaluated at startup before the pin rule — and the estate
+    /// decision-of-record is `allowed_actions=all` with pinning KEPT, so the
+    /// settings move is the estate-conformant first step; the pin move then
+    /// surfaces on the next pass once the check can start.
+    pub fn classify_with_policy(
+        &self,
+        check: &RequiredCheck,
+        slug: &str,
+        policy: Option<&ActionsPolicyFacts>,
+        startup_failed: bool,
+    ) -> Option<Move> {
         let name = check.required_context.as_str();
         let w = self.find_emitting(name)?;
+
+        // 0. Actions-policy attribution (issue #15). A required-context
+        //    STARTUP_FAILURE is mis-attributed by the rules below (a reusable
+        //    caller reads as OwnedUpstream; a security workflow reads as
+        //    Escalate-Security) when the real cause is the repository's own
+        //    Actions posture refusing to start the run. Both replacement moves
+        //    only let the check START — a legitimate non-bypass outcome.
+        if startup_failed {
+            if let Some(p) = policy {
+                // Mode 1 — external `uses:` not covered by a `selected`
+                // allowlist. An EMPTY pattern list refuses every external at
+                // parse time; the estate decision-of-record posture
+                // (allowed_actions=all, pinning kept) reconciles it.
+                if let Some(blocked) = p.first_uncovered(&w.external_uses) {
+                    if p.patterns_allowed.is_empty() {
+                        return Some(Move::SetActionsAllowedAll);
+                    }
+                    return Some(Move::ReconcileActionsPolicy {
+                        blocked_ref: blocked.to_string(),
+                        add_patterns: vec![format!("{blocked}@*")],
+                    });
+                }
+                // Mode 2 — a tag-pinned `uses:` under `sha_pinning_required`.
+                // Applies to GitHub-owned actions too (the pin rule makes no
+                // ownership exception), so this is not gated on `first_uncovered`.
+                if p.sha_pinning_required && !w.tag_pinned_uses.is_empty() {
+                    return Some(Move::PinWorkflowActions {
+                        workflow: w.file.clone(),
+                        refs: w.tag_pinned_uses.clone(),
+                    });
+                }
+            }
+        }
 
         if w.retired_descriptile_policy {
             return Some(Move::FlagNonFunctionalGate {
@@ -226,6 +359,8 @@ fn parse_workflow(file: &str, text: &str) -> WorkflowInfo {
     let mut job_ids = Vec::new();
     let mut job_names = Vec::new();
     let mut reusable_repos = Vec::new();
+    let mut external_uses = Vec::new();
+    let mut tag_pinned_uses = Vec::new();
     let mut in_jobs = false;
     let mut seen_jobs_header = false;
 
@@ -270,6 +405,18 @@ fn parse_workflow(file: &str, text: &str) -> WorkflowInfo {
                 reusable_repos.push(reuse);
             }
         }
+
+        if let Some(target) = uses_target(t) {
+            if let Some(norm) = normalize_external_use(target) {
+                if !external_uses.contains(&norm) {
+                    external_uses.push(norm.clone());
+                }
+                let reference = norm.rsplit('@').next().unwrap_or_default();
+                if !is_sha_pin(reference) && !tag_pinned_uses.contains(&norm) {
+                    tag_pinned_uses.push(norm);
+                }
+            }
+        }
     }
 
     let path_filtered = has_path_filter(text);
@@ -281,6 +428,8 @@ fn parse_workflow(file: &str, text: &str) -> WorkflowInfo {
         job_ids,
         job_names,
         reusable_repos,
+        external_uses,
+        tag_pinned_uses,
         path_filtered,
         retired_descriptile_policy: has_retired_descriptile_policy(text),
         empty_jobs: has_empty_jobs(text),
@@ -459,6 +608,43 @@ fn reusable_repo(line: &str) -> Option<String> {
         return None;
     }
     Some(format!("{owner}/{repo}"))
+}
+
+/// The raw `uses:` target of a trimmed workflow line, with any trailing
+/// comment cut and quotes removed. `None` for non-`uses:` lines.
+fn uses_target<'a>(t: &'a str) -> Option<&'a str> {
+    let rest = t.strip_prefix("uses:")?.trim();
+    let token = rest.split_whitespace().next()?;
+    Some(token.trim_matches(['\'', '"']))
+}
+
+/// Normalise an external (non-local) `uses:` target to `owner/repo@ref`,
+/// collapsing any subpath — the same key shape as the actions lockfile, which
+/// is what the Actions-policy probes (issue #15) compare `patterns_allowed`
+/// against. Local actions (`./`, `$/`) and `docker://` images are not
+/// external refs and yield `None`.
+fn normalize_external_use(target: &str) -> Option<String> {
+    if target.starts_with("./") || target.starts_with("$/") || target.starts_with("docker://") {
+        return None;
+    }
+    let at = target.rfind('@')?;
+    let (path, reference) = (&target[..at], &target[at + 1..]);
+    if path.is_empty() || reference.is_empty() {
+        return None;
+    }
+    let mut segs = path.split('/');
+    let (owner, repo) = (segs.next()?, segs.next()?);
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some(format!("{owner}/{repo}@{reference}"))
+}
+
+/// Is `reference` a full-length (40-hex) SHA pin, any case? Anything shorter
+/// or non-hex is a tag/branch pin — refused at startup when the repository
+/// sets `sha_pinning_required=true` (issue #15, mode 2).
+fn is_sha_pin(reference: &str) -> bool {
+    reference.len() == 40 && reference.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// True if the file declares an `on.*.paths` filter (the path-filter trap).
@@ -798,5 +984,215 @@ jobs:
             "jobs: # real jobs\n  test:\n    steps: []\n"
         ));
         assert!(!has_empty_jobs("jobs: { test: {} }\n"));
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+
+    /// The two workflows of the `examples/actions-policy-deadlock.json`
+    /// narrative, as text: a reusable-caller refused by an empty allowlist,
+    /// and a tag-pinned workflow refused under enforced SHA pinning.
+    const SECRET_SCANNER: &str = r#"
+name: Secret Scanner
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  scan:
+    uses: hyperpolymath/standards/.github/workflows/secret-scanner-reusable.yml@8f2ee50841e216cd8c192eeb68953118190f105c
+    secrets: inherit
+"#;
+
+    const CODEQL_TAGGED: &str = r#"
+name: CodeQL Security Analysis
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7.0.1
+    - uses: github/codeql-action/init@v4.38.0
+    - uses: github/codeql-action/analyze@v4.38.0 # inline comment must be cut
+    - uses: ./local-helper
+"#;
+
+    fn policy_facts() -> WorkflowFacts {
+        WorkflowFacts {
+            workflows: vec![
+                parse_workflow("secret-scanner.yml", SECRET_SCANNER),
+                parse_workflow("codeql.yml", CODEQL_TAGGED),
+            ],
+        }
+    }
+
+    #[test]
+    fn external_uses_are_normalised_and_tag_pins_detected() {
+        let w = parse_workflow("codeql.yml", CODEQL_TAGGED);
+        // Subpath collapsed, deduplicated, the comment-bearing ref parsed,
+        // the local action excluded, all in file order.
+        assert_eq!(
+            w.external_uses,
+            vec![
+                "actions/checkout@v7.0.1".to_string(),
+                "github/codeql-action@v4.38.0".to_string(),
+            ]
+        );
+        assert_eq!(w.tag_pinned_uses, w.external_uses);
+        assert!(w.reusable_repos.is_empty());
+    }
+
+    #[test]
+    fn sha_pinned_reusable_is_external_but_not_tag_pinned() {
+        let w = parse_workflow("secret-scanner.yml", SECRET_SCANNER);
+        assert_eq!(
+            w.external_uses,
+            vec!["hyperpolymath/standards@8f2ee50841e216cd8c192eeb68953118190f105c".to_string()]
+        );
+        assert!(w.tag_pinned_uses.is_empty());
+        assert_eq!(w.reusable_repos, vec!["hyperpolymath/standards".to_string()]);
+    }
+
+    #[test]
+    fn covers_matches_exact_owner_wide_and_prefix_patterns() {
+        let p = ActionsPolicyFacts {
+            allowed_actions: "selected".into(),
+            sha_pinning_required: true,
+            github_owned_allowed: true,
+            patterns_allowed: vec![
+                "hyperpolymath/*".into(),
+                "oven-sh/setup-bun@*".into(),
+                "r-lib/*".into(),
+            ],
+        };
+        assert!(p.covers("actions/checkout"), "github-owned under github_owned_allowed");
+        assert!(p.covers("github/codeql-action"));
+        assert!(p.covers("hyperpolymath/standards"), "owner-wide");
+        assert!(p.covers("oven-sh/setup-bun"), "exact owner/repo");
+        assert!(p.covers("r-lib/actions"), "prefix glob");
+        assert!(!p.covers("step-security/harden-runner"));
+        // Without github_owned_allowed the GitHub-owned refs are NOT free.
+        let strict = ActionsPolicyFacts {
+            github_owned_allowed: false,
+            ..p.clone()
+        };
+        assert!(!strict.covers("actions/checkout"));
+        // Under a non-`selected` posture, first_uncovered is inert (mode 1 is
+        // scoped to `selected` by issue #15).
+        let all = ActionsPolicyFacts {
+            allowed_actions: "all".into(),
+            ..p
+        };
+        assert!(all.first_uncovered(&["step-security/harden-runner@v2".to_string()]).is_none());
+    }
+
+    #[test]
+    fn empty_selected_allowlist_classifies_to_set_allowed_all() {
+        // Mode 2 shape (pinning required, tags exist anywhere in the tree)
+        // AND mode 1 shape (externals uncovered) present at once: mode 1
+        // wins per the documented ordering — the allowlist rule is evaluated
+        // first at startup, and allowed_actions=all is the estate's posture
+        // of record.
+        let facts = policy_facts();
+        let policy = ActionsPolicyFacts {
+            allowed_actions: "selected".into(),
+            sha_pinning_required: true,
+            github_owned_allowed: true,
+            patterns_allowed: vec![],
+        };
+        assert_eq!(
+            facts.classify_with_policy(
+                &RequiredCheck::new("scan", CheckRun::Failed),
+                "hyperpolymath/cicd-squabbler",
+                Some(&policy),
+                true,
+            ),
+            Some(Move::SetActionsAllowedAll),
+            "empty patterns under selected → the estate default posture"
+        );
+    }
+
+    #[test]
+    fn selected_allowlist_gap_classifies_to_reconcile_with_the_missing_pattern() {
+        let facts = policy_facts();
+        let policy = ActionsPolicyFacts {
+            allowed_actions: "selected".into(),
+            sha_pinning_required: true,
+            github_owned_allowed: true,
+            patterns_allowed: vec!["oven-sh/setup-bun@*".into()],
+        };
+        assert_eq!(
+            facts.classify_with_policy(
+                &RequiredCheck::new("scan", CheckRun::Failed),
+                "hyperpolymath/cicd-squabbler",
+                Some(&policy),
+                true,
+            ),
+            Some(Move::ReconcileActionsPolicy {
+                blocked_ref: "hyperpolymath/standards".into(),
+                add_patterns: vec!["hyperpolymath/standards@*".into()],
+            })
+        );
+    }
+
+    #[test]
+    fn tag_pinned_under_sha_pinning_classifies_to_pin_not_escalate_security() {
+        // Issue #15's canonical mis-attribution: a tag-pinned codeql.yml
+        // STARTUP_FAILURE used to read as Escalate{Security}.
+        let facts = policy_facts();
+        let policy = ActionsPolicyFacts {
+            allowed_actions: "all".into(), // no mode-1 surface at all
+            sha_pinning_required: true,
+            github_owned_allowed: true,
+            patterns_allowed: vec![],
+        };
+        assert_eq!(
+            facts.classify_with_policy(
+                &RequiredCheck::new("analyze", CheckRun::Failed),
+                "hyperpolymath/cicd-squabbler",
+                Some(&policy),
+                true,
+            ),
+            Some(Move::PinWorkflowActions {
+                workflow: "codeql.yml".into(),
+                refs: vec![
+                    "actions/checkout@v7.0.1".into(),
+                    "github/codeql-action@v4.38.0".into(),
+                ],
+            }),
+            "a tag-vs-SHA refusal is a pinning fix, not a security scan"
+        );
+    }
+
+    #[test]
+    fn without_an_observed_startup_failure_the_policy_branches_stay_silent() {
+        // classify() (no policy) and classify_with_policy(policy, startup=false)
+        // must agree EXACTLY — the probe names a cause only when the platform
+        // reported one. A Security-kind workflow then escalates as before.
+        let facts = policy_facts();
+        let policy = ActionsPolicyFacts {
+            allowed_actions: "selected".into(),
+            sha_pinning_required: true,
+            github_owned_allowed: true,
+            patterns_allowed: vec![],
+        };
+        let check = RequiredCheck::new("analyze", CheckRun::Failed);
+        assert_eq!(
+            facts.classify_with_policy(&check, "o/r", Some(&policy), false),
+            facts.classify(&check, "o/r")
+        );
+        // The reusable caller keeps its ORIGINAL (mis)attribution when the
+        // probe was not triggered: evidence first, posture second.
+        let scan = RequiredCheck::new("scan", CheckRun::Failed);
+        let degraded = facts.classify_with_policy(&scan, "o/r", Some(&policy), false);
+        assert!(
+            matches!(degraded, Some(Move::AssignGateOwner { .. })),
+            "without STARTUP_FAILURE evidence the reusable reads OwnedUpstream as before: {degraded:?}"
+        );
     }
 }

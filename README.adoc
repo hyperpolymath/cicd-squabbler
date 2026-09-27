@@ -15,7 +15,7 @@ A standalone, per-repo CI/CD fighter that drives a stuck pipeline to a
 *legitimate* green — or improves red→yellow, or fails and hands the human a
 structured report. It *wins* the gate; it never cheats past it.
 
-NOTE: Status — *v0.1 in active development (updated 2026-07-17).* The engine and
+NOTE: Status — *v0.1 in active development (updated 2026-09-26).* The engine and
 its formal invariant are real and verified (see below); live gate fetch via `gh`
 landed in #6; `squabble fight` (classify each red as self-win | escalate |
 assign-owner), the `squabble-app` loopback HTTP backend, and the boj-server
@@ -23,7 +23,11 @@ expert summoning (`--summon`, feature `boj`) landed in #13. `squabble fight
 --apply` now *enacts* the first appliable self-win — stripping an `on.*.paths`
 trigger filter that strands a required check — by writing the workflow file
 (propose remains the default; `--apply` never commits, pushes, or re-runs CI).
-Still open: applying the other self-wins (required-context reconcile,
+The fetch reads *both* gate surfaces — branch rulesets AND classic branch
+protection (#100) — and probes the repository's Actions permissions whenever a
+required context refuses to start, so a `STARTUP_FAILURE` is attributed to the
+posture that caused it rather than to the reusable's owner or a security scan
+(#15). Still open: applying the other self-wins (required-context reconcile,
 reusable-workflow re-pin — these need the GitHub ruleset API / a target SHA) and
 the GitHub App *webhook* leg (pending the owner's hosting decision). See
 `docs/CHARTER.adoc` for the design and open owner decisions.
@@ -76,6 +80,16 @@ squabbler run). Every move *satisfies* the gate:
 . *Non-functional gate* — the required check's own script fails unconditionally
   (cannot be won from the PR side; mined from `hypatia#566`): recognise, stop
   re-diagnosing, escalate with evidence.
+. *Actions-policy `startup_failure` deadlock* (issue #15) — the repository's
+  own posture refuses to start a required check: an empty/lacking `selected`
+  allowlist (`ReconcileActionsPolicy` / `SetActionsAllowedAll` — estate
+  posture of record is `allowed_actions=all` with `sha_pinning_required=true`
+  KEPT), or a tag-pinned `uses:` under enforced SHA pinning
+  (`PinWorkflowActions`). The fetch probes `actions/permissions` whenever a
+  required context resolves to `STARTUP_FAILURE`, so the fight proposes the
+  settings/pin move instead of mis-attributing to the reusable's owner or a
+  security scan. These moves only let a required check *start*; none weakens
+  the gate.
 
 Red→green *code* fixes are deliberately *out of scope* for v0.1: "fixing" a
 failing test by weakening it would violate squabble ≠ bypass.
