@@ -700,6 +700,7 @@ dependencies = [
 name = "squabble-fight"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "serde_yaml_ng",
  "squabble-core",
 ]
