@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) 2026 Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+= squabble-forge GraphQL documents
+
+`github-schema.graphql`:: A verbatim snapshot of GitHub's public GraphQL
+schema (`https://docs.github.com/public/fpt/schema.docs.graphql`), taken
+2026-09-29, SHA-256
+`20c6ccbd41870ed4e773a75f90ed26796eaf660b586d6f8f19c59b30f407cd15`. It is
+GitHub's published schema, kept here only so tests can validate queries. It
+is not estate-authored, so it carries no SPDX header, and it must not be
+edited by hand or by any licence sweep.
++
+*Licence declaration: pending owner decision (Doctrine 6).* The `Files: *`
+default in `.machine_readable/compliance/reuse/dep5` would mis-declare this
+third-party file as MPL-2.0. It needs its own stanza naming GitHub's actual
+licence for the published schema. Alternatively, drop the snapshot and fetch
+it in CI (see below). Not done automatically on purpose.
+
+`workflow_tree.graphql`:: The per-repo fragment for `squabble chains`. It
+reads a repo's default-branch commit OID and its `.github/workflows` tree from
+the *same* commit.
+
+== Refreshing
+
+`just graphql-schema-refresh` downloads the current schema, prints its hash,
+and re-runs `cargo test -p squabble-forge`. If a field a query uses has
+changed, `generated_query_validates_against_the_schema_snapshot` fails and
+names it. Update the query, not the test.
+
+The snapshot is about 1.5 MB. If that is unwelcome in the tree, the
+alternative is to fetch it in CI before the test. That trades a
+reproducible, reviewable diff for a network dependency in the test run.
