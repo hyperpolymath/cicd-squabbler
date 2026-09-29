@@ -3,7 +3,6 @@
 # Docs: https://gh.io/actions-lockfile
 version: 'v0.0.2'
 workflows:
-    '.github/workflows/arena-rust-probe.yml': []
     '.github/workflows/codeql.yml':
         - 'actions/checkout@v7.0.1'
         - 'github/codeql-action@v4.38.2'
