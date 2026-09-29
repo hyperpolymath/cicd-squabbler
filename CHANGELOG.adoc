@@ -46,6 +46,10 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
   `branches/{b}/protection` `required_status_checks` populates the gate
   identically (contexts unioned when both mechanisms exist), and a 403 there
   is a hard error, never a no-gate — issue #100.
+* `actions.lock` re-synced after Dependabot (#111) bumped `github/codeql-action`
+  to v4.38.2 in `codeql.yml`; Dependabot cannot edit the lockfile, so the lock
+  still pinned v4.38.0. Symptoms on `main`: Lock Sync Gate and governance
+  Actions lockfile verify red, CodeQL `startup_failure` — issue #105.
 * `actions.lock` desync: `standards-pipeline.yml`'s job-level reusable ref
   (`hyperpolymath/standards@ed5e3f65…`) was unlisted. Its entry and
   dependency record (with transitive closure) are now present — Lock Sync
