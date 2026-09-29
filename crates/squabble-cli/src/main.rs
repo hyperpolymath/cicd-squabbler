@@ -16,6 +16,8 @@
 //!
 //! - `0` — success.
 //! - `2` — a genuine failure: bad usage, `gh` failed, unparseable input.
+//! - `4` — **blocking chain finding** (`squabble chains`): a dependency cycle
+//!   or a dead upstream. Like `3`, a reportable finding, not a tool failure.
 //! - `3` — **no gate**: the PR's base branch carries no `required_status_checks`
 //!   ruleset rule, so there is nothing to triage.
 //!
@@ -29,6 +31,7 @@
 
 #[cfg(feature = "boj")]
 mod boj;
+mod chains;
 mod fetch;
 mod fight;
 
@@ -53,6 +56,7 @@ fn main() -> ExitCode {
             }
         },
         Some("fight") => fight::run(&args[2..]),
+        Some("chains") => chains::run(&args[2..]),
         Some("--version") | Some("-V") => {
             println!("squabble {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -66,11 +70,13 @@ fn main() -> ExitCode {
                  squabble fetch <owner>/<repo> <pr-number>\n  \
                  squabble diagnose <gate.json>\n  \
                  squabble {}\n  \
+                 squabble {}\n  \
                  squabble --version\n\n\
                  EXIT CODES:\n  \
-                 0 ok · 2 failure · 3 no `required_status_checks` rule on the base branch\n",
+                 0 ok · 2 failure · 3 no `required_status_checks` rule on the base branch · 4 chains: blocking finding\n",
                 env!("CARGO_PKG_VERSION"),
-                fight::USAGE.trim_start_matches("usage: squabble ")
+                fight::USAGE.trim_start_matches("usage: squabble "),
+                chains::USAGE.trim_start_matches("usage: squabble ")
             );
             ExitCode::from(2)
         }

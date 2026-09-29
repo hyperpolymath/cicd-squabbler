@@ -26,6 +26,7 @@
 //! manifest rather than a faked green.
 
 pub mod apply;
+pub mod chains;
 pub mod context;
 pub mod gate_triage;
 pub mod workflows;

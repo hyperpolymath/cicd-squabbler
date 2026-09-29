@@ -992,6 +992,7 @@ dependencies = [
  "serde_json",
  "squabble-core",
  "squabble-fight",
+ "squabble-forge",
  "ureq",
 ]
 

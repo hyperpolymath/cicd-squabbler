@@ -625,7 +625,7 @@ pub(crate) fn strip_sequence_marker(t: &str) -> &str {
 
 /// The raw `uses:` target of a trimmed workflow line, with any trailing
 /// comment cut and quotes removed. `None` for non-`uses:` lines.
-fn uses_target<'a>(t: &'a str) -> Option<&'a str> {
+pub(crate) fn uses_target<'a>(t: &'a str) -> Option<&'a str> {
     let rest = t.strip_prefix("uses:")?.trim();
     let token = rest.split_whitespace().next()?;
     Some(token.trim_matches(['\'', '"']))
