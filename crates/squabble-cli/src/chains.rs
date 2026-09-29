@@ -321,7 +321,7 @@ fn details(f: &Finding) -> Vec<String> {
 
 fn short(p: &str) -> &str {
     if p.len() == 40 {
-        &p[..12]
+        p.get(..12).unwrap_or(p)
     } else {
         p
     }
