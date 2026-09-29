@@ -10,6 +10,21 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
 
 ==== Added
 
+* `squabble chains` — read-only cross-repo CI dependency chains (Phase A of
+  `docs/proposals/squabble-modes-and-app-layer.adoc`). Pure analysis in
+  `squabble-core::chains`: cycles and dead upstreams (blocking), diamonds,
+  pin skew and tag/branch pins (warnings), an upstreams-first landing order,
+  and the longest chain (a max-plus longest path, hop-weighted for now).
+  Sources mix freely: local checkouts, and `gh:owner/repo` read through
+  GitHub GraphQL. `--follow N` probes upstreams; action repos are probed for
+  existence only, and reusable-workflow upstreams contribute only the files
+  actually called. New exit code `4` = blocking chain finding.
+* `squabble-forge` crate — GitHub GraphQL via `gh api graphql`, batched with
+  aliases, owner/name passed as variables. Every query is validated in tests
+  against a committed schema snapshot (`graphql/github-schema.graphql`,
+  refresh with `just graphql-schema-refresh`). Records `rateLimit` cost; an
+  exhausted budget marks the remaining repos unavailable rather than guessing.
+  Truncated or binary blobs and renamed repos are reported as notes.
 * fetch: `PinWorkflowActions`, `ReconcileActionsPolicy` and
   `SetActionsAllowedAll` moves, plus the Actions-policy why-probe
   (`actions/permissions` + `.../selected-actions`) that fires when a required
@@ -23,6 +38,9 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
 
 ==== Fixed
 
+* workflows: step-level `- uses:` refs were never read; only job-level
+  `uses:` keys were. The issue #15 Actions-policy probes therefore missed every
+  step action. Two existing tests witnessed it and were failing on `main`.
 * fetch: classic branch protection is read as a gate surface. Absence from
   the ruleset listing is no longer reported as "no gate"; a classic
   `branches/{b}/protection` `required_status_checks` populates the gate

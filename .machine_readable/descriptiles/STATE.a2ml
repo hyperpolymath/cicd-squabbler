@@ -6,7 +6,7 @@
 [metadata]
 project = "cicd-squabbler"
 version = "0.1.0"
-last-updated = "2026-07-17"
+last-updated = "2026-09-29"
 status = "active"  # active | paused | archived
 
 [project-context]
@@ -33,6 +33,7 @@ milestones = [
   { name = "boj-server expert client (feature `boj`, ureq; default build gains zero deps): `squabble fight --summon` maps each EscalateToExpert to its cartridge (Security→panic-attack-mcp, Proof→echidna-llm-mcp, Hypatia*→hypatia-mcp; dispatch-fix recorded as assessed+tracked, actuation external — no fixer cartridge exists). Fail-closed on unreachable experts; loud refusal when built without the feature.", completion = 100 },
   { name = "cicd-squabbler-mcp cartridge (boj-server-cartridges cartridges/domains/ci-cd/): squabble_fight + squabble_diagnose tools, mod.js proxy to SQUABBLE_BACKEND_URL, no ffi block (JS dispatch path)", completion = 100 },
   { name = "`squabble fight --apply` — enacts the first appliable self-win: strips an on.*.paths trigger filter that strands a required check (Missing-only classification), writing the workflow file. Fail-closed + idempotent + no commit/push/re-run; Outcome stays Red with an `applied` evidence section (no overclaim). Provably gate-strengthening (more coverage, never fewer) so the SPARK invariant is untouched. Other self-wins (context reconcile, reusable re-pin) stay propose-only pending the GitHub ruleset API.", completion = 100 },
+  { name = "`squabble chains` (Phase A, read-only) — pure cross-repo chain analysis in squabble-core::chains (cycles + dead upstreams blocking; diamonds, pin skew, tag/branch pins warnings; landing order; max-plus longest chain), local + GitHub GraphQL sources (new squabble-forge crate, queries validated against a committed schema snapshot), `--follow N` upstream probing, exit 4 on blocking. Dogfooded offline on cicd-squabbler, standards, typed-wasm, rsr-template-repo; live GraphQL run pending a gh-authenticated host.", completion = 90 },
   { name = "RSR scaffolding customisation (identity, root-allow, A2ML manifests)", completion = 80 },
 ]
 
@@ -42,6 +43,8 @@ milestones = [
 
 [critical-next-actions]
 actions = [
+  "Owner: decide the REUSE/dep5 declaration for crates/squabble-forge/graphql/github-schema.graphql (third-party GitHub schema; the Files: * default would mis-declare it MPL-2.0) — or drop the snapshot and fetch it in CI.",
+  "Live-fire `squabble chains gh:… --follow 1` on a gh-authenticated host; then fetch reusable upstreams at their PINNED SHA (GraphQL object(expression:\"<sha>:.github/workflows\")) so diamonds carry basis=pinned-revision instead of scanned-revision.",
   "Enact the remaining self-wins under --apply: required-context reconcile and reusable-workflow re-pin both need the GitHub ruleset API / a target SHA (network), so they stay propose-only until that host capability exists. (`--apply` already enacts the path-filter strip, which is a pure local file edit.)",
   "Add the squabble-app GitHub App webhook leg (check_run.requested_action + octocrab — the \"Squabble!\" button) so a fight can be triggered from a PR, not only from the CLI; still honestly absent (no webhook route registered).",
   "Live-fire --summon against a running boj-server with the expert backends up (hypatia :7701, panic-attack, echidna) — today's verification proves the wiring + fail-closed degradation; the experts themselves are not yet deployed.",

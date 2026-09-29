@@ -137,6 +137,14 @@ test *args:
     cargo test --workspace {{args}}
     cargo test -p squabble-cli --features boj {{args}}
 
+# Refresh the committed GitHub GraphQL schema snapshot that squabble-forge's
+# tests validate every query against. Review the diff: a changed field used by
+# a query is exactly what the validation test exists to catch.
+graphql-schema-refresh:
+    curl -sSfL https://docs.github.com/public/fpt/schema.docs.graphql -o crates/squabble-forge/graphql/github-schema.graphql
+    sha256sum crates/squabble-forge/graphql/github-schema.graphql
+    cargo test -p squabble-forge
+
 # Run tests with verbose output
 test-verbose:
     @echo "Running tests (verbose)..."
