@@ -15,6 +15,7 @@
 //! detachability is the whole point.
 
 pub mod admission;
+pub mod chains;
 pub mod gate;
 pub mod moves;
 pub mod outcome;
