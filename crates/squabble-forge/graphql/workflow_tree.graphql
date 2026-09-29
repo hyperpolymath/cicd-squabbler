@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# One repository's workflow directory, read from a single commit so the
+# revision and the files cannot come from two different moments.
+# `chains_query` in src/lib.rs aliases this fragment once per repo (r0, r1, …)
+# into one batched query; tests validate the generated document against
+# github-schema.graphql.
+fragment WorkflowTree on Repository {
+  nameWithOwner
+  defaultBranchRef {
+    target {
+      ... on Commit {
+        oid
+        file(path: ".github/workflows") {
+          object {
+            ... on Tree {
+              entries {
+                name
+                type
+                object {
+                  ... on Blob {
+                    text
+                    isBinary
+                    isTruncated
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

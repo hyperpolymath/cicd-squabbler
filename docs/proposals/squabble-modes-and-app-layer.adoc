@@ -1,0 +1,488 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) 2026 Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+= Proposal — Squabble Modes, the App-Aware Layer, Self-Analysis, and a Plugin Shape
+:toc:
+:toclevels: 3
+:sectnums:
+
+Status: *PROPOSAL — partly ratified 2026-09-29 (see Owner decisions); `chains` Phase A in progress.* Drafted 2026-09-29 against
+`main@a985360`. It extends the charter; it does not amend a single invariant.
+
+== What this proposal has to preserve
+
+These are the load-bearing facts of the current code. Every extension below is
+designed around them rather than beside them.
+
+[cols="1,3"]
+|===
+| `squabble ≠ bypass`
+| `Gate::evaluate` is the only path to `Green`. The SPARK `Gate_Machine` proves
+  `Green ⇔ non-empty ∧ all Passed`. `Outcome` has no `Bypassed` variant.
+
+| Core is pure and detachable
+| `squabble-core` has no IO and no estate or hypatia dependency. Estate-aware
+  work lives in `squabble-fight`, the shared host brain. `hypatia-dependent`
+  is an IS-NOT.
+
+| Propose, don't enact outward
+| `--apply` edits the working tree only. It never commits, pushes, or re-runs.
+  Settings moves such as `ReconcileActionsPolicy` are proposed for the owner to
+  carry out.
+
+| Fail-closed evidence
+| `Report` accounts for every red as self-win, escalation or owner assignment.
+  `polarity.rs` refuses to take a green at face value. `admission.rs` refuses
+  to admit work on stale or missing evidence.
+
+| Ground truth over declaration
+| `fetch.rs` reads rulesets *and* classic protection, and probes Actions policy
+  when a check fails to start. Diagnoses are measured, never assumed.
+|===
+
+Two design rules follow, and the rest of this document applies them.
+
+Rule A — *plugins and modes propose; core disposes.*:: Nothing added here can
+construct a `CheckRun`, a `GateState`, or an `Outcome::Green`. New subsystems
+emit *data*: moves, conditions, proposals and deltas. The existing planner
+turns that data into a report.
+
+Rule B — *every configuration change is classified by posture before it can be
+proposed.*:: This covers rulesets, tool configs and workflow edits. Each change
+is labelled `Strengthens`, `Neutral`, `Weakens` or `Incomparable`. `Weakens`
+is never produced as a route to green. It can only come from an explicit owner
+request, and even then it sits in a separate report section.
+
+== Overview
+
+....
+                ┌──────────────────── hosts ─────────────────────┐
+                │ squabble-cli   squabble-app(HTTP)   Action   Claude/Cowork plugin │
+                └───────────────┬────────────────────────────────┘
+                                │  (all call one planner — no drift)
+┌───────────────────────────────▼──────────────────────────────────────────┐
+│ squabble-fight  (shared host brain, estate-aware)                         │
+│   gate  │ upstream │ custodian │ chains │ routing │ retro   ← MODES       │
+└──┬───────────┬──────────────┬──────────────┬─────────────┬────────────────┘
+   │           │              │              │             │
+┌──▼────┐ ┌────▼─────┐ ┌──────▼──────┐ ┌─────▼──────┐ ┌────▼──────────┐
+│ Forge │ │ squabble-│ │ squabble-   │ │ Reasoner   │ │ EvidenceStore │
+│ trait │ │ apps     │ │ plugin      │ │ trait      │ │ trait         │
+│ gh api│ │ registry │ │ typed-wasm- │ │ minikanren │ │ LMDB local /  │
+│GraphQL│ │ +catalog │ │ gate+Idris2 │ │ (default)  │ │ VeriSim estate│
+│ +REST │ │          │ │ + Zig shim  │ │ hypatia    │ │               │
+└───────┘ └──────────┘ └─────────────┘ │ (optional) │ └───────────────┘
+                                       └────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│ squabble-core (PURE)   gate · moves · outcome · polarity · admission      │
+│   + posture (ruleset lattice) + conditions + coverage + choreo (new)      │
+└──────────────────────────────────────────────────────────────────────────┘
+                     spark/  Gate_Machine  (+ Posture_Delta, Coverage_Kept)
+....
+
+New *pure* modules go in `squabble-core`. New *IO* goes behind traits in the
+host crates. Hypatia remains one optional `Reasoner`. The standalone default is
+miniKanren, so detachability holds.
+
+== (1) Squabble modes
+
+Today there is one mode: the gate on my own PR, in my own repo. That becomes
+`Mode::Gate`, and three more modes sit alongside it. All four share one
+report shape, so every host renders them the same way.
+
+[cols="1,2,2,2"]
+|===
+| Mode | Question it answers | Direction | Writes?
+
+| `gate` (existing) | Can this PR legitimately reach green? | self | working tree only (`--apply`)
+| `upstream` | Does my offer branch meet *their* stated conditions? | me → another maintainer | *never* writes to their repo
+| `custodian` | Do my repos' rulesets match my declared posture? | me as gatekeeper | propose, or transactional apply behind a flag
+| `chains` | Which cross-repo dependency chains block, or will block, a landing? | estate graph | report only
+|===
+
+=== `upstream` mode — conformance of an offer branch
+
+Input: `--target owner/repo --base main --head me:branch` (or an open PR URL).
+
+The engine gathers the target's conditions from several sources. Each condition
+carries an *epistemic grade* for how it was witnessed:
+
+[cols="1,2,1"]
+|===
+| Source | Example conditions | Grade
+
+| Target's rulesets and classic protection (public-readable) | required contexts, signed commits, linear history, review count | `Mechanical`
+| Target's workflows *as they run on my fork* | the same jobs, observed on my head SHA before I open the PR | `Observed`
+| `CONTRIBUTING`, PR template checklist, `.github/` files | DCO sign-off, conventional commits, "add a changelog entry", "one feature per PR" | `Declared` (parsed)
+| The same prose read by an LLM | softer asks such as "discuss in an issue first" | `Inferred`, provisional (Doctrine 4)
+| Things only the maintainer can decide | "the maintainer likes the design" | `Unwitnessable`, listed and never scored
+|===
+
+Each condition gets `Met`, `Unmet`, or `Unknown`, with evidence. `Unknown` is
+never counted as `Met`. The report's top line only claims "conforms" if every
+`Mechanical` and `Observed` condition is `Met`. Lower grades are listed
+separately and never raise the verdict.
+
+This mode adds one new `MissingCause`: `AwaitingMaintainerApproval`. On fork PRs
+from first-time contributors, workflows wait for maintainer approval, so they
+show as *missing* rather than failed. Today that would be misread as
+`NoSuchJob` or `Unknown`.
+
+Why this sits in lane: it is `gate` mode pointed at someone else's gate, with
+writes removed. The upstream gate stays the upstream owner's, which is
+Doctrine 14 applied.
+
+=== `custodian` mode — rulesets on my repos
+
+Inputs:
+
+* *Desired posture*, declared in the repo's own `.github/rulesets/*.json` and
+  `settings.yml`, or in an estate-wide template (see §(2) parity) chosen by a
+  selector.
+* *Live posture*, read through the `Forge` trait: rulesets, classic
+  protection, and Actions permissions. Most of this is already fetched.
+
+The pure core computes a `PostureDelta` per rule, using a lattice over ruleset
+parameters: review count, required contexts, signatures, linear history,
+bypass actors, `code_scanning_tools`, and so on. Each delta is classified
+`Strengthens`, `Neutral`, `Weakens` or `Incomparable`.
+
+* The existing moves slot in cleanly. `ReconcileRequiredContext` becomes
+  `Neutral` when it renames a context to the same job's real emitted name. The
+  flagship `code_scanning_tools` trim becomes `Neutral` when the trimmed tool
+  also moves to a required status context. Otherwise it is `Weakens`, which
+  makes the pairing explicit and checkable.
+* *SPARK extension (v0.2 target):* add a `Posture_Delta` model and prove that
+  no delta produced by the fight planner is `Weakens`. This is the ruleset-level
+  twin of the gate theorem, and a small, bounded proof.
+* *Transaction gating* for `--apply-rulesets`:
+  snapshot → plan → per-repo apply → re-fetch and verify → roll back on
+  mismatch. Every step is recorded in the evidence store. Apply is off by
+  default. When it runs, it is stop-first and repo-by-repo, and it never
+  touches bypass actors.
+
+=== `chains` mode — cross-repo dependency chains
+
+The engine builds a typed dependency graph from facts the code already parses,
+plus a few more:
+
+* reusable-workflow `uses:` edges, with their SHA pins (already in `workflows.rs`)
+* action pins, and the `DeadActionPin` evidence
+* manifest dependencies: Cargo git dependencies, `mix.exs`, `.gitmodules`
+* `ECOSYSTEM.a2ml` `depends-on` and `coordination` entries
+
+What it flags:
+
+* A PR whose required check is produced upstream, together with that
+  upstream's own gate state. "Blocked on standards#N", rather than the current
+  bare `OwnedUpstream`.
+* *Pin skew*, where N consumers pin M different SHAs of one reusable.
+* *Diamonds*, where two upstreams require incompatible pins.
+* *Cycles*, where a landing order is impossible.
+
+The multi-repo landing plan is where the type work pays off:
+
+* *Choreographic.* A cross-repo change is a choreography: standards lands, then
+  N consumers re-pin, then each gate re-runs. Endpoint projection gives each
+  repo its local obligations as ordinary `Move`s. Deadlock-freedom of the
+  choreography is exactly "no cycle in `chains`". The pure `choreo` module holds
+  the global plan. Projection reuses the existing per-repo planner.
+* *Tropical.* Time-to-green across the chain is a longest path in a max-plus
+  semiring over edge latencies. Those latencies are the measured CI durations
+  from `retro`. The critical path tells you which upstream to chase first.
+
+== (2) The app-aware layer
+
+This is a new crate, `squabble-apps`. It sits *above* rulesets. Rulesets say
+which checks must pass. This layer decides which tool should be doing which
+work, so that overlapping tools stop duplicating each other.
+
+=== Inventory: what is installed, from evidence
+
+A static list would drift, so detection uses observations, each with a grade:
+
+. The `app.slug` on check runs for recent PR heads. This is authoritative for
+  "this app runs here".
+. Commit-status contexts. CodeRabbit posts a status; `fetch.rs` already handles
+  that union.
+. Code-scanning analyses (`tool.name`) and CodeQL default-setup state. This
+  also answers "does it upload SARIF?", the flagship deadlock question.
+. Workflow `uses:` lines, for example `github/codeql-action`,
+  `semgrep/semgrep-action`, or `anthropics/claude-code-action`.
+. Config files: `.coderabbit.yaml`, `.semgrep.yml`, `CLAUDE.md`,
+  `dependabot.yml`, `.github/copilot/`.
+. The installations API, *when the token permits it*. This is a bonus, never a
+  requirement.
+
+=== Capability catalogue (data, not code)
+
+The catalogue is a Nickel/a2ml file listing, for each app:
+
+* the capability cells it covers
+* whether it uploads SARIF
+* its trigger surface
+* its cost class
+* its unique capabilities
+
+Capability cells are keyed as `capability × language × path-scope`. The
+capabilities are:
+
+* `sast.dataflow`
+* `sast.pattern`
+* `secrets`
+* `sca.deps`
+* `review.summary`
+* `review.llm`
+* `fix.agentic`
+* `supplychain.posture`
+* `licence`
+* `lint.<tool>`
+
+Each built-in adapter is small. It implements `detect`, `capabilities`, and
+`emit_config(assignment)`. Adapters planned:
+
+* CodeQL
+* Semgrep
+* CodeRabbit (including its bundled linters, the main source of silent
+  duplication)
+* Claude
+* Copilot review
+* Dependabot
+* Scorecard
+* gitleaks
+
+=== Priority and routing
+
+The owner declares precedence per capability, for example:
+
+[source]
+----
+sast.pattern   = [semgrep, codeql]
+sast.dataflow  = [codeql]
+review.llm     = [claude, coderabbit]
+secrets        = [github-secret-scanning, gitleaks, coderabbit]
+----
+
+Routing is a covering assignment. Each covered cell gets exactly one *owner*,
+the highest-priority installed tool that covers it. The other tools covering
+that cell are demoted to *unique-only* for it. The router then emits
+per-tool config deltas:
+
+* CodeQL: a narrowed language matrix or query suites.
+* Semgrep: rule exclusions where CodeQL already owns the cell.
+* `.coderabbit.yaml`: `reviews.tools.*` toggles and path filters.
+* The Claude workflow's scope.
+
+The router also emits the *gate-side* deltas: which contexts to require, and
+which tools belong in `code_scanning_tools`.
+
+The invariant is *dedup ≠ disarm*. The set of *required* cells covered after
+routing must include every required cell covered before. This is
+`Coverage_Kept`, a second small SPARK or Idris2 obligation. A dedup that would
+drop a required cell cannot be expressed as a proposal. It shows up as a
+coverage gap with an owner assignment instead.
+
+The assignment is a natural fit for the `Reasoner` (§3). Run relationally, it
+answers "who owns what". Run backwards, it answers "what would I have to
+install, or unblock, to cover `sast.dataflow × zig`?"
+
+=== Personal-account parity
+
+Some features are organisation-scoped on GitHub. Where I'm confident of that,
+the squabbler emulates them per repo:
+
+[cols="2,3,1"]
+|===
+| Org / enterprise feature | Squabbler emulation on a personal account | Strength
+
+| Org rulesets targeting many repos (by custom properties) | An *estate ruleset template* plus a selector (topics, a2ml `CLADE`, or a local property file), fanned out by `custodian` with drift detection | drift-detected, not enforced
+| Required workflows (org ruleset `workflows` rule) | Inject a SHA-pinned caller workflow and require its context in the per-repo ruleset | the repo admin (you) can remove it; drift is flagged
+| Security configurations and security overview | An estate security overview: per-repo code-scanning, Dependabot and secret-scanning reads, aggregated in the evidence store | read-only aggregation
+| Ruleset `evaluate` (dry-run) enforcement | Engine-side dry-run: the `PostureDelta` plan plus the gate simulated against recent PR heads | simulated
+|===
+
+These availability claims are the kind GitHub changes, so a `PlanProbe`
+records what the account *actually* supports. It does this by trying the
+read endpoints once and caching the answers. Parity only fills gaps the probe
+has proven exist. This follows the same ground-truth discipline as
+`fetch_actions_policy`.
+
+== (3) Self-analysis that proposes better CI
+
+A new `retro` mode mines the evidence store: past fight reports, polarity
+verdicts, admission receipts, check durations and outcomes. It emits a new
+`Proposal` type. Each proposal carries a CI delta, its evidence, a posture
+classification, and a cost estimate. The detectors:
+
+* checks that are always vacuous, from `polarity` history
+* flaky required checks (the same SHA passes and fails)
+* expensive checks that have never failed, or that duplicate a routed cell
+* languages present in the tree with no SAST owner (coverage gaps from §2)
+* the pin-drift rate per upstream (from `chains`)
+* the critical-path check that dominates time-to-green (tropical)
+
+Proposals go through a `Reasoner` trait:
+
+`MiniKanrenReasoner` (default, standalone, in-process)::
+A relational rule base that turns CI facts into proposals, written as
+relations so it can also run backwards. For example: "which config change
+makes this gate satisfiable without a `Weakens` delta?"
+
+`HypatiaReasoner` (optional)::
+Uses the existing `ExpertGroup::Hypatia` / `AssessConfidence` path through
+boj. It adds confidence scores and recipe lookup. If it is absent, output
+falls back to the miniKanren verdicts, and the report says so.
+
+Retro never applies anything. Its output feeds the same propose → owner path,
+and the owner can hand it to gitbot-fleet for actuation.
+
+*Storage.* `EvidenceStore` is a host trait, and core never sees it. It has two
+implementations:
+
+* LMDB for the fast local per-run journal.
+* VeriSim as the estate-wide sink, which dogfoods VeriSim on a real workload
+  across hundreds of repos.
+
+== (4) Plugin and marketplace shape
+
+=== Extension points
+
+There are four plugin kinds, all bound by Rule A. They return data and cannot
+reach `GateState`:
+
+[cols="1,3"]
+|===
+| `AppAdapter` | detect, capabilities, and emit_config for one tool (§2)
+| `ConditionSource` | extract a target's conditions for `upstream` (DCO bot, CLA bot, house conventions)
+| `Reasoner` | retro and routing inference (§3)
+| `MoveClassifier` | new deadlock classes, as hints into `diagnose_with_hints`, the existing seam
+|===
+
+The *ABI* is specified in Idris2 as *typed-wasm regions*
+(`hyperpolymath/typed-wasm`). The host↔plugin contract is a pair of region
+schemas declared once. The plugin's *output* region simply has no field that
+could carry a `CheckRun` or a `GateState`, so Rule A holds at the level of
+verified memory layout, not just Rust types.
+
+*Loading* goes through `typed-wasm-gate`. `gate_module(&bytes)` runs the
+typed-wasm verifier stack and yields a `VerifiedModule` witness. The runtime
+adapters only instantiate from that witness, and the L13 region-import check
+rejects a plugin whose layout disagrees with the host's schema before it runs.
+The runtime is typed-wasm's pure-Rust wasmi adapter today; wasmtime follows
+once typed-wasm ships its planned adapter. Plugins use only the *checked* L1–L10
+core, because L11–L12 are still draft there. Capabilities are scoped: no
+network unless the manifest asks and the owner grants, and granted egress goes
+through the host's firewall/SDP-gated fetcher. This replaces the earlier
+wasmtime/WIT-component idea (owner steer, 2026-09-29).
+
+The dependency on typed-wasm is feature-gated inside `squabble-plugin`, so
+`squabble-core` stays detachable. A *Zig C-ABI shim* in `src/interface/ffi/`
+serves native embedders. For example, an Elixir host such as the hypatia side
+calls the core through snifs rather than Rustler.
+
+=== Distribution: one engine, several storefronts
+
+. *GitHub Action* (`hyperpolymath/cicd-squabbler@<sha>`). This is the
+  personal-account path and needs no hosting.
+. *GitHub App* (the "Squabble!" button). This waits on the open hosting
+  decision. The webhook sits behind the SDP, containerised, with security
+  headers.
+. *boj cartridge* `cicd-squabbler-mcp`. This already exists; it gains the new
+  mode routes.
+. *Claude Code / Cowork plugin.* Skills (`/squabble fight`, `/squabble upstream`,
+  `/squabble apps`, `/squabble retro`) plus an MCP entry pointing at
+  `squabble-app`.
+. *Plugin registry.* Each plugin has an a2ml manifest: id, version, kind,
+  requested capabilities, a SHA-pinned artifact, and an ed25519 or sigstore
+  signature. The registry is a git repo with an index. A plugin is installable
+  only if its signature verifies and every requested capability is granted
+  explicitly.
+
+The `squabble-app` HTTP surface should also be published through
+`unified-hexadeca-api` as the canonical API façade. That needs a read of that
+repo before committing to a shape.
+
+== Forge access: GraphQL first for reads, REST where GraphQL has no equivalent
+
+Checked against GitHub's public schema (`schema.docs.graphql`, 2026-09-29).
+A snapshot is committed under `crates/squabble-forge/graphql/`, and a test
+validates every query against it, so schema drift fails loudly.
+
+[cols="2,1,3"]
+|===
+| Need | API | Schema element
+
+| Workflow files across many repos (chains) | GraphQL | aliased `repository { object(expression:"HEAD:.github/workflows") { … Tree.entries … Blob.text } }`
+| Effective rules for a branch (incl. org rulesets) | GraphQL | `Ref.rules`; full definitions via `Repository.rulesets`; classic via `branchProtectionRules`
+| Is a check required for this PR? | GraphQL | `CheckRun.isRequired(pullRequestNumber:)` / `StatusContext.isRequired`
+| Which app produced a check (app inventory) | GraphQL | `CheckSuite.app`
+| Step conclusions and timings (polarity, critical path) | GraphQL | `CheckRun.steps { name conclusion secondsToCompletion }`
+| Manifest dependencies (chains) | GraphQL | `Repository.dependencyGraphManifests`
+| Ruleset writes (custodian, opt-in) | GraphQL | `create/update/deleteRepositoryRuleset`
+| Actions permissions (allowlist, SHA pinning) | REST | not in GraphQL
+| Code-scanning analyses and alerts | REST | not in GraphQL
+| App installations, SBOM export | REST | —
+|===
+
+Transport is `gh api graphql`, with the same auth as today and no new HTTP
+client. Every query also selects `rateLimit { cost remaining resetAt }` and
+records it. Batch size adapts to the remaining budget, and an exhausted budget
+yields `Unknown` data (fail-closed), never a guess. `fetch.rs` moves to
+`Ref.rules` and `isRequired` later, deliberately, with side-by-side parity
+tests. It is not part of the chains branch.
+
+== Crate and file plan
+
+[cols="1,3"]
+|===
+| `squabble-core` (+) | `posture.rs` (lattice, `PostureDelta`, classifier) · `conditions.rs` (`Condition`, `Grade`, `Verdict`) · `coverage.rs` (cells, `coverage_kept`) · `choreo.rs` (global landing plan, projection, cycle check) · `MissingCause::AwaitingMaintainerApproval`
+| `squabble-fight` (+) | `upstream.rs` · `custodian.rs` · `chains.rs` · `routing.rs` · `retro.rs`; `plan_*` gains a `Mode` parameter; `Report` gains optional `conditions`, `posture_deltas`, `coverage`, and `proposals` sections (`#[serde(default)]`, back-compatible)
+| `squabble-forge` (new) | `Forge` trait; the `gh` implementation lifted out of `fetch.rs` (moved, not rewritten); an octocrab implementation for the App; room for Forgejo/GitLab later (mirror targets)
+| `squabble-apps` (new) | adapter registry, catalogue loader, built-in adapters, `PlanProbe`
+| `squabble-plugin` (new) | typed-wasm-gate loader (wasmi now, wasmtime later), manifest verification, capability grants
+| `spark/` (+) | `Posture_Delta` (no `Weakens` from fight) and `Coverage_Kept`
+| CLI | `squabble upstream · custodian · chains · apps · retro · plugin`
+|===
+
+== Phasing
+
+Each phase is shippable alone and ordered by risk. All of Phase A is
+read-only.
+
+Phase A — read-only value::
+* Lift the `Forge` trait out of `fetch.rs`.
+* `apps` inventory, catalogue, and an *overlap report* (no routing deltas yet).
+* `upstream` with `Mechanical` and `Observed` conditions only.
+* `chains` graph from workflows and pins.
+* `AwaitingMaintainerApproval`.
+
+Phase B — posture and routing::
+* The `posture` lattice and `custodian` diff (propose).
+* The SPARK `Posture_Delta` proof.
+* Routing deltas, with `Coverage_Kept`.
+* Parity templates.
+* Prose `ConditionSource` (`Declared` and `Inferred` grades).
+* Transactional `--apply-rulesets` behind a flag, last.
+
+Phase C — learning and ecosystem::
+* The `EvidenceStore` (LMDB, then VeriSim).
+* `retro` with the `MiniKanrenReasoner`; `HypatiaReasoner` optional.
+* `choreo` projection and tropical critical path.
+* The Idris2 typed-wasm plugin ABI, the typed-wasm-gate loader, and the registry.
+* Packaging as a Claude plugin and a GitHub Action.
+
+== Owner decisions (2026-09-29)
+
+* Plugin boundary: typed-wasm regions, loaded through `typed-wasm-gate`, as
+  soon as practical (see §(4)).
+* `custodian`: propose-only by default, with transactional apply opt-in behind
+  a flag.
+* Stack: the Rust + SPARK engine stays; Idris2 for the plugin ABI; Zig only for
+  the C-ABI shim.
+* First build: the `chains` graph (Phase A, read-only), using both local and
+  GraphQL sources.
+
+== Still open
+
+. Mode names. My reading: `upstream` = my offers to others, `custodian` = my
+  repos' rulesets, `chains` = cross-repo. Is that right?
+. The miniKanren helper: adopt an existing estate repo, or keep it in-crate?

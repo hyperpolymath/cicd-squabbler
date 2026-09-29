@@ -400,13 +400,19 @@ fn parse_workflow(file: &str, text: &str) -> WorkflowInfo {
             }
         }
 
-        if let Some(reuse) = reusable_repo(t) {
+        // Step-level refs are sequence items (`- uses: owner/repo@ref`); job-
+        // level reusable calls are plain keys (`uses: …`). Both must be seen —
+        // missing the `- ` form silently dropped every step action from the
+        // Actions-policy probes (issue #15), the majority of external refs.
+        let u = strip_sequence_marker(t);
+
+        if let Some(reuse) = reusable_repo(u) {
             if !reusable_repos.contains(&reuse) {
                 reusable_repos.push(reuse);
             }
         }
 
-        if let Some(target) = uses_target(t) {
+        if let Some(target) = uses_target(u) {
             if let Some(norm) = normalize_external_use(target) {
                 if !external_uses.contains(&norm) {
                     external_uses.push(norm.clone());
@@ -610,9 +616,16 @@ fn reusable_repo(line: &str) -> Option<String> {
     Some(format!("{owner}/{repo}"))
 }
 
+/// Strip a YAML block-sequence marker (`- `) from a trimmed line so that a
+/// step item `- uses: x` is read like the key `uses: x`. Only one marker is
+/// stripped; anything else is returned unchanged.
+pub(crate) fn strip_sequence_marker(t: &str) -> &str {
+    t.strip_prefix("- ").map(str::trim_start).unwrap_or(t)
+}
+
 /// The raw `uses:` target of a trimmed workflow line, with any trailing
 /// comment cut and quotes removed. `None` for non-`uses:` lines.
-fn uses_target<'a>(t: &'a str) -> Option<&'a str> {
+pub(crate) fn uses_target<'a>(t: &'a str) -> Option<&'a str> {
     let rest = t.strip_prefix("uses:")?.trim();
     let token = rest.split_whitespace().next()?;
     Some(token.trim_matches(['\'', '"']))

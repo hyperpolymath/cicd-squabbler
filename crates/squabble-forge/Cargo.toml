@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+[package]
+name = "squabble-forge"
+description = "Forge access for the squabbler — GitHub GraphQL (via `gh api graphql`) for batched reads, validated against a committed schema snapshot."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+squabble-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# Validates every query document against graphql/github-schema.graphql, so a
+# GitHub schema change fails CI loudly instead of mis-reading silently.
+apollo-compiler = "1"

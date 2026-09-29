@@ -32,6 +32,28 @@ reusable-workflow re-pin — these need the GitHub ruleset API / a target SHA) a
 the GitHub App *webhook* leg (pending the owner's hosting decision). See
 `docs/CHARTER.adoc` for the design and open owner decisions.
 
+== Chains: cross-repo CI dependencies (read-only)
+
+`squabble chains` maps which repos' CI depends on which, through reusable
+workflows and pinned actions. Nothing is written anywhere.
+
+[source,sh]
+----
+squabble chains . ../standards gh:hyperpolymath/typed-wasm --follow 1
+----
+
+* *Blocking* (exit 4): dependency cycles, and dead upstreams. A deleted action
+  repo produces no check run at all, so the board reads green.
+* *Warnings*: diamonds (one repo's CI receives an upstream at two pins, one
+  of them via a reusable workflow), pin skew across repos, and tag/branch
+  pins.
+* It also prints an upstreams-first landing order and the longest chain.
+
+An upstream that was never probed is listed on the frontier, not assumed
+healthy. See `docs/proposals/squabble-modes-and-app-layer.adoc` for where
+this is heading: upstream conformance, custodian rulesets, and the app-aware
+layer.
+
 == Core principle: squabble ≠ bypass
 
 Every "green" the squabbler declares is backed by the gate's *own* required
@@ -52,6 +74,7 @@ check away, or any override are provably *not* paths to green.
 | `crates/squabble-fight`| The shared host brain: a2ml ecosystem-context reader + workflow ground-truth + the fight planner. One planner for the CLI and the App, so they cannot drift.
 | `crates/squabble-cli`  | `squabble` — runs locally or as a CI step. `fetch`, `diagnose`, and `fight` (with `--summon` under the `boj` feature to put expert verdicts on the report, and `--apply` to enact the path-filter self-win by editing the workflow — no commit/push).
 | `crates/squabble-app`  | The loopback HTTP backend (axum, `127.0.0.1:7741`): serves the shared planner to the boj-server `cicd-squabbler-mcp` cartridge. The GitHub App *webhook* leg (trigger button + octocrab) is still to come — no webhook route is registered.
+| `crates/squabble-forge`| Forge access: GitHub GraphQL via `gh api graphql`, batched, validated against a committed schema snapshot. REST stays in `squabble-cli` where GraphQL has no equivalent.
 | `spark/`               | The formal heart. `Gate_Machine` + the proved theorem `green ⇔ (non-empty ∧ all passed)`.
 |===
 
