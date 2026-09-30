@@ -16,6 +16,7 @@
 
 pub mod admission;
 pub mod chains;
+pub mod done;
 pub mod gate;
 pub mod moves;
 pub mod outcome;

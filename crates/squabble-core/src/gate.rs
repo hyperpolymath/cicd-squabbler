@@ -33,6 +33,33 @@ pub enum CheckRun {
     Passed,
 }
 
+impl CheckRun {
+    /// Map GitHub's rollup vocabulary onto a [`CheckRun`].
+    ///
+    /// The rollup is a union: a check run carries `status` + `conclusion`, a
+    /// legacy commit status carries only `state` (pass it as `conclusion`). One
+    /// mapping, shared by every reader — `squabble fetch` and `verify-satisfied`
+    /// must not disagree about what a conclusion means.
+    ///
+    /// A completed run with an unrecognised conclusion (`ACTION_REQUIRED`,
+    /// `STALE`, anything GitHub adds later) is `Failed`, never `Passed`.
+    pub fn from_github(status: Option<&str>, conclusion: Option<&str>) -> Self {
+        match conclusion {
+            Some("SUCCESS") => Self::Passed,
+            Some("SKIPPED") | Some("NEUTRAL") => Self::Skipped,
+            Some("FAILURE")
+            | Some("ERROR")
+            | Some("TIMED_OUT")
+            | Some("CANCELLED")
+            | Some("STARTUP_FAILURE") => Self::Failed,
+            _ => match status {
+                Some("COMPLETED") => Self::Failed,
+                _ => Self::Pending,
+            },
+        }
+    }
+}
+
 /// Why a required context shows [`CheckRun::Missing`].
 ///
 /// `Missing` is the gate's most common stuck state and its least actionable one:
