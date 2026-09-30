@@ -640,6 +640,9 @@ mod tests {
         }
         // The kebab-case wire names the JSON consumers see.
         let json = serde_json::to_string(&Move::SetActionsAllowedAll).unwrap();
-        assert!(json.contains("\"kind\":\"set-actions-allowed-all\""), "{json}");
+        assert!(
+            json.contains("\"kind\":\"set-actions-allowed-all\""),
+            "{json}"
+        );
     }
 }
