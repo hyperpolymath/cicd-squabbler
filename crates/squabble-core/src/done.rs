@@ -117,6 +117,9 @@ pub struct PrFacts {
     pub changes_requested_by: Vec<String>,
     /// `[.[].type]` of the effective rules on the base branch.
     pub rule_types: Vec<String>,
+    /// The PR description, verbatim. Where a red non-required check is
+    /// acknowledged (see [`acknowledged_in`]). Empty when there is none.
+    pub body: String,
 }
 
 /// One unmet condition.
@@ -154,8 +157,8 @@ impl Item {
             }
             Self::CheckFailed { context, producer } => format!(
                 "check `{context}` ({producer}) failed — not required, but a red check is \
-                 still an unread finding; fix it here, or land the fix that cures it on the \
-                 base first (an inherited red is not yet told apart from a new one)"
+                 still a finding; fix it here, or file an issue and add a PR-body line \
+                 naming `{context}` with its link (#N)"
             ),
             Self::UnresolvedThread(t) => format!(
                 "unresolved review thread by {}{}{} — act on it or reply and resolve: {}",
@@ -196,6 +199,31 @@ impl Item {
             ),
         }
     }
+}
+
+/// The body line acknowledging a red non-required check, if any.
+///
+/// A check run has no dismiss action, so the acknowledgement lives in the PR
+/// body: a line naming the context **and** an issue or PR reference (`#N`, or an
+/// `/issues/N` or `/pull/N` URL). That is the owner's 2026-09-15 ruling in
+/// machine-readable form: a new finding becomes an issue, not a blocker, but it
+/// must be looked at. Naming the check without a link does not count.
+pub fn acknowledged_in<'a>(body: &'a str, context: &str) -> Option<&'a str> {
+    body.lines()
+        .map(str::trim)
+        .find(|l| l.contains(context) && has_issue_ref(l))
+}
+
+fn has_issue_ref(line: &str) -> bool {
+    let digit_after = |pat: &str| {
+        line.match_indices(pat).any(|(i, _)| {
+            line[i + pat.len()..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_digit())
+        })
+    };
+    digit_after("#") || digit_after("/issues/") || digit_after("/pull/")
 }
 
 /// The answer.
@@ -320,13 +348,22 @@ pub fn evaluate(facts: &PrFacts, review_apps: &[&str]) -> Verdict {
 
     // 2b. a red check the ruleset does not require is still a finding: "all the
     // checkers have run" means their output was read, not that the ruleset is
-    // satisfied. Required contexts are already named above.
+    // satisfied. Required contexts are already named above. Acknowledged in the
+    // body with an issue link, it is dealt with (the 09-15 ruling) and named in
+    // the notes rather than dropped.
     for o in &facts.observed {
-        if o.run == CheckRun::Failed && !facts.required_contexts.contains(&o.name) {
-            agent.push(Item::CheckFailed {
+        if o.run != CheckRun::Failed || facts.required_contexts.contains(&o.name) {
+            continue;
+        }
+        match acknowledged_in(&facts.body, &o.name) {
+            Some(line) => notes.push(format!(
+                "red check `{}` acknowledged in the PR body: {line}",
+                o.name
+            )),
+            None => agent.push(Item::CheckFailed {
                 context: o.name.clone(),
                 producer: strip_bot(&o.producer).to_string(),
-            });
+            }),
         }
     }
 
@@ -472,6 +509,7 @@ mod tests {
             unresolved_threads: vec![],
             changes_requested_by: vec![],
             rule_types: vec!["required_status_checks".into(), "deletion".into()],
+            body: String::new(),
         }
     }
 
@@ -558,6 +596,48 @@ mod tests {
                 producer: "github-actions".into(),
             }]
         );
+    }
+
+    /// The 09-15 ruling: a finding becomes an issue, not a blocker — but only
+    /// once someone has looked. Naming the check without a link is not looking.
+    #[test]
+    fn a_red_check_named_with_an_issue_link_in_the_body_is_dealt_with() {
+        let red = || {
+            let mut f = done_pr();
+            f.observed
+                .push(obs("rust-ci / clippy", "github-actions", CheckRun::Failed));
+            f
+        };
+        for body in [
+            "- `rust-ci / clippy` — inherited from main, cured by #116",
+            "rust-ci / clippy: https://github.com/o/r/issues/7",
+            "rust-ci / clippy fails upstream, see https://github.com/o/r/pull/116",
+        ] {
+            let mut f = red();
+            f.body = format!("Summary\n\n{body}\n");
+            let v = evaluate(&f, DEFAULT_REVIEW_APPS);
+            assert!(v.is_done(), "{body:?}: {:?}", v.agent_items);
+            assert!(
+                v.notes.iter().any(|n| n.contains("rust-ci / clippy")),
+                "an acknowledged red must stay visible: {:?}",
+                v.notes
+            );
+        }
+        for body in [
+            "",
+            "rust-ci / clippy is inherited from main",
+            "rust-ci / clippy is # not a link",
+            "see #116\nrust-ci / clippy is red",
+            "`rust-ci / fmt` — see #116",
+        ] {
+            let mut f = red();
+            f.body = body.into();
+            assert_eq!(
+                kinds(&evaluate(&f, DEFAULT_REVIEW_APPS).agent_items),
+                ["check_failed"],
+                "{body:?}"
+            );
+        }
     }
 
     /// Same-named runs from two workflows: the verdict must not depend on the

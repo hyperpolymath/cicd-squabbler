@@ -185,6 +185,7 @@ pub fn fetch_pr_done(
                         })
                         .unwrap_or_default(),
                     rule_types: Vec::new(),
+                    body: s(&pr, "/body").unwrap_or_default().to_string(),
                 },
             });
         }
@@ -223,7 +224,7 @@ mod tests {
         json!({ "data": { "repository": { "pullRequest": {
             "state": "OPEN", "isDraft": false, "mergeable": "MERGEABLE",
             "mergeStateStatus": "BLOCKED", "reviewDecision": null,
-            "baseRefName": "main", "headRefOid": "abc",
+            "baseRefName": "main", "headRefOid": "abc", "body": "ack `x` #1",
             "autoMergeRequest": { "mergeMethod": "SQUASH" },
             "latestOpinionatedReviews": { "nodes": [
                 { "state": "CHANGES_REQUESTED", "author": { "login": "coderabbitai" } },
@@ -279,6 +280,7 @@ mod tests {
         );
         assert!(r.facts.unresolved_threads[0].outdated);
         assert_eq!(r.facts.changes_requested_by, ["coderabbitai"]);
+        assert_eq!(r.facts.body, "ack `x` #1");
         assert_eq!(r.facts.auto_merge.as_deref(), Some("SQUASH"));
         assert_eq!(
             p.seen.borrow()[1].0,

@@ -18,6 +18,7 @@ query PrDone($owner: String!, $name: String!, $number: Int!, $ctxAfter: String, 
       reviewDecision
       baseRefName
       headRefOid
+      body
       autoMergeRequest { mergeMethod }
       latestOpinionatedReviews(first: 100) {
         nodes { state author { login } }
