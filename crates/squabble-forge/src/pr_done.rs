@@ -74,7 +74,7 @@ fn thread(node: &Value) -> Option<Thread> {
 }
 
 /// A connection's page: its nodes and, if more follow, the cursor.
-fn page<'a>(conn: &'a Value) -> Result<(&'a [Value], Option<String>), String> {
+fn page(conn: &Value) -> Result<(&[Value], Option<String>), String> {
     let nodes = conn
         .get("nodes")
         .and_then(Value::as_array)
