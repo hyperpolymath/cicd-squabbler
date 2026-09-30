@@ -78,11 +78,12 @@ fn build_gate(required_contexts: &[String], rollup: &[RollupEntry]) -> Gate {
     let checks = required_contexts
         .iter()
         .map(|required| {
-            let run = rollup
-                .iter()
-                .find(|r| &r.name == required)
-                .map(parse_rollup)
-                .unwrap_or(CheckRun::Missing);
+            let run = CheckRun::for_context(
+                rollup
+                    .iter()
+                    .filter(|r| &r.name == required)
+                    .map(parse_rollup),
+            );
             RequiredCheck::new(required.clone(), run)
         })
         .collect();

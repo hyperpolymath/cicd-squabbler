@@ -127,6 +127,7 @@ pub enum Item {
     MergeabilityUnknown,
     Draft,
     RequiredNotSatisfied { context: String, run: CheckRun },
+    CheckFailed { context: String, producer: String },
     UnresolvedThread(Thread),
     ChangesRequested { reviewer: String },
     ReviewBotPending { producer: String, context: String },
@@ -151,6 +152,11 @@ impl Item {
             Self::RequiredNotSatisfied { context, run } => {
                 format!("required check `{context}` is {run:?} — fix it or the ruleset")
             }
+            Self::CheckFailed { context, producer } => format!(
+                "check `{context}` ({producer}) failed — not required, but a red check is \
+                 still an unread finding; fix it here, or land the fix that cures it on the \
+                 base first (an inherited red is not yet told apart from a new one)"
+            ),
             Self::UnresolvedThread(t) => format!(
                 "unresolved review thread by {}{}{} — act on it or reply and resolve: {}",
                 t.author,
@@ -215,19 +221,21 @@ fn strip_bot(login: &str) -> &str {
 }
 
 /// The required half as a [`Gate`], matched on context name (a required check
-/// names a context, not a producer). First match wins, as in `squabble fetch`.
+/// names a context, not a producer). Same-named runs resolve by
+/// [`CheckRun::for_context`], the rule `squabble fetch` uses too.
 pub fn required_gate(facts: &PrFacts) -> Gate {
     Gate::new(
         facts
             .required_contexts
             .iter()
             .map(|c| {
-                let run = facts
-                    .observed
-                    .iter()
-                    .find(|o| &o.name == c)
-                    .map(|o| o.run)
-                    .unwrap_or(CheckRun::Missing);
+                let run = CheckRun::for_context(
+                    facts
+                        .observed
+                        .iter()
+                        .filter(|o| &o.name == c)
+                        .map(|o| o.run),
+                );
                 RequiredCheck::new(c.clone(), run)
             })
             .collect(),
@@ -308,6 +316,18 @@ pub fn evaluate(facts: &PrFacts, review_apps: &[&str]) -> Verdict {
              arming, before any review bot reports"
                 .into(),
         );
+    }
+
+    // 2b. a red check the ruleset does not require is still a finding: "all the
+    // checkers have run" means their output was read, not that the ruleset is
+    // satisfied. Required contexts are already named above.
+    for o in &facts.observed {
+        if o.run == CheckRun::Failed && !facts.required_contexts.contains(&o.name) {
+            agent.push(Item::CheckFailed {
+                context: o.name.clone(),
+                producer: strip_bot(&o.producer).to_string(),
+            });
+        }
     }
 
     // 3. review output read and acted on
@@ -518,6 +538,47 @@ mod tests {
             ["required_not_satisfied", "required_not_satisfied"]
         );
         assert_eq!(v.evidence_free, ["scan"]);
+    }
+
+    /// Measured on cicd-squabbler#114: `rust-ci / Cargo check + clippy + fmt`
+    /// was red and not required, and the verdict read DONE. A red checker's
+    /// output has not been dealt with just because the ruleset ignores it.
+    #[test]
+    fn a_failed_check_that_is_not_required_is_still_agent_work() {
+        let mut f = done_pr();
+        f.observed
+            .push(obs("rust-ci / clippy", "github-actions", CheckRun::Failed));
+        f.observed
+            .push(obs("optional-scan", "github-actions", CheckRun::Skipped));
+        let v = evaluate(&f, DEFAULT_REVIEW_APPS);
+        assert_eq!(
+            v.agent_items,
+            [Item::CheckFailed {
+                context: "rust-ci / clippy".into(),
+                producer: "github-actions".into(),
+            }]
+        );
+    }
+
+    /// Same-named runs from two workflows: the verdict must not depend on the
+    /// order the rollup happens to list them in.
+    #[test]
+    fn a_passing_twin_cannot_mask_a_failing_required_check() {
+        for failed_first in [true, false] {
+            let mut f = done_pr();
+            f.observed[0].run = CheckRun::Passed;
+            let red = obs("build", "github-actions", CheckRun::Failed);
+            if failed_first {
+                f.observed.insert(0, red);
+            } else {
+                f.observed.push(red);
+            }
+            assert_eq!(
+                kinds(&evaluate(&f, DEFAULT_REVIEW_APPS).agent_items),
+                ["required_not_satisfied"],
+                "failed_first={failed_first}"
+            );
+        }
     }
 
     #[test]
