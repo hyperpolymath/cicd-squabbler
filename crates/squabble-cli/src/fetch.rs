@@ -591,16 +591,6 @@ pub fn run(slug: &str, pr: &str) -> Result<Gate, FetchError> {
     run_bundle(slug, pr).map(|b| b.gate)
 }
 
-/// As [`run`], but also returns the checks that concluded **success**, with the
-/// job id needed to inspect their steps.
-///
-/// The green set is what [`squabble_core::polarity`] classifies. `fight` only
-/// ever looks at reds, so a gate that could not run reports green and is never
-/// inspected — that is the whole fake-green class.
-pub fn run_with_greens(slug: &str, pr: &str) -> Result<(Gate, Vec<GreenCheck>), FetchError> {
-    run_bundle(slug, pr).map(|b| (b.gate, b.greens))
-}
-
 /// The full live fetch: gate, inspectable greens, and the Actions-policy
 /// why-probe inputs (issue #15) for any required context that refused to
 /// start. `fight` consumes this; the narrower entry points project from it.
