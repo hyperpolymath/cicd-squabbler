@@ -343,7 +343,10 @@ fn contexts_or_no_gate(
 /// refusal means the repository's own Actions posture, not the workflow's
 /// content, is the first thing to check; matching is by exact context name,
 /// the same key [`build_gate`] uses.
-fn startup_failures_from_rollup(required_contexts: &[String], rollup: &[RollupEntry]) -> Vec<String> {
+fn startup_failures_from_rollup(
+    required_contexts: &[String],
+    rollup: &[RollupEntry],
+) -> Vec<String> {
     required_contexts
         .iter()
         .filter(|req| {
@@ -400,8 +403,9 @@ fn parse_policy(perms_json: &str, selected_json: Option<&str>) -> Result<Actions
         .map_err(|e| format!("could not parse actions/permissions response: {e}"))?;
     let allowed_actions = perms.allowed_actions.unwrap_or_default();
     let (github_owned_allowed, patterns_allowed) = if allowed_actions == "selected" {
-        let sel_json = selected_json
-            .ok_or_else(|| "allowed_actions=selected but no selected-actions payload".to_string())?;
+        let sel_json = selected_json.ok_or_else(|| {
+            "allowed_actions=selected but no selected-actions payload".to_string()
+        })?;
         let sel: SelectedActionsResponse = serde_json::from_str(sel_json)
             .map_err(|e| format!("could not parse selected-actions response: {e}"))?;
         (sel.github_owned_allowed, sel.patterns_allowed)
@@ -584,16 +588,6 @@ pub fn run(slug: &str, pr: &str) -> Result<Gate, FetchError> {
     run_bundle(slug, pr).map(|b| b.gate)
 }
 
-/// As [`run`], but also returns the checks that concluded **success**, with the
-/// job id needed to inspect their steps.
-///
-/// The green set is what [`squabble_core::polarity`] classifies. `fight` only
-/// ever looks at reds, so a gate that could not run reports green and is never
-/// inspected — that is the whole fake-green class.
-pub fn run_with_greens(slug: &str, pr: &str) -> Result<(Gate, Vec<GreenCheck>), FetchError> {
-    run_bundle(slug, pr).map(|b| (b.gate, b.greens))
-}
-
 /// The full live fetch: gate, inspectable greens, and the Actions-policy
 /// why-probe inputs (issue #15) for any required context that refused to
 /// start. `fight` consumes this; the narrower entry points project from it.
@@ -630,8 +624,7 @@ pub fn run_bundle(slug: &str, pr: &str) -> Result<FetchBundle, FetchError> {
 
     let protection = probe_classic_protection(slug, &pr_view.base_ref_name)?;
     let required_contexts = required_contexts_from_apis(&rules_json, &protection)?;
-    let required_contexts =
-        contexts_or_no_gate(required_contexts, slug, &pr_view.base_ref_name)?;
+    let required_contexts = contexts_or_no_gate(required_contexts, slug, &pr_view.base_ref_name)?;
 
     let startup_failed =
         startup_failures_from_rollup(&required_contexts, &pr_view.status_check_rollup);
@@ -784,9 +777,10 @@ mod tests {
         // exits 0 on, never NoGate/3) AND as the exact context list, because
         // asserting merely "not 3" would not close the defect.
         let gated = contexts_or_no_gate(
-            required_contexts_from_apis("[]", &ProtectionProbe::Protected(
-                CLASSIC_TWO_CONTEXTS.to_string(),
-            ))
+            required_contexts_from_apis(
+                "[]",
+                &ProtectionProbe::Protected(CLASSIC_TWO_CONTEXTS.to_string()),
+            )
             .expect("classic protection must parse"),
             "o/r",
             "main",
@@ -885,15 +879,18 @@ mod tests {
     #[test]
     fn classic_checks_shape_is_read_without_contexts() {
         // Some payloads carry only the newer `checks` objects.
-        let json = r#"{"required_status_checks": {"strict": false, "checks": [{"context": "gate"}]}}"#;
+        let json =
+            r#"{"required_status_checks": {"strict": false, "checks": [{"context": "gate"}]}}"#;
         assert_eq!(
             parse_classic_contexts(json).expect("parse"),
             vec!["gate".to_string()]
         );
         // And protection with no status-check requirement at all yields none.
-        assert!(parse_classic_contexts(r#"{"enforce_admins": {"enabled": true}}"#)
-            .expect("parse")
-            .is_empty());
+        assert!(
+            parse_classic_contexts(r#"{"enforce_admins": {"enabled": true}}"#)
+                .expect("parse")
+                .is_empty()
+        );
     }
 
     #[test]

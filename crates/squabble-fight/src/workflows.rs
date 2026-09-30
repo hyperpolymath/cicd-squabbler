@@ -625,7 +625,7 @@ pub(crate) fn strip_sequence_marker(t: &str) -> &str {
 
 /// The raw `uses:` target of a trimmed workflow line, with any trailing
 /// comment cut and quotes removed. `None` for non-`uses:` lines.
-pub(crate) fn uses_target<'a>(t: &'a str) -> Option<&'a str> {
+pub(crate) fn uses_target(t: &str) -> Option<&str> {
     let rest = t.strip_prefix("uses:")?.trim();
     let token = rest.split_whitespace().next()?;
     Some(token.trim_matches(['\'', '"']))
@@ -1068,7 +1068,10 @@ jobs:
             vec!["hyperpolymath/standards@8f2ee50841e216cd8c192eeb68953118190f105c".to_string()]
         );
         assert!(w.tag_pinned_uses.is_empty());
-        assert_eq!(w.reusable_repos, vec!["hyperpolymath/standards".to_string()]);
+        assert_eq!(
+            w.reusable_repos,
+            vec!["hyperpolymath/standards".to_string()]
+        );
     }
 
     #[test]
@@ -1083,7 +1086,10 @@ jobs:
                 "r-lib/*".into(),
             ],
         };
-        assert!(p.covers("actions/checkout"), "github-owned under github_owned_allowed");
+        assert!(
+            p.covers("actions/checkout"),
+            "github-owned under github_owned_allowed"
+        );
         assert!(p.covers("github/codeql-action"));
         assert!(p.covers("hyperpolymath/standards"), "owner-wide");
         assert!(p.covers("oven-sh/setup-bun"), "exact owner/repo");
@@ -1101,7 +1107,9 @@ jobs:
             allowed_actions: "all".into(),
             ..p
         };
-        assert!(all.first_uncovered(&["step-security/harden-runner@v2".to_string()]).is_none());
+        assert!(all
+            .first_uncovered(&["step-security/harden-runner@v2".to_string()])
+            .is_none());
     }
 
     #[test]
