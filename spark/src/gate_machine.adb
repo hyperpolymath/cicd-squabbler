@@ -15,7 +15,7 @@ is
       end if;
 
       for I in C'Range loop
-         if C (I) /= Passed then
+         if not Satisfies (C (I)) then
             All_Pass := False;
          end if;
          if C (I) = Failed then
@@ -23,7 +23,7 @@ is
          end if;
 
          pragma Loop_Invariant
-           (All_Pass = (for all J in C'First .. I => C (J) = Passed));
+           (All_Pass = (for all J in C'First .. I => Satisfies (C (J))));
          pragma Loop_Invariant
            (Saw_Failure = (for some J in C'First .. I => C (J) = Failed));
       end loop;

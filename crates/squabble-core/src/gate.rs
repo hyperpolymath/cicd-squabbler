@@ -3,7 +3,9 @@
 //! The gate model — the formal heart of `squabble ≠ bypass`, expressed in the
 //! Rust type system. The SPARK sibling (`spark/`) proves the same invariant
 //! mechanically: **the only transition into `Green` is a required check that
-//! actually ran and passed.**
+//! actually ran and was satisfied** — passed, or concluded skipped/neutral,
+//! which GitHub's ruleset itself accepts. The latter is modelled as
+//! [`CheckRun::Skipped`], never folded into `Passed`, so it stays visible.
 //!
 //! There is deliberately no constructor, method, or transition on [`Gate`] that
 //! reaches [`GateState::Green`] by removing a required context, renaming a check
@@ -22,7 +24,12 @@ pub enum CheckRun {
     Pending,
     /// The check ran to completion and failed.
     Failed,
-    /// The check ran to completion and passed. The *only* green-bearing state.
+    /// The run concluded `SKIPPED` or `NEUTRAL`. GitHub counts this as meeting the
+    /// requirement, so the gate does too — but it carries **no evidence**. It is
+    /// deliberately not `Passed`: a skipped required scan must never read as a
+    /// real green. [`Gate::evidence_free`] lists them.
+    Skipped,
+    /// The check ran to completion and passed. The only *evidence-bearing* green.
     Passed,
 }
 
@@ -93,7 +100,7 @@ impl MissingCause {
 /// A context the branch ruleset requires before a PR may land, paired with the
 /// realised run that is meant to satisfy it. A requirement is satisfied **iff**
 /// a run is bound to it (correct name, on the head commit) and that run
-/// [`CheckRun::Passed`].
+/// [`CheckRun::Passed`] or was [`CheckRun::Skipped`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequiredCheck {
     /// The exact context name the ruleset requires (e.g. `scan / gitleaks`).
@@ -115,9 +122,6 @@ impl RequiredCheck {
         }
     }
 
-    /// A requirement is satisfied only by a bound run that passed. This is the
-    /// single predicate the whole engine trusts; everything else is plumbing.
-    #[inline]
     /// Attach a diagnosis for a missing context.
     pub fn with_cause(mut self, cause: MissingCause) -> Self {
         self.missing_cause = Some(cause);
@@ -132,8 +136,12 @@ impl RequiredCheck {
         }
     }
 
+    /// A requirement is satisfied only by a bound run that passed or was skipped
+    /// (GitHub's own rule). This is the single predicate the whole engine
+    /// trusts; everything else is plumbing.
+    #[inline]
     pub fn is_satisfied(&self) -> bool {
-        matches!(self.run, CheckRun::Passed)
+        matches!(self.run, CheckRun::Passed | CheckRun::Skipped)
     }
 }
 
@@ -145,7 +153,8 @@ pub enum GateState {
     Blocked,
     /// At least one required check ran and failed.
     Red,
-    /// Every required check ran and passed. Landing is legitimate.
+    /// Every required check is satisfied (passed, or skipped/neutral — see
+    /// [`Gate::evidence_free`]). Landing is legitimate by the ruleset.
     Green,
 }
 
@@ -163,7 +172,7 @@ impl Gate {
     /// Compute the gate state from the realised runs. This function is the Rust
     /// mirror of the SPARK `Evaluate` and carries the load-bearing invariant:
     ///
-    /// * `Green`  ⇔ every required check `Passed`.
+    /// * `Green`  ⇔ every required check `Passed` or `Skipped` (non-empty set).
     /// * `Red`    ⇔ some required check `Failed` (and none missing/pending).
     /// * `Blocked` otherwise (something missing or pending).
     ///
@@ -187,6 +196,15 @@ impl Gate {
             return GateState::Red;
         }
         GateState::Blocked
+    }
+
+    /// Satisfied requirements that carry no evidence ([`CheckRun::Skipped`]).
+    /// A `Green` gate whose checks all appear here is green by GitHub's rule
+    /// but proved nothing — reports must surface this list, not hide it.
+    pub fn evidence_free(&self) -> impl Iterator<Item = &RequiredCheck> {
+        self.checks
+            .iter()
+            .filter(|c| matches!(c.run, CheckRun::Skipped))
     }
 
     /// The named requirements that are not yet satisfied — the squabbler's work
@@ -213,6 +231,26 @@ mod tests {
     #[test]
     fn a_failure_is_red() {
         let g = Gate::new(vec![ck("a", CheckRun::Passed), ck("b", CheckRun::Failed)]);
+        assert_eq!(g.evaluate(), GateState::Red);
+    }
+
+    #[test]
+    fn a_skipped_check_satisfies_but_is_listed_as_evidence_free() {
+        // GitHub merges over a SKIPPED/NEUTRAL required check, so the gate must
+        // not call it Red — but it proved nothing, so it must stay nameable.
+        let g = Gate::new(vec![ck("a", CheckRun::Passed), ck("b", CheckRun::Skipped)]);
+        assert_eq!(g.evaluate(), GateState::Green);
+        let free: Vec<_> = g
+            .evidence_free()
+            .map(|c| c.required_context.as_str())
+            .collect();
+        assert_eq!(free, ["b"]);
+        assert_eq!(g.unsatisfied().count(), 0);
+    }
+
+    #[test]
+    fn a_skip_does_not_mask_a_failure() {
+        let g = Gate::new(vec![ck("a", CheckRun::Skipped), ck("b", CheckRun::Failed)]);
         assert_eq!(g.evaluate(), GateState::Red);
     }
 

@@ -14,10 +14,17 @@
 package Gate_Machine
   with SPARK_Mode => On
 is
-   --  The realised result of one required check on the head commit. `Passed`
-   --  is the only green-bearing value; `Missing` models a required context with
-   --  no run bound to it (the v0.1 deadlock class).
-   type Check_Run is (Missing, Pending, Failed, Passed);
+   --  The realised result of one required check on the head commit. `Missing`
+   --  models a required context with no run bound to it (the v0.1 deadlock
+   --  class). `Skipped` is a run that concluded SKIPPED or NEUTRAL: GitHub
+   --  counts it as satisfying the requirement, so the gate must too, but it
+   --  carries NO evidence — it is kept distinct from `Passed` so that a
+   --  skipped scan can never be reported as a real green.
+   type Check_Run is (Missing, Pending, Failed, Skipped, Passed);
+
+   --  The ruleset's own notion of a met requirement.
+   function Satisfies (R : Check_Run) return Boolean is
+     (R = Passed or else R = Skipped);
 
    --  Where the gate sits. Green is COMPUTED from the runs, never asserted.
    type Gate_State is (Blocked, Red, Green);
@@ -28,13 +35,14 @@ is
 
    --  Evaluate the gate. The postcondition is the load-bearing theorem:
    --  the result is Green IFF the required set is non-empty AND every required
-   --  check passed. Proving this body against this contract is the machine
-   --  check that a squabble can only reach green by satisfying the gate.
+   --  check is satisfied (Passed or Skipped). Proving this body against this
+   --  contract is the machine check that a squabble can only reach green by
+   --  satisfying the gate.
    function Evaluate (C : Check_Array) return Gate_State
      with
        Post =>
          (Evaluate'Result = Green)
            = (C'Length > 0
-              and then (for all I in C'Range => C (I) = Passed));
+              and then (for all I in C'Range => Satisfies (C (I))));
 
 end Gate_Machine;

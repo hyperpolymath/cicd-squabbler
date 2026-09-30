@@ -15,7 +15,9 @@
 //!
 //! A required context with no matching rollup entry is [`CheckRun::Missing`];
 //! matching-but-incomplete is [`CheckRun::Pending`]; a `SUCCESS` conclusion is
-//! [`CheckRun::Passed`]; anything else that completed is [`CheckRun::Failed`].
+//! [`CheckRun::Passed`]; `SKIPPED`/`NEUTRAL` is [`CheckRun::Skipped`] (satisfies
+//! the ruleset, carries no evidence); anything else that completed is
+//! [`CheckRun::Failed`].
 
 use serde::Deserialize;
 use squabble_core::gate::{CheckRun, Gate, RequiredCheck};
@@ -68,6 +70,7 @@ struct RulesetContext {
 fn parse_rollup(entry: &RollupEntry) -> CheckRun {
     match entry.conclusion.as_deref() {
         Some("SUCCESS") => CheckRun::Passed,
+        Some("SKIPPED") | Some("NEUTRAL") => CheckRun::Skipped,
         Some("FAILURE")
         | Some("ERROR")
         | Some("TIMED_OUT")
@@ -343,7 +346,10 @@ fn contexts_or_no_gate(
 /// refusal means the repository's own Actions posture, not the workflow's
 /// content, is the first thing to check; matching is by exact context name,
 /// the same key [`build_gate`] uses.
-fn startup_failures_from_rollup(required_contexts: &[String], rollup: &[RollupEntry]) -> Vec<String> {
+fn startup_failures_from_rollup(
+    required_contexts: &[String],
+    rollup: &[RollupEntry],
+) -> Vec<String> {
     required_contexts
         .iter()
         .filter(|req| {
@@ -400,8 +406,9 @@ fn parse_policy(perms_json: &str, selected_json: Option<&str>) -> Result<Actions
         .map_err(|e| format!("could not parse actions/permissions response: {e}"))?;
     let allowed_actions = perms.allowed_actions.unwrap_or_default();
     let (github_owned_allowed, patterns_allowed) = if allowed_actions == "selected" {
-        let sel_json = selected_json
-            .ok_or_else(|| "allowed_actions=selected but no selected-actions payload".to_string())?;
+        let sel_json = selected_json.ok_or_else(|| {
+            "allowed_actions=selected but no selected-actions payload".to_string()
+        })?;
         let sel: SelectedActionsResponse = serde_json::from_str(sel_json)
             .map_err(|e| format!("could not parse selected-actions response: {e}"))?;
         (sel.github_owned_allowed, sel.patterns_allowed)
@@ -630,8 +637,7 @@ pub fn run_bundle(slug: &str, pr: &str) -> Result<FetchBundle, FetchError> {
 
     let protection = probe_classic_protection(slug, &pr_view.base_ref_name)?;
     let required_contexts = required_contexts_from_apis(&rules_json, &protection)?;
-    let required_contexts =
-        contexts_or_no_gate(required_contexts, slug, &pr_view.base_ref_name)?;
+    let required_contexts = contexts_or_no_gate(required_contexts, slug, &pr_view.base_ref_name)?;
 
     let startup_failed =
         startup_failures_from_rollup(&required_contexts, &pr_view.status_check_rollup);
@@ -784,9 +790,10 @@ mod tests {
         // exits 0 on, never NoGate/3) AND as the exact context list, because
         // asserting merely "not 3" would not close the defect.
         let gated = contexts_or_no_gate(
-            required_contexts_from_apis("[]", &ProtectionProbe::Protected(
-                CLASSIC_TWO_CONTEXTS.to_string(),
-            ))
+            required_contexts_from_apis(
+                "[]",
+                &ProtectionProbe::Protected(CLASSIC_TWO_CONTEXTS.to_string()),
+            )
             .expect("classic protection must parse"),
             "o/r",
             "main",
@@ -885,15 +892,18 @@ mod tests {
     #[test]
     fn classic_checks_shape_is_read_without_contexts() {
         // Some payloads carry only the newer `checks` objects.
-        let json = r#"{"required_status_checks": {"strict": false, "checks": [{"context": "gate"}]}}"#;
+        let json =
+            r#"{"required_status_checks": {"strict": false, "checks": [{"context": "gate"}]}}"#;
         assert_eq!(
             parse_classic_contexts(json).expect("parse"),
             vec!["gate".to_string()]
         );
         // And protection with no status-check requirement at all yields none.
-        assert!(parse_classic_contexts(r#"{"enforce_admins": {"enabled": true}}"#)
-            .expect("parse")
-            .is_empty());
+        assert!(
+            parse_classic_contexts(r#"{"enforce_admins": {"enabled": true}}"#)
+                .expect("parse")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -948,6 +958,20 @@ mod tests {
             parse_rollup(&entry("x", Some("COMPLETED"), Some("FAILURE"))),
             CheckRun::Failed
         );
+    }
+
+    #[test]
+    fn skipped_and_neutral_map_to_skipped_not_failed() {
+        // Both COMPLETED with a conclusion GitHub accepts for a required check;
+        // before the Skipped variant they fell through to Failed and the gate
+        // read Red on PRs GitHub would merge.
+        for c in ["SKIPPED", "NEUTRAL"] {
+            assert_eq!(
+                parse_rollup(&entry("x", Some("COMPLETED"), Some(c))),
+                CheckRun::Skipped,
+                "{c}"
+            );
+        }
     }
 
     #[test]
