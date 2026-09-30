@@ -774,4 +774,34 @@ mod tests {
             ["unresolved_thread"]
         );
     }
+
+    /// `verify-satisfied` skips the base-gate REST read for a PR that is no
+    /// longer open. That is sound only while the base gate cannot move a closed
+    /// or merged verdict's agent items — pin it, with a gate that would fail an
+    /// open PR three ways over.
+    #[test]
+    fn the_base_gate_never_decides_a_closed_or_merged_verdict() {
+        for state in [PrState::Merged, PrState::Closed] {
+            let with_gate = {
+                let mut f = done_pr();
+                f.state = state;
+                f.auto_merge = None;
+                f.required_contexts = vec!["build".into(), "absent".into()];
+                f.observed
+                    .push(obs("build", "github-actions", CheckRun::Failed));
+                f.rule_types.push("required_deployments".into());
+                f
+            };
+            let without_gate = PrFacts {
+                required_contexts: vec![],
+                rule_types: vec![],
+                ..with_gate.clone()
+            };
+            let a = evaluate(&with_gate, DEFAULT_REVIEW_APPS);
+            let b = evaluate(&without_gate, DEFAULT_REVIEW_APPS);
+            assert!(a.is_done(), "{state:?}: {:?}", kinds(&a.agent_items));
+            assert_eq!(kinds(&a.agent_items), kinds(&b.agent_items));
+            assert_eq!(a.held_by_human.len(), b.held_by_human.len());
+        }
+    }
 }

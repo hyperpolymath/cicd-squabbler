@@ -10,7 +10,7 @@
 
 use crate::fetch;
 use serde::Serialize;
-use squabble_core::done::{evaluate, Verdict, DEFAULT_REVIEW_APPS};
+use squabble_core::done::{evaluate, PrState, Verdict, DEFAULT_REVIEW_APPS};
 use squabble_forge::pr_done::fetch_pr_done;
 use squabble_forge::GhTransport;
 use std::process::ExitCode;
@@ -55,14 +55,21 @@ pub fn run(args: &[String]) -> ExitCode {
         }
     };
     let mut facts = read.facts;
-    match fetch::base_gate(slug, &read.base_ref) {
-        Ok((contexts, rule_types)) => {
-            facts.required_contexts = contexts;
-            facts.rule_types = rule_types;
-        }
-        Err(e) => {
-            eprintln!("squabble verify-satisfied: {e}");
-            return ExitCode::from(fetch::FetchError::FAILED_EXIT);
+    // The base gate only bears on a PR that can still merge: for a merged or
+    // closed PR it feeds nothing but the evidence-free listing, never an agent
+    // item (pinned by `the_base_gate_never_decides_a_closed_or_merged_verdict`).
+    // Skipping the REST call there keeps the commonest done-claim ("landed X")
+    // off the rate limit this PAT shares with every other session.
+    if facts.state == PrState::Open {
+        match fetch::base_gate(slug, &read.base_ref) {
+            Ok((contexts, rule_types)) => {
+                facts.required_contexts = contexts;
+                facts.rule_types = rule_types;
+            }
+            Err(e) => {
+                eprintln!("squabble verify-satisfied: {e}");
+                return ExitCode::from(fetch::FetchError::FAILED_EXIT);
+            }
         }
     }
 
