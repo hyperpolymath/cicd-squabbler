@@ -65,8 +65,13 @@ struct RulesetContext {
     context: String,
 }
 
-/// Parse a `gh pr view --json baseRefName,statusCheckRollup` payload into the
-/// realised-run half of a [`Gate`]. Pure — no IO, fully testable on fixtures.
+/// Classify one entry from `gh pr view`'s `statusCheckRollup`.
+///
+/// Recognised conclusions take precedence over status: `SUCCESS` yields
+/// [`CheckRun::Passed`], `SKIPPED` or `NEUTRAL` yields [`CheckRun::Skipped`],
+/// and `FAILURE`, `ERROR`, `TIMED_OUT`, `CANCELLED` or `STARTUP_FAILURE` yields
+/// [`CheckRun::Failed`]. With an absent or unrecognised conclusion, `COMPLETED`
+/// status yields [`CheckRun::Failed`]; any other status yields [`CheckRun::Pending`].
 fn parse_rollup(entry: &RollupEntry) -> CheckRun {
     match entry.conclusion.as_deref() {
         Some("SUCCESS") => CheckRun::Passed,

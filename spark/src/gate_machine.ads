@@ -38,6 +38,8 @@ is
    --  check is satisfied (Passed or Skipped). Proving this body against this
    --  contract is the machine check that a squabble can only reach green by
    --  satisfying the gate.
+   --  Any Failed check yields Red, even if others are Missing or Pending.
+   --  Otherwise, an empty set or any Missing or Pending check yields Blocked.
    function Evaluate (C : Check_Array) return Gate_State
      with
        Post =>
