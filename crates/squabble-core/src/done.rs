@@ -183,7 +183,7 @@ impl Item {
                  (mergeStateStatus={merge_state}) — arm it with squash"
             ),
             Self::WrongMergeMethod { method } => {
-                format!("automerge is armed with {method} — re-arm with SQUASH")
+                format!("automerge is armed with {method} — re-arm with SQUASH (or MERGE for a proof PR)")
             }
             Self::BranchBehind => "branch is behind its base — update it".into(),
             Self::MergeQueue => "base branch uses a merge queue — verify-satisfied cannot \
@@ -439,10 +439,12 @@ pub fn evaluate(facts: &PrFacts, review_apps: &[&str]) -> Verdict {
         });
     }
 
-    // 5 + 6. automerge armed where GitHub allows it, and with squash
+    // 5 + 6. automerge armed where GitHub allows it, never with rebase: rebase
+    // replays commits unsigned. A merge commit stays allowed for proof PRs
+    // (owner ruling 2026-09-30), so only REBASE is the wrong method.
     if !queue {
         match facts.auto_merge.as_deref() {
-            Some("SQUASH") => {}
+            Some("SQUASH" | "MERGE") => {}
             Some(m) => agent.push(Item::WrongMergeMethod {
                 method: m.to_string(),
             }),
@@ -685,13 +687,15 @@ mod tests {
     }
 
     #[test]
-    fn a_non_squash_automerge_is_agent_work() {
+    fn a_rebase_automerge_is_agent_work_but_a_merge_commit_is_not() {
         let mut f = done_pr();
         f.auto_merge = Some("REBASE".into());
         assert_eq!(
             kinds(&evaluate(&f, DEFAULT_REVIEW_APPS).agent_items),
             ["wrong_merge_method"]
         );
+        f.auto_merge = Some("MERGE".into());
+        assert!(evaluate(&f, DEFAULT_REVIEW_APPS).agent_items.is_empty());
     }
 
     #[test]
