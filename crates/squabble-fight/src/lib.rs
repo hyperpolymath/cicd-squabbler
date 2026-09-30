@@ -700,10 +700,7 @@ mod policy_fixture_tests {
     fn the_offline_fixture_diagnoses_to_the_new_moves() {
         let gate = fixture_gate();
         assert_eq!(gate.checks.len(), 2, "fixture drifted — keep facts in step");
-        assert!(gate
-            .checks
-            .iter()
-            .all(|c| c.run == CheckRun::Failed));
+        assert!(gate.checks.iter().all(|c| c.run == CheckRun::Failed));
 
         // The live-fetch inputs the fixture cannot carry: which contexts the
         // rollup showed STARTUP_FAILURE for, and the posture the why-probe
@@ -792,10 +789,12 @@ mod policy_fixture_tests {
             .escalations
             .iter()
             .any(|e| e.group == ExpertGroup::Security));
-        assert!(!report
-            .moves_attempted
-            .iter()
-            .any(|m| matches!(m, Move::SetActionsAllowedAll | Move::PinWorkflowActions { .. } | Move::ReconcileActionsPolicy { .. })));
+        assert!(!report.moves_attempted.iter().any(|m| matches!(
+            m,
+            Move::SetActionsAllowedAll
+                | Move::PinWorkflowActions { .. }
+                | Move::ReconcileActionsPolicy { .. }
+        )));
     }
 
     #[test]
