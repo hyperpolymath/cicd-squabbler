@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# One page of an owner's non-archived repositories, with each one's open-PR
+# total. `squabble board` pages through this to build its denominator (repos
+# enumerated, open PRs reported) before reading any PR in detail.
+# ownerAffiliations is pinned to OWNER: the default also lists collaborator
+# repos belonging to someone else.
+query EstateRepos($login: String!, $after: String) {
+  rateLimit { cost remaining resetAt }
+  repositoryOwner(login: $login) {
+    repositories(first: 100, after: $after, isArchived: false, ownerAffiliations: [OWNER]) {
+      totalCount
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        nameWithOwner
+        pullRequests(states: [OPEN]) { totalCount }
+      }
+    }
+  }
+}

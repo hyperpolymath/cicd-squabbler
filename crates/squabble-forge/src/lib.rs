@@ -28,6 +28,9 @@ use squabble_core::chains::{RepoId, RepoSnapshot, ScanStatus, SourceCost, Workfl
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+pub mod board;
+pub mod inbox;
+
 /// The per-repo fragment, aliased once per repo in [`chains_query`].
 pub const WORKFLOW_TREE: &str = include_str!("../graphql/workflow_tree.graphql");
 

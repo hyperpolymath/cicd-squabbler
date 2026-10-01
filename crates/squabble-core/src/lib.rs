@@ -15,9 +15,11 @@
 //! detachability is the whole point.
 
 pub mod admission;
+pub mod board;
 pub mod chains;
 pub mod done;
 pub mod gate;
+pub mod inbox;
 pub mod moves;
 pub mod outcome;
 pub mod polarity;
