@@ -18,6 +18,9 @@
 //! - `2` — a genuine failure: bad usage, `gh` failed, unparseable input.
 //! - `4` — **blocking chain finding** (`squabble chains`): a dependency cycle
 //!   or a dead upstream. Like `3`, a reportable finding, not a tool failure.
+//! - `6` — **incomplete board** (`squabble board`): rendered and published, but
+//!   a repo was unreadable or had more open PRs than one page; the gap is
+//!   stated at the top of the board.
 //! - `3` — **no gate**: the PR's base branch carries no `required_status_checks`
 //!   ruleset rule, so there is nothing to triage.
 //!
@@ -29,11 +32,13 @@
 //! Note `3` says nothing about *classic* branch protection, which lives behind
 //! a different endpoint and is invisible to the rules API this binary queries.
 
+mod board;
 #[cfg(feature = "boj")]
 mod boj;
 mod chains;
 mod fetch;
 mod fight;
+mod inbox;
 
 use squabble_core::{diagnose, gate::Gate};
 use std::process::ExitCode;
@@ -57,6 +62,8 @@ fn main() -> ExitCode {
         },
         Some("fight") => fight::run(&args[2..]),
         Some("chains") => chains::run(&args[2..]),
+        Some("board") => board::run(&args[2..]),
+        Some("inbox-sweep") => inbox::run(&args[2..]),
         Some("--version") | Some("-V") => {
             println!("squabble {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -71,12 +78,16 @@ fn main() -> ExitCode {
                  squabble diagnose <gate.json>\n  \
                  squabble {}\n  \
                  squabble {}\n  \
+                 squabble {}\n  \
+                 squabble {}\n  \
                  squabble --version\n\n\
                  EXIT CODES:\n  \
-                 0 ok · 2 failure · 3 no `required_status_checks` rule on the base branch · 4 chains: blocking finding\n",
+                 0 ok · 2 failure · 3 no `required_status_checks` rule on the base branch · 4 chains: blocking finding · 6 board or inbox-sweep: incomplete\n",
                 env!("CARGO_PKG_VERSION"),
                 fight::USAGE.trim_start_matches("usage: squabble "),
-                chains::USAGE.trim_start_matches("usage: squabble ")
+                chains::USAGE.trim_start_matches("usage: squabble "),
+                board::USAGE.trim_start_matches("usage: squabble "),
+                inbox::USAGE.trim_start_matches("usage: squabble ")
             );
             ExitCode::from(2)
         }
