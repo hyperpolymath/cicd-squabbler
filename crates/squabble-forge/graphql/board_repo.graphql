@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# One repository's merge gate and open pull requests, for `squabble board`.
+# `board_query` in src/board.rs aliases this fragment once per repo.
+#
+# The gate is read from BOTH sources GitHub enforces: `rules` (rulesets, the
+# effective set for the default branch) and `branchProtectionRule` (classic
+# protection), because `rules` does not report classic protection.
+fragment BoardRepo on Repository {
+  nameWithOwner
+  defaultBranchRef {
+    name
+    rules(first: 100) {
+      nodes {
+        type
+        parameters {
+          ... on RequiredStatusChecksParameters {
+            requiredStatusChecks { context }
+          }
+          ... on PullRequestParameters {
+            requiredApprovingReviewCount
+          }
+        }
+      }
+    }
+    branchProtectionRule {
+      requiresStatusChecks
+      requiredStatusCheckContexts
+      requiresApprovingReviews
+      requiredApprovingReviewCount
+    }
+  }
+  pullRequests(states: [OPEN], first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) {
+    totalCount
+    nodes {
+      number
+      title
+      url
+      isDraft
+      mergeable
+      mergeStateStatus
+      reviewDecision
+      updatedAt
+      headRefName
+      author { login }
+      autoMergeRequest { enabledAt }
+      commits(last: 1) {
+        nodes { commit { statusCheckRollup { state } } }
+      }
+    }
+  }
+}
