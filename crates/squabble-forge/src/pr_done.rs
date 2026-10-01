@@ -150,9 +150,9 @@ pub fn fetch_pr_done(
                 _ => ctx_done = true,
             }
         }
-        head.get_or_insert_with(|| pr.clone());
+        let pr = head.get_or_insert_with(|| pr.clone());
         if ctx_done && thr_done {
-            let pr = head.expect("set above");
+            let pr = std::mem::take(pr);
             return Ok(PrRead {
                 base_ref: s(&pr, "/baseRefName").unwrap_or_default().to_string(),
                 head_oid: s(&pr, "/headRefOid").unwrap_or_default().to_string(),
