@@ -33,6 +33,56 @@ pub enum CheckRun {
     Passed,
 }
 
+impl CheckRun {
+    /// Map GitHub's rollup vocabulary onto a [`CheckRun`].
+    ///
+    /// The rollup is a union: a check run carries `status` + `conclusion`, a
+    /// legacy commit status carries only `state` (pass it as `conclusion`). One
+    /// mapping, shared by every reader — `squabble fetch` and `verify-satisfied`
+    /// must not disagree about what a conclusion means.
+    ///
+    /// A completed run with an unrecognised conclusion (`ACTION_REQUIRED`,
+    /// `STALE`, anything GitHub adds later) is `Failed`, never `Passed`.
+    pub fn from_github(status: Option<&str>, conclusion: Option<&str>) -> Self {
+        match conclusion {
+            Some("SUCCESS") => Self::Passed,
+            Some("SKIPPED") | Some("NEUTRAL") => Self::Skipped,
+            Some("FAILURE")
+            | Some("ERROR")
+            | Some("TIMED_OUT")
+            | Some("CANCELLED")
+            | Some("STARTUP_FAILURE") => Self::Failed,
+            _ => match status {
+                Some("COMPLETED") => Self::Failed,
+                _ => Self::Pending,
+            },
+        }
+    }
+
+    /// The run that decides one required context, given every run on the head
+    /// whose name matches it. One rule, shared by `squabble fetch` and
+    /// `verify-satisfied`.
+    ///
+    /// Two workflows can emit the same job name, and the rollup's order is not a
+    /// promise. "First match wins" would let a passing twin mask a failing one
+    /// depending on API order, so the **worst** run decides:
+    /// `Failed` > `Pending` > `Skipped` > `Passed`. No match is `Missing`.
+    pub fn for_context(runs: impl IntoIterator<Item = Self>) -> Self {
+        fn rank(r: CheckRun) -> u8 {
+            match r {
+                CheckRun::Failed => 4,
+                CheckRun::Missing => 3,
+                CheckRun::Pending => 2,
+                CheckRun::Skipped => 1,
+                CheckRun::Passed => 0,
+            }
+        }
+        runs.into_iter()
+            .max_by_key(|r| rank(*r))
+            .unwrap_or(Self::Missing)
+    }
+}
+
 /// Why a required context shows [`CheckRun::Missing`].
 ///
 /// `Missing` is the gate's most common stuck state and its least actionable one:
@@ -220,6 +270,17 @@ mod tests {
 
     fn ck(name: &str, run: CheckRun) -> RequiredCheck {
         RequiredCheck::new(name, run)
+    }
+
+    #[test]
+    fn a_passing_twin_never_masks_a_failing_one_in_either_order() {
+        use CheckRun::*;
+        assert_eq!(CheckRun::for_context([Passed, Failed]), Failed);
+        assert_eq!(CheckRun::for_context([Failed, Passed]), Failed);
+        assert_eq!(CheckRun::for_context([Passed, Pending]), Pending);
+        assert_eq!(CheckRun::for_context([Passed, Skipped]), Skipped);
+        assert_eq!(CheckRun::for_context([Passed]), Passed);
+        assert_eq!(CheckRun::for_context([]), Missing);
     }
 
     #[test]
