@@ -15,7 +15,9 @@
 //!
 //! A required context with no matching rollup entry is [`CheckRun::Missing`];
 //! matching-but-incomplete is [`CheckRun::Pending`]; a `SUCCESS` conclusion is
-//! [`CheckRun::Passed`]; anything else that completed is [`CheckRun::Failed`].
+//! [`CheckRun::Passed`]; `SKIPPED`/`NEUTRAL` is [`CheckRun::Skipped`] (satisfies
+//! the ruleset, carries no evidence); anything else that completed is
+//! [`CheckRun::Failed`].
 
 use serde::Deserialize;
 use squabble_core::gate::{CheckRun, Gate, RequiredCheck};
@@ -63,21 +65,15 @@ struct RulesetContext {
     context: String,
 }
 
-/// Parse a `gh pr view --json baseRefName,statusCheckRollup` payload into the
-/// realised-run half of a [`Gate`]. Pure — no IO, fully testable on fixtures.
+/// Classify one entry from `gh pr view`'s `statusCheckRollup`.
+///
+/// Recognised conclusions take precedence over status: `SUCCESS` yields
+/// [`CheckRun::Passed`], `SKIPPED` or `NEUTRAL` yields [`CheckRun::Skipped`],
+/// and `FAILURE`, `ERROR`, `TIMED_OUT`, `CANCELLED` or `STARTUP_FAILURE` yields
+/// [`CheckRun::Failed`]. With an absent or unrecognised conclusion, `COMPLETED`
+/// status yields [`CheckRun::Failed`]; any other status yields [`CheckRun::Pending`].
 fn parse_rollup(entry: &RollupEntry) -> CheckRun {
-    match entry.conclusion.as_deref() {
-        Some("SUCCESS") => CheckRun::Passed,
-        Some("FAILURE")
-        | Some("ERROR")
-        | Some("TIMED_OUT")
-        | Some("CANCELLED")
-        | Some("STARTUP_FAILURE") => CheckRun::Failed,
-        _ => match entry.status.as_deref() {
-            Some("COMPLETED") => CheckRun::Failed, // completed with no recognised conclusion
-            _ => CheckRun::Pending,
-        },
-    }
+    CheckRun::from_github(entry.status.as_deref(), entry.conclusion.as_deref())
 }
 
 /// Build a [`Gate`] from the required-context set and the realised rollup.
@@ -87,11 +83,12 @@ fn build_gate(required_contexts: &[String], rollup: &[RollupEntry]) -> Gate {
     let checks = required_contexts
         .iter()
         .map(|required| {
-            let run = rollup
-                .iter()
-                .find(|r| &r.name == required)
-                .map(parse_rollup)
-                .unwrap_or(CheckRun::Missing);
+            let run = CheckRun::for_context(
+                rollup
+                    .iter()
+                    .filter(|r| &r.name == required)
+                    .map(parse_rollup),
+            );
             RequiredCheck::new(required.clone(), run)
         })
         .collect();
@@ -645,6 +642,32 @@ pub fn run_bundle(slug: &str, pr: &str) -> Result<FetchBundle, FetchError> {
     })
 }
 
+/// Every rule type the base branch's rulesets carry, deduplicated, in order.
+fn rule_types_from_json(rules_json: &str) -> Result<Vec<String>, String> {
+    let rules: Vec<RulesetRule> = serde_json::from_str(rules_json)
+        .map_err(|e| format!("could not parse ruleset response: {e}"))?;
+    let mut out: Vec<String> = Vec::new();
+    for t in rules.into_iter().map(|r| r.rule_type) {
+        if !out.contains(&t) {
+            out.push(t);
+        }
+    }
+    Ok(out)
+}
+
+/// The base branch's gate as `verify-satisfied` needs it: the required-context
+/// union (rulesets ∪ classic protection) and every ruleset rule type.
+///
+/// Unlike [`run_bundle`] an empty context set is *not* `NoGate` here — "done"
+/// is still a meaningful question on an ungated branch. A 403 on classic
+/// protection is still a hard error, for the same vacuous-green reason.
+pub fn base_gate(slug: &str, branch: &str) -> Result<(Vec<String>, Vec<String>), FetchError> {
+    let rules_json = run_gh(&["api", &format!("repos/{slug}/rules/branches/{branch}")])?;
+    let protection = probe_classic_protection(slug, branch)?;
+    let contexts = required_contexts_from_apis(&rules_json, &protection)?;
+    Ok((contexts, rule_types_from_json(&rules_json)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -945,6 +968,20 @@ mod tests {
             parse_rollup(&entry("x", Some("COMPLETED"), Some("FAILURE"))),
             CheckRun::Failed
         );
+    }
+
+    #[test]
+    fn skipped_and_neutral_map_to_skipped_not_failed() {
+        // Both COMPLETED with a conclusion GitHub accepts for a required check;
+        // before the Skipped variant they fell through to Failed and the gate
+        // read Red on PRs GitHub would merge.
+        for c in ["SKIPPED", "NEUTRAL"] {
+            assert_eq!(
+                parse_rollup(&entry("x", Some("COMPLETED"), Some(c))),
+                CheckRun::Skipped,
+                "{c}"
+            );
+        }
     }
 
     #[test]

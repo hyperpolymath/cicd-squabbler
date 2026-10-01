@@ -21,6 +21,8 @@
 //! becomes [`ScanStatus::NotFound`]; an exhausted rate budget marks the
 //! remaining repos unavailable rather than guessing.
 
+pub mod pr_done;
+
 use serde_json::{json, Value};
 use squabble_core::chains::{RepoId, RepoSnapshot, ScanStatus, SourceCost, WorkflowFile};
 use std::io::Write;
@@ -357,7 +359,7 @@ mod tests {
 
     // --- schema validation -------------------------------------------------
 
-    fn validate(doc: &str) -> Result<(), String> {
+    pub(crate) fn validate(doc: &str) -> Result<(), String> {
         use apollo_compiler::{ExecutableDocument, Schema};
         let schema = Schema::parse_and_validate(SCHEMA, "github-schema.graphql")
             .map_err(|e| format!("schema: {}", e.errors))?;

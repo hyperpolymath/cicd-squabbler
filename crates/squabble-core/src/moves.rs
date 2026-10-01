@@ -92,7 +92,8 @@ pub enum Move {
     /// [`EscalationKind`] and evidence.
     ///
     /// This is a **hand-off, never a win**: applying it constructs no
-    /// [`crate::gate::CheckRun::Passed`] and drops no required context, so it
+    /// [`crate::gate::CheckRun::Passed`] or [`crate::gate::CheckRun::Skipped`]
+    /// and drops no required context, so it
     /// cannot move the gate to [`crate::gate::GateState::Green`] by itself. It
     /// exists so the squabbler can assemble the case for its "big guns" instead
     /// of either faking a green or silently giving up (`fail-closed`,

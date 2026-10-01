@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# Everything `squabble verify-satisfied` reads about one pull request, in one
+# query. Two connections page independently (head contexts, review threads):
+# `fetch_pr_done` in src/pr_done.rs re-issues this document with each cursor until
+# both are exhausted and ignores a finished connection's repeat nodes. Heads in
+# this estate carry up to ~95 contexts; an unpaginated read reports present
+# checks as absent, which would pass a pending review bot vacuously.
+query PrDone($owner: String!, $name: String!, $number: Int!, $ctxAfter: String, $thrAfter: String) {
+  rateLimit { cost remaining resetAt }
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      state
+      isDraft
+      mergeable
+      mergeStateStatus
+      reviewDecision
+      baseRefName
+      headRefOid
+      body
+      autoMergeRequest { mergeMethod }
+      latestOpinionatedReviews(first: 100) {
+        nodes { state author { login } }
+      }
+      reviewThreads(first: 100, after: $thrAfter) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          isResolved
+          isOutdated
+          path
+          line
+          comments(first: 1) { nodes { author { login } url } }
+        }
+      }
+      commits(last: 1) {
+        nodes {
+          commit {
+            statusCheckRollup {
+              contexts(first: 100, after: $ctxAfter) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  __typename
+                  ... on CheckRun { name status conclusion checkSuite { app { slug } } }
+                  ... on StatusContext { context state creator { login } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
