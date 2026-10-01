@@ -15,7 +15,13 @@
 //! is at or below `--reserve`; every thread that was due to be cleared but
 //! was not is listed by id — the tail is a set, never just a count.
 //!
-//! This needs the owner's user token with the `notifications` scope; an
+//! `all=true` also lists threads already marked done — REST exposes no done
+//! state — so without memory every run would re-clear the same threads.
+//! `--state <path>` records `(thread id, updated_at)` for each thread the
+//! sweep cleared; a thread whose `updated_at` is unchanged is skipped, and one
+//! with new activity (which GitHub returns to the inbox) is decided afresh.
+//!
+//! This needs the owner's user token (`notifications` or `repo` scope); an
 //! App token cannot read notifications.
 //!
 //! Exit `0` = every due thread cleared (or, dry run, listed); `6` = some due
@@ -31,7 +37,10 @@ use squabble_forge::{GhTransport, GraphQlTransport};
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::{Command, ExitCode};
 
-pub(crate) const USAGE: &str = "usage: squabble inbox-sweep [--owners a,b] [--repo owner/name] [--apply] [--limit N] [--reserve N]";
+pub(crate) const USAGE: &str = "usage: squabble inbox-sweep [--owners a,b] [--repo owner/name] [--apply] [--limit N] [--reserve N] [--state path]";
+
+/// Thread id → `updated_at` at the moment the sweep cleared it.
+pub(crate) type Cleared = BTreeMap<String, String>;
 
 /// Owners swept when `--owners` is not given.
 const DEFAULT_OWNERS: &[&str] = &["hyperpolymath", "metadatastician"];
@@ -45,6 +54,7 @@ struct Args {
     apply: bool,
     limit: Option<usize>,
     reserve: u64,
+    state: Option<std::path::PathBuf>,
 }
 
 /// Parse the subcommand's flags.
@@ -55,6 +65,7 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
         apply: false,
         limit: None,
         reserve: DEFAULT_RESERVE,
+        state: None,
     };
     let mut it = rest.iter();
     while let Some(flag) = it.next() {
@@ -90,6 +101,7 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
                     .parse()
                     .map_err(|_| "--reserve wants a number".to_string())?
             }
+            "--state" => a.state = Some(value()?.into()),
             other => return Err(format!("unknown flag `{other}`\n{USAGE}")),
         }
     }
@@ -225,9 +237,18 @@ pub(crate) struct Sweep {
     /// Due threads not cleared, with why.
     pub left: BTreeMap<String, String>,
     pub graphql_queries: usize,
+    /// In-scope threads skipped because an earlier sweep cleared them and
+    /// they have had no activity since.
+    pub already_cleared: usize,
+    /// The state to persist: earlier entries still listed, plus this run's
+    /// clears. Entries for threads no longer listed are dropped.
+    pub state: Cleared,
 }
 
 /// List, decide and (with `apply`) clear. Pure apart from the two APIs.
+/// `prior` is the state an earlier sweep left; threads it records with the
+/// same `updated_at` are skipped without a read or a write.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn sweep(
     api: &dyn NotificationApi,
     graphql: &dyn GraphQlTransport,
@@ -236,12 +257,18 @@ pub(crate) fn sweep(
     apply: bool,
     limit: Option<usize>,
     reserve: u64,
+    prior: &Cleared,
 ) -> Result<Sweep, String> {
     let all = api.list()?;
     let mut out = Sweep {
         listed: all.len(),
         ..Sweep::default()
     };
+    // Keep only entries whose thread is still listed, so the file stays bounded.
+    out.state = all
+        .iter()
+        .filter_map(|t| prior.get(&t.id).map(|u| (t.id.clone(), u.clone())))
+        .collect();
     let in_scope: Vec<Thread> = all
         .into_iter()
         .filter(|t| {
@@ -250,6 +277,14 @@ pub(crate) fn sweep(
         })
         .collect();
     out.out_of_scope = out.listed - in_scope.len();
+    let in_scope: Vec<Thread> = in_scope
+        .into_iter()
+        .filter(|t| {
+            let skip = prior.get(&t.id) == Some(&t.updated_at);
+            out.already_cleared += usize::from(skip);
+            !skip
+        })
+        .collect();
 
     let subjects: Vec<SubjectRef> = in_scope.iter().filter_map(subject_of).collect();
     let (states, queries) = fetch_states(graphql, &subjects, STATE_BATCH);
@@ -293,6 +328,7 @@ pub(crate) fn sweep(
             Ok(b) => {
                 budget = b.or(budget);
                 out.cleared.insert(t.id.clone());
+                out.state.insert(t.id.clone(), t.updated_at.clone());
             }
             Err(e) => {
                 out.left
@@ -303,10 +339,37 @@ pub(crate) fn sweep(
     Ok(out)
 }
 
+/// Read a state file; a missing file is an empty state, anything else
+/// unreadable is an error (a silently empty state would re-clear everything).
+fn load_state(path: &std::path::Path) -> Result<Cleared, String> {
+    match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|e| format!("state file {} is not valid: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Cleared::new()),
+        Err(e) => Err(format!("cannot read state file {}: {e}", path.display())),
+    }
+}
+
+/// Write the state file atomically: a sibling temp file, then rename.
+fn save_state(path: &std::path::Path, state: &Cleared) -> Result<(), String> {
+    let tmp = path.with_extension("tmp");
+    let body = serde_json::to_vec_pretty(state).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, body)
+        .and_then(|()| std::fs::rename(&tmp, path))
+        .map_err(|e| format!("cannot write state file {}: {e}", path.display()))
+}
+
 /// Entry point for `squabble inbox-sweep <flags>`.
 pub(crate) fn run(rest: &[String]) -> ExitCode {
     let args = match parse_args(rest) {
         Ok(a) => a,
+        Err(e) => {
+            eprintln!("squabble inbox-sweep: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let prior = match args.state.as_deref().map(load_state).transpose() {
+        Ok(p) => p.unwrap_or_default(),
         Err(e) => {
             eprintln!("squabble inbox-sweep: {e}");
             return ExitCode::from(2);
@@ -320,6 +383,7 @@ pub(crate) fn run(rest: &[String]) -> ExitCode {
         args.apply,
         args.limit,
         args.reserve,
+        &prior,
     ) {
         Ok(s) => s,
         Err(e) => {
@@ -331,6 +395,12 @@ pub(crate) fn run(rest: &[String]) -> ExitCode {
         "inbox: {} threads listed, {} out of scope, {} state queries",
         s.listed, s.out_of_scope, s.graphql_queries
     );
+    if s.already_cleared > 0 {
+        println!(
+            "  {:>5}  skip: cleared by an earlier sweep, no activity since",
+            s.already_cleared
+        );
+    }
     for (v, n) in &s.verdicts {
         println!("  {n:>5}  {}", v.label());
     }
@@ -342,6 +412,12 @@ pub(crate) fn run(rest: &[String]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     println!("cleared {} of {} due", s.cleared.len(), s.due.len());
+    if let Some(path) = &args.state {
+        if let Err(e) = save_state(path, &s.state) {
+            eprintln!("squabble inbox-sweep: {e}");
+            return ExitCode::from(2);
+        }
+    }
     // The tail is the set difference, computed rather than assumed.
     let unaccounted: Vec<&String> = s
         .due
@@ -456,7 +532,17 @@ mod tests {
     #[test]
     fn dry_run_writes_nothing_and_lists_only_resolved_in_scope_threads() {
         let (api, gql) = fixture(None, 5000);
-        let s = sweep(&api, &gql, &owners(), None, false, None, 1000).unwrap();
+        let s = sweep(
+            &api,
+            &gql,
+            &owners(),
+            None,
+            false,
+            None,
+            1000,
+            &Cleared::new(),
+        )
+        .unwrap();
         assert!(api.writes.borrow().is_empty());
         assert_eq!(s.listed, 6);
         assert_eq!(s.out_of_scope, 1);
@@ -469,7 +555,17 @@ mod tests {
     #[test]
     fn apply_unsubscribes_before_marking_done_and_never_touches_kept_threads() {
         let (api, gql) = fixture(None, 5000);
-        let s = sweep(&api, &gql, &owners(), None, true, None, 1000).unwrap();
+        let s = sweep(
+            &api,
+            &gql,
+            &owners(),
+            None,
+            true,
+            None,
+            1000,
+            &Cleared::new(),
+        )
+        .unwrap();
         assert_eq!(
             *api.writes.borrow(),
             ["unsub 1", "done 1", "unsub 3", "done 3"]
@@ -481,7 +577,17 @@ mod tests {
     #[test]
     fn a_failed_unsubscribe_leaves_the_thread_in_the_inbox() {
         let (api, gql) = fixture(Some("1"), 5000);
-        let s = sweep(&api, &gql, &owners(), None, true, None, 1000).unwrap();
+        let s = sweep(
+            &api,
+            &gql,
+            &owners(),
+            None,
+            true,
+            None,
+            1000,
+            &Cleared::new(),
+        )
+        .unwrap();
         assert!(!api.writes.borrow().iter().any(|w| w == "done 1"));
         assert!(s.left["1"].contains("unsubscribe failed"));
         assert!(s.cleared.contains("3"));
@@ -491,7 +597,17 @@ mod tests {
     fn writes_stop_at_the_reserve_and_the_tail_is_named() {
         // Budget 1002, reserve 1000: thread 1 costs two writes, then 1000 ≤ 1000.
         let (api, gql) = fixture(None, 1002);
-        let s = sweep(&api, &gql, &owners(), None, true, None, 1000).unwrap();
+        let s = sweep(
+            &api,
+            &gql,
+            &owners(),
+            None,
+            true,
+            None,
+            1000,
+            &Cleared::new(),
+        )
+        .unwrap();
         assert_eq!(s.cleared, BTreeSet::from(["1".to_string()]));
         assert!(s.left["3"].contains("reserve"));
     }
@@ -499,7 +615,17 @@ mod tests {
     #[test]
     fn limit_and_repo_narrow_the_sweep() {
         let (api, gql) = fixture(None, 5000);
-        let s = sweep(&api, &gql, &owners(), None, true, Some(1), 1000).unwrap();
+        let s = sweep(
+            &api,
+            &gql,
+            &owners(),
+            None,
+            true,
+            Some(1),
+            1000,
+            &Cleared::new(),
+        )
+        .unwrap();
         assert_eq!(s.cleared.len(), 1);
         assert!(s.left.values().all(|w| w.contains("--limit")));
 
@@ -512,9 +638,78 @@ mod tests {
             false,
             None,
             1000,
+            &Cleared::new(),
         )
         .unwrap();
         assert_eq!(s.due, BTreeSet::from(["3".to_string()]));
+    }
+
+    #[test]
+    fn a_second_sweep_with_the_saved_state_writes_nothing() {
+        let (api, gql) = fixture(None, 5000);
+        let first = sweep(
+            &api,
+            &gql,
+            &owners(),
+            None,
+            true,
+            None,
+            1000,
+            &Cleared::new(),
+        )
+        .unwrap();
+        assert_eq!(first.state.len(), 2);
+
+        let (api, gql) = fixture(None, 5000);
+        let second = sweep(&api, &gql, &owners(), None, true, None, 1000, &first.state).unwrap();
+        assert!(api.writes.borrow().is_empty());
+        assert_eq!(second.already_cleared, 2);
+        assert!(second.due.is_empty());
+        assert_eq!(second.state, first.state);
+    }
+
+    #[test]
+    fn new_activity_on_a_cleared_thread_is_decided_again() {
+        let (api, gql) = fixture(None, 5000);
+        let first = sweep(
+            &api,
+            &gql,
+            &owners(),
+            None,
+            true,
+            None,
+            1000,
+            &Cleared::new(),
+        )
+        .unwrap();
+
+        let (mut api, gql) = fixture(None, 5000);
+        api.threads[0].updated_at = "2026-10-02T00:00:00Z".into();
+        let s = sweep(&api, &gql, &owners(), None, true, None, 1000, &first.state).unwrap();
+        assert_eq!(*api.writes.borrow(), ["unsub 1", "done 1"]);
+        assert_eq!(s.state["1"], "2026-10-02T00:00:00Z");
+    }
+
+    #[test]
+    fn state_for_threads_no_longer_listed_is_dropped() {
+        let prior = Cleared::from([("gone".to_string(), "x".to_string())]);
+        let (api, gql) = fixture(None, 5000);
+        let s = sweep(&api, &gql, &owners(), None, false, None, 1000, &prior).unwrap();
+        assert!(!s.state.contains_key("gone"));
+    }
+
+    #[test]
+    fn state_file_round_trips_and_a_corrupt_one_is_refused() {
+        let dir = std::env::temp_dir().join(format!("squabble-inbox-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("state.json");
+        assert!(load_state(&path).unwrap().is_empty());
+        let st = Cleared::from([("1".to_string(), "t".to_string())]);
+        save_state(&path, &st).unwrap();
+        assert_eq!(load_state(&path).unwrap(), st);
+        std::fs::write(&path, b"{not json").unwrap();
+        assert!(load_state(&path).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
