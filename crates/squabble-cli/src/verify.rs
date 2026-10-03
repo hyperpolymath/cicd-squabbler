@@ -32,9 +32,9 @@ struct Report<'a> {
 }
 
 pub fn run(args: &[String]) -> ExitCode {
-    let (slug, (owner, name), pr) = match args {
+    let (slug, pr) = match args {
         [slug, pr] => match (slug.split_once('/'), pr.parse::<u64>()) {
-            (Some(on), Ok(n)) => (slug.as_str(), on, n),
+            (Some(_), Ok(n)) => (slug.as_str(), n),
             _ => {
                 eprintln!("squabble verify-satisfied: {USAGE}");
                 return ExitCode::from(2);
@@ -45,6 +45,7 @@ pub fn run(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let (owner, name) = slug.split_once('/').expect("checked above");
 
     let read = match fetch_pr_done(&GhTransport, owner, name, pr) {
         Ok(r) => r,
