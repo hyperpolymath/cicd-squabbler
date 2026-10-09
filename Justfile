@@ -530,7 +530,7 @@ release-tag version:
     just changelog
     git add CHANGELOG.md
     git commit -m "chore(release): prepare $TAG"
-    git tag -a "$TAG" -m "Release $TAG"
+    git tag -s "$TAG" -m "Release $TAG"
     echo "Created tag $TAG — push with: git push origin main --tags"
 
 # ═══════════════════════════════════════════════════════════════════════════════
