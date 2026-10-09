@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Squabble Consumer Action
+
+# Proves .github/actions/squabble installs ONLY the pinned, attested squabble
+# binary.
+#
+#   1. tests/squabble_action_test.sh checks that action.yml calls exactly the
+#      scripts tested here, with the env tested here; then exercises each
+#      guard on its own, with planted negatives (the attestation JSON check,
+#      sha256 and attestation against the real asset and a one-byte tampered
+#      copy, install.sh end to end with a tampered download, run.sh argument
+#      splitting and exit codes).
+#   2. The steps below run install.sh and run.sh exactly as the composite's
+#      steps do, on a real runner, so GITHUB_PATH and GITHUB_OUTPUT are real.
+#      PATH is checked in a LATER step, because GITHUB_PATH takes effect only
+#      after the step that writes it.
+#
+# NOT covered here: GitHub's own evaluation of action.yml (composite inputs,
+# outputs and `if:`). This repository has an actions.lock, and the lockfile
+# does not support local-path actions (`gh actions-lock --no-fix`: "workflow
+# uses local path actions which are not supported"), so `uses: ./...` is not
+# available. That is exercised by a follow-up that pins
+# hyperpolymath/cicd-squabbler/.github/actions/squabble@<merged main sha> as a
+# remote ref, which the lockfile does support.
+#
+# Like lock-sync-gate.yml, this file carries no `uses:` at all: it checks out
+# with git in a run step, so its lock entry is `[]`. Keep it that way. There
+# is no `paths:` filter, for the reason given in lock-sync-gate.yml.
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  attestations: read
+
+concurrency:
+  group: squabble-action-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  consumer-action:
+    name: squabble action installs only the pinned, attested binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out without actions/checkout
+        env:
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Header form, so the credential is never written into .git/config.
+          AUTH="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${TOKEN}" | base64 -w0)"
+          git init -q .
+          git remote add origin "https://github.com/${REPO}.git"
+          git -c http.extraheader="${AUTH}" fetch -q --depth 1 origin "${SHA}"
+          git checkout -q FETCH_HEAD
+          echo "checked out ${SHA}"
+
+      - name: action.yml contract, then each guard with planted negatives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tests/squabble_action_test.sh
+
+      - name: Install, as the action's install step does
+        id: install
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/actions/squabble/install.sh
+
+      - name: squabble is on PATH in a later step
+        env:
+          SQUABBLE_PATH: ${{ steps.install.outputs.path }}
+        run: |
+          set -euo pipefail
+          test -n "${SQUABBLE_PATH}"
+          test "$(command -v squabble)" = "${SQUABBLE_PATH}"
+          test "$(squabble --version)" = "squabble 0.1.0"
+
+      - name: Run mode, exit 0, as the action's run step does
+        id: run-ok
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SQUABBLE_ARGS: --version
+          SQUABBLE_BIN: ${{ steps.install.outputs.path }}
+        run: bash .github/actions/squabble/run.sh
+
+      - name: Run mode, non-zero exit
+        id: run-bad
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SQUABBLE_ARGS: --no-such-flag
+          SQUABBLE_BIN: ${{ steps.install.outputs.path }}
+        run: bash .github/actions/squabble/run.sh
+
+      - name: Exit codes come back as step outputs
+        env:
+          OK_CODE: ${{ steps.run-ok.outputs.exit-code }}
+          BAD_CODE: ${{ steps.run-bad.outputs.exit-code }}
+          BAD_OUTCOME: ${{ steps.run-bad.outcome }}
+        run: |
+          set -euo pipefail
+          echo "run-ok exit-code='${OK_CODE}'; run-bad exit-code='${BAD_CODE}' outcome='${BAD_OUTCOME}'"
+          test "${OK_CODE}" = "0"
+          test "${BAD_OUTCOME}" = "failure"
+          test "${BAD_CODE}" = "2"

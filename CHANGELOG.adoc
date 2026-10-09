@@ -10,6 +10,14 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
 
 ==== Added
 
+* `.github/actions/squabble` — a composite action that installs the
+  squabble v0.1.0 release binary for other workflows and, optionally, runs
+  it. It refuses any download whose sha256 is not the pinned digest, or whose
+  build attestation does not name this repository's `release.yml`, the
+  `v0.1.0` tag and its source commit, on a GitHub-hosted runner; nothing runs
+  until both pass. `tests/squabble_action_test.sh` (27 cases, with planted
+  tampered downloads and planted `action.yml` mutants) runs in the new
+  `squabble-action.yml` workflow. Linux x86_64 only.
 * `squabble chains` — read-only cross-repo CI dependency chains (Phase A of
   `docs/proposals/squabble-modes-and-app-layer.adoc`). Pure analysis in
   `squabble-core::chains`: cycles and dead upstreams (blocking), diamonds,
