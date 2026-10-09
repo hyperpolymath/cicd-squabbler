@@ -58,6 +58,7 @@ workflows:
         - 'hyperpolymath/standards@8f2ee50841e216cd8c192eeb68953118190f105c'
     '.github/workflows/security-policy.yml':
         - 'actions/checkout@v7.0.1'
+    '.github/workflows/squabble-action.yml': []
     '.github/workflows/standards-pipeline.yml':
         - 'hyperpolymath/standards@ed5e3f651305dd1ce0d0b5d2d08b97a963634632'
     '.github/workflows/static-analysis-gate.yml':
