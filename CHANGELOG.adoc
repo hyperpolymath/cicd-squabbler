@@ -46,6 +46,12 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
 
 ==== Fixed
 
+* verify-satisfied: a PR with an unsigned or unverified commit no longer
+  reads as done when the base requires signed commits. GitHub blocks that
+  merge, squash included; it is now the agent item `unverified_commits`,
+  naming each commit with its signature state and author. Every PR commit's
+  signature is read, paged. A classic-protection `required_signatures`
+  counts as well as a ruleset one.
 * workflows: step-level `- uses:` refs were never read; only job-level
   `uses:` keys were. The issue #15 Actions-policy probes therefore missed every
   step action. Two existing tests witnessed it and were failing on `main`.

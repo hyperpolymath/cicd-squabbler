@@ -8,14 +8,14 @@
 
 use crate::GraphQlTransport;
 use serde_json::{json, Value};
-use squabble_core::done::{Mergeability, Observed, PrFacts, PrState, Thread};
+use squabble_core::done::{Mergeability, Observed, PrFacts, PrState, Thread, UnverifiedCommit};
 use squabble_core::gate::CheckRun;
 
 /// The query document; see `graphql/pr_done.graphql`.
 pub const PR_DONE: &str = include_str!("../graphql/pr_done.graphql");
 
 /// A safety bound on pages per connection. At 100 per page this is 2 000
-/// contexts or threads; past it the read fails rather than truncating.
+/// contexts, threads or commits; past it the read fails rather than truncating.
 pub const MAX_PAGES: usize = 20;
 
 /// What the GraphQL read yields. `facts.required_contexts` and
@@ -73,6 +73,27 @@ fn thread(node: &Value) -> Option<Thread> {
     })
 }
 
+/// A PR commit GitHub does not mark verified: no signature at all, or one whose
+/// `isValid` is not `true`. `None` for a verified commit.
+fn unverified(node: &Value) -> Option<UnverifiedCommit> {
+    let sig = node.pointer("/commit/signature").filter(|v| !v.is_null());
+    if sig.and_then(|v| v.get("isValid")).and_then(Value::as_bool) == Some(true) {
+        return None;
+    }
+    let author = s(node, "/commit/author/user/login")
+        .map(|l| l.strip_suffix("[bot]").unwrap_or(l))
+        .or_else(|| s(node, "/commit/author/name"))
+        .unwrap_or("ghost");
+    Some(UnverifiedCommit {
+        oid: s(node, "/commit/oid").unwrap_or_default().to_string(),
+        state: sig
+            .and_then(|v| s(v, "/state"))
+            .unwrap_or("UNSIGNED")
+            .to_string(),
+        author: author.to_string(),
+    })
+}
+
 /// A connection's page: its nodes and, if more follow, the cursor.
 fn page(conn: &Value) -> Result<(&[Value], Option<String>), String> {
     let nodes = conn
@@ -106,9 +127,11 @@ pub fn fetch_pr_done(
 ) -> Result<PrRead, String> {
     let mut ctx_after: Option<String> = None;
     let mut thr_after: Option<String> = None;
-    let (mut ctx_done, mut thr_done) = (false, false);
+    let mut cmt_after: Option<String> = None;
+    let (mut ctx_done, mut thr_done, mut cmt_done) = (false, false, false);
     let mut observed_all = Vec::new();
     let mut threads = Vec::new();
+    let mut unverified_commits = Vec::new();
     let mut head: Option<Value> = None;
 
     for _ in 0..MAX_PAGES {
@@ -116,7 +139,7 @@ pub fn fetch_pr_done(
             "query": PR_DONE,
             "variables": {
                 "owner": owner, "name": name, "number": number,
-                "ctxAfter": ctx_after, "thrAfter": thr_after,
+                "ctxAfter": ctx_after, "thrAfter": thr_after, "cmtAfter": cmt_after,
             }
         });
         let resp = t.execute(&body)?;
@@ -138,6 +161,12 @@ pub fn fetch_pr_done(
             thr_done = next.is_none();
             thr_after = next.or(thr_after);
         }
+        if !cmt_done {
+            let (nodes, next) = page(pr.get("prCommits").ok_or("no prCommits")?)?;
+            unverified_commits.extend(nodes.iter().filter_map(unverified));
+            cmt_done = next.is_none();
+            cmt_after = next.or(cmt_after);
+        }
         if !ctx_done {
             // No rollup at all (a head nothing has reported on) is an empty set.
             match pr.pointer("/commits/nodes/0/commit/statusCheckRollup/contexts") {
@@ -151,7 +180,7 @@ pub fn fetch_pr_done(
             }
         }
         head.get_or_insert_with(|| pr.clone());
-        if ctx_done && thr_done {
+        if ctx_done && thr_done && cmt_done {
             let pr = head.expect("set above");
             return Ok(PrRead {
                 base_ref: s(&pr, "/baseRefName").unwrap_or_default().to_string(),
@@ -185,13 +214,14 @@ pub fn fetch_pr_done(
                         })
                         .unwrap_or_default(),
                     rule_types: Vec::new(),
+                    unverified_commits,
                     body: s(&pr, "/body").unwrap_or_default().to_string(),
                 },
             });
         }
     }
     Err(format!(
-        "{owner}/{name}#{number}: more than {MAX_PAGES} pages of contexts or threads — \
+        "{owner}/{name}#{number}: more than {MAX_PAGES} pages of contexts, threads or commits — \
          refusing to judge a partial read"
     ))
 }
@@ -204,13 +234,14 @@ mod tests {
     /// Replays canned pages and records the cursors each request carried.
     struct Pages {
         pages: RefCell<Vec<Value>>,
-        seen: RefCell<Vec<(Value, Value)>>,
+        seen: RefCell<Vec<(Value, Value, Value)>>,
     }
     impl GraphQlTransport for Pages {
         fn execute(&self, body: &Value) -> Result<Value, String> {
             self.seen.borrow_mut().push((
                 body["variables"]["ctxAfter"].clone(),
                 body["variables"]["thrAfter"].clone(),
+                body["variables"]["cmtAfter"].clone(),
             ));
             let mut p = self.pages.borrow_mut();
             if p.is_empty() {
@@ -234,11 +265,28 @@ mod tests {
                 "pageInfo": { "hasNextPage": thr_next.is_some(), "endCursor": thr_next },
                 "nodes": thr
             },
+            "prCommits": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
             "commits": { "nodes": [ { "commit": { "statusCheckRollup": { "contexts": {
                 "pageInfo": { "hasNextPage": ctx_next.is_some(), "endCursor": ctx_next },
                 "nodes": ctx
             }}}}]}
         }}}})
+    }
+
+    /// `r` with its `prCommits` connection replaced by one page of `nodes`.
+    fn with_commits(mut r: Value, nodes: Value, next: Option<&str>) -> Value {
+        r["data"]["repository"]["pullRequest"]["prCommits"] = json!({
+            "pageInfo": { "hasNextPage": next.is_some(), "endCursor": next },
+            "nodes": nodes
+        });
+        r
+    }
+
+    /// A PR commit node; `sig` is the `signature` object, or `null` when unsigned.
+    fn commit(oid: &str, login: Option<&str>, name: &str, sig: Value) -> Value {
+        json!({ "commit": { "oid": oid,
+            "author": { "name": name, "user": login.map(|l| json!({ "login": l })) },
+            "signature": sig } })
     }
 
     fn run(name: &str) -> Value {
@@ -287,6 +335,96 @@ mod tests {
             json!("C1"),
             "second request carried the cursor"
         );
+    }
+
+    /// Only a signature GitHub verifies passes; an absent one and an invalid one
+    /// are both reported, and the commit list is read past its first page.
+    #[test]
+    fn unverified_commits_are_read_across_pages_and_verified_ones_are_not_reported() {
+        let base = || resp(json!([]), None, json!([]), None);
+        let p = Pages {
+            pages: RefCell::new(vec![
+                with_commits(
+                    base(),
+                    json!([
+                        commit(
+                            "aaaa",
+                            Some("owner"),
+                            "Owner",
+                            json!({ "isValid": true, "state": "VALID" })
+                        ),
+                        commit(
+                            "bbbb",
+                            Some("coderabbitai[bot]"),
+                            "coderabbitai[bot]",
+                            Value::Null
+                        ),
+                    ]),
+                    Some("K1"),
+                ),
+                with_commits(
+                    base(),
+                    json!([commit(
+                        "cccc",
+                        None,
+                        "Someone",
+                        json!({ "isValid": false, "state": "UNKNOWN_KEY" })
+                    )]),
+                    None,
+                ),
+            ]),
+            seen: RefCell::new(vec![]),
+        };
+        let r = fetch_pr_done(&p, "o", "r", 1).unwrap();
+        assert_eq!(
+            r.facts.unverified_commits,
+            [
+                UnverifiedCommit {
+                    oid: "bbbb".into(),
+                    state: "UNSIGNED".into(),
+                    author: "coderabbitai".into()
+                },
+                UnverifiedCommit {
+                    oid: "cccc".into(),
+                    state: "UNKNOWN_KEY".into(),
+                    author: "Someone".into()
+                },
+            ]
+        );
+        let seen = p.seen.borrow();
+        assert_eq!(
+            seen.len(),
+            2,
+            "the commit connection alone drove a second request"
+        );
+        assert_eq!(
+            seen[1].2,
+            json!("K1"),
+            "second request carried the commit cursor"
+        );
+    }
+
+    /// A PR whose commits all verify reports an empty list.
+    #[test]
+    fn a_pr_whose_commits_all_verify_reports_none() {
+        let p = Pages {
+            pages: RefCell::new(vec![with_commits(
+                resp(json!([]), None, json!([]), None),
+                json!([commit(
+                    "aaaa",
+                    Some("owner"),
+                    "Owner",
+                    json!({ "isValid": true, "state": "VALID" })
+                )]),
+                None,
+            )]),
+            seen: RefCell::new(vec![]),
+        };
+        assert!(fetch_pr_done(&p, "o", "r", 1)
+            .unwrap()
+            .facts
+            .unverified_commits
+            .is_empty());
     }
 
     #[test]
