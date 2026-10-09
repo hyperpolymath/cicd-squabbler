@@ -197,6 +197,14 @@ enum ProtectionProbe {
 #[derive(Debug, Deserialize)]
 struct ClassicProtection {
     required_status_checks: Option<ClassicRequiredChecks>,
+    /// `{"enabled": bool}`; read as not required when absent.
+    required_signatures: Option<ClassicEnabled>,
+}
+
+/// The `{url, enabled}` shape classic protection uses for a toggle setting.
+#[derive(Debug, Deserialize)]
+struct ClassicEnabled {
+    enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -271,6 +279,15 @@ fn parse_classic_contexts(json: &str) -> Result<Vec<String>, String> {
         }
     }
     Ok(out)
+}
+
+/// Whether a classic-protection payload requires signed commits. The rules
+/// API reports ruleset rules only, so this is the one place a classic
+/// `required_signatures` becomes visible.
+fn classic_requires_signatures(json: &str) -> Result<bool, String> {
+    let p: ClassicProtection = serde_json::from_str(json)
+        .map_err(|e| format!("could not parse branch-protection response: {e}"))?;
+    Ok(p.required_signatures.is_some_and(|s| s.enabled))
 }
 
 /// The union of required contexts from the two protection APIs, in
@@ -656,7 +673,8 @@ fn rule_types_from_json(rules_json: &str) -> Result<Vec<String>, String> {
 }
 
 /// The base branch's gate as `verify-satisfied` needs it: the required-context
-/// union (rulesets ∪ classic protection) and every ruleset rule type.
+/// union (rulesets ∪ classic protection) and every ruleset rule type, plus
+/// `required_signatures` when classic protection requires signed commits.
 ///
 /// Unlike [`run_bundle`] an empty context set is *not* `NoGate` here — "done"
 /// is still a meaningful question on an ungated branch. A 403 on classic
@@ -665,7 +683,15 @@ pub fn base_gate(slug: &str, branch: &str) -> Result<(Vec<String>, Vec<String>),
     let rules_json = run_gh(&["api", &format!("repos/{slug}/rules/branches/{branch}")])?;
     let protection = probe_classic_protection(slug, branch)?;
     let contexts = required_contexts_from_apis(&rules_json, &protection)?;
-    Ok((contexts, rule_types_from_json(&rules_json)?))
+    let mut rule_types = rule_types_from_json(&rules_json)?;
+    if let ProtectionProbe::Protected(json) = &protection {
+        if classic_requires_signatures(json)?
+            && !rule_types.iter().any(|t| t == "required_signatures")
+        {
+            rule_types.push("required_signatures".into());
+        }
+    }
+    Ok((contexts, rule_types))
 }
 
 #[cfg(test)]
@@ -897,6 +923,20 @@ mod tests {
             Some(ProtectionProbe::NotProtected)
         );
         assert_eq!(probe_from_stderr("gh: validation failed"), None);
+    }
+
+    /// Only `enabled: true` turns the rule on; an absent key or `false` leaves it off.
+    #[test]
+    fn classic_required_signatures_is_read_only_when_enabled() {
+        let on = r#"{"required_signatures": {"url": "u", "enabled": true}}"#;
+        let off = r#"{"required_signatures": {"url": "u", "enabled": false}}"#;
+        assert!(classic_requires_signatures(on).expect("parse"));
+        assert!(!classic_requires_signatures(off).expect("parse"));
+        assert!(
+            !classic_requires_signatures(r#"{"enforce_admins": {"enabled": true}}"#)
+                .expect("parse")
+        );
+        assert!(classic_requires_signatures("not json").is_err());
     }
 
     #[test]

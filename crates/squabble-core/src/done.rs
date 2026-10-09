@@ -42,8 +42,12 @@ pub const DEFAULT_REVIEW_APPS: &[&str] = &[
 ];
 
 /// Ruleset rule types whose effect this gate evaluates, or which cannot hold a
-/// squash merge (a squash lands one GitHub-signed commit, so `required_signatures`
-/// and `required_linear_history` are met by construction).
+/// squash merge. `required_linear_history` is met by construction: a squash
+/// lands one commit. `required_signatures` is **not**: GitHub holds the PR
+/// `BLOCKED` while any commit on it lacks a verified signature, squash armed or
+/// not (measured 2026-10-02 on boj-server-cartridges#155: automerge armed,
+/// blocked by one unsigned `coderabbitai[bot]` autofix commit). It is evaluated
+/// over [`PrFacts::unverified_commits`].
 const ACCOUNTED_RULE_TYPES: &[&str] = &[
     "required_status_checks",
     "pull_request",
@@ -95,6 +99,17 @@ pub struct Thread {
     pub url: String,
 }
 
+/// A commit on the PR whose signature GitHub does not verify.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnverifiedCommit {
+    pub oid: String,
+    /// GitHub's `GitSignatureState` (`INVALID`, `UNKNOWN_KEY`, …), or
+    /// `UNSIGNED` when the commit carries no signature at all.
+    pub state: String,
+    /// The author's login (`[bot]` removed), else their git name.
+    pub author: String,
+}
+
 /// Everything the verdict needs, fetched once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrFacts {
@@ -115,8 +130,13 @@ pub struct PrFacts {
     pub unresolved_threads: Vec<Thread>,
     /// Reviewers whose latest opinionated review is `CHANGES_REQUESTED`.
     pub changes_requested_by: Vec<String>,
-    /// `[.[].type]` of the effective rules on the base branch.
+    /// `[.[].type]` of the effective rules on the base branch, plus
+    /// `required_signatures` when classic branch protection requires it.
     pub rule_types: Vec<String>,
+    /// Commits on the PR that GitHub does not mark verified, from a complete
+    /// read of the PR's commits. Agent work only under `required_signatures`.
+    #[serde(default)]
+    pub unverified_commits: Vec<UnverifiedCommit>,
     /// The PR description, verbatim. Where a red non-required check is
     /// acknowledged (see [`acknowledged_in`]). Empty when there is none.
     pub body: String,
@@ -138,6 +158,7 @@ pub enum Item {
     WrongMergeMethod { method: String },
     BranchBehind,
     MergeQueue,
+    UnverifiedCommits { commits: Vec<UnverifiedCommit> },
     AwaitingApproval { review_decision: String },
     AwaitingDeployment,
     AwaitingHumanMerge { merge_state: String },
@@ -189,6 +210,23 @@ impl Item {
             Self::MergeQueue => "base branch uses a merge queue — verify-satisfied cannot \
                  evaluate queue entry, so it refuses rather than pass vacuously"
                 .into(),
+            Self::UnverifiedCommits { commits } => format!(
+                "the base requires signed commits and {} commit(s) here are not verified \
+                 ({}) — GitHub blocks the merge, squash included; re-sign them on the \
+                 branch (`git rebase --exec 'git commit --amend --no-edit -S' <merge-base>`) \
+                 and push with --force-with-lease",
+                commits.len(),
+                commits
+                    .iter()
+                    .map(|c| format!(
+                        "{} {} by {}",
+                        c.oid.get(..10).unwrap_or(&c.oid),
+                        c.state,
+                        c.author
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Self::AwaitingApproval { review_decision } => {
                 format!("awaiting a human review (reviewDecision={review_decision})")
             }
@@ -408,6 +446,15 @@ pub fn evaluate(facts: &PrFacts, review_apps: &[&str]) -> Verdict {
     if facts.rule_types.iter().any(|t| t == "required_deployments") {
         human.push(Item::AwaitingDeployment);
     }
+    // A squash does not satisfy `required_signatures` (see ACCOUNTED_RULE_TYPES):
+    // every commit on the PR must verify, and re-signing them is branch work.
+    if facts.rule_types.iter().any(|t| t == "required_signatures")
+        && !facts.unverified_commits.is_empty()
+    {
+        agent.push(Item::UnverifiedCommits {
+            commits: facts.unverified_commits.clone(),
+        });
+    }
     let unaccounted: Vec<&str> = facts
         .rule_types
         .iter()
@@ -511,7 +558,17 @@ mod tests {
             unresolved_threads: vec![],
             changes_requested_by: vec![],
             rule_types: vec!["required_status_checks".into(), "deletion".into()],
+            unverified_commits: vec![],
             body: String::new(),
+        }
+    }
+
+    /// A commit with no signature at all, authored by the CodeRabbit bot.
+    fn unsigned(oid: &str) -> UnverifiedCommit {
+        UnverifiedCommit {
+            oid: oid.into(),
+            state: "UNSIGNED".into(),
+            author: "coderabbitai".into(),
         }
     }
 
@@ -777,6 +834,53 @@ mod tests {
             kinds(&evaluate(&f, DEFAULT_REVIEW_APPS).agent_items),
             ["unresolved_thread"]
         );
+    }
+
+    /// The planted positive: an armed squash PR that GitHub holds BLOCKED on one
+    /// unsigned bot commit (boj-server-cartridges#155, 2026-10-02) must not read
+    /// as done.
+    #[test]
+    fn an_unverified_commit_under_required_signatures_is_agent_work() {
+        let mut f = done_pr();
+        f.rule_types.push("required_signatures".into());
+        f.unverified_commits.push(unsigned("8546edbde6aa"));
+        let v = evaluate(&f, DEFAULT_REVIEW_APPS);
+        assert_eq!(kinds(&v.agent_items), ["unverified_commits"]);
+        let line = v.agent_items[0].describe();
+        assert!(line.contains("8546edbde6"), "{line}");
+        assert!(line.contains("--force-with-lease"), "{line}");
+        assert!(
+            !v.notes.iter().any(|n| n.contains("required_signatures")),
+            "an accounted rule type must not also be reported as unevaluated: {:?}",
+            v.notes
+        );
+    }
+
+    /// The rule is on, but every commit verifies: nothing is owed.
+    #[test]
+    fn verified_commits_under_required_signatures_are_done() {
+        let mut f = done_pr();
+        f.rule_types.push("required_signatures".into());
+        assert!(evaluate(&f, DEFAULT_REVIEW_APPS).is_done());
+    }
+
+    /// Without the rule, GitHub merges unsigned commits, so they are no work.
+    #[test]
+    fn an_unverified_commit_without_required_signatures_is_not_agent_work() {
+        let mut f = done_pr();
+        f.unverified_commits.push(unsigned("8546edbde6aa"));
+        assert!(evaluate(&f, DEFAULT_REVIEW_APPS).is_done());
+    }
+
+    /// After the merge the signatures can no longer be changed, so they are no work.
+    #[test]
+    fn a_merged_pr_owes_nothing_for_its_unverified_commits() {
+        let mut f = done_pr();
+        f.state = PrState::Merged;
+        f.auto_merge = None;
+        f.rule_types.push("required_signatures".into());
+        f.unverified_commits.push(unsigned("8546edbde6aa"));
+        assert!(evaluate(&f, DEFAULT_REVIEW_APPS).is_done());
     }
 
     /// `verify-satisfied` skips the base-gate REST read for a PR that is no

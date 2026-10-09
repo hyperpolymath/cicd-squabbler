@@ -2,12 +2,15 @@
 # Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 #
 # Everything `squabble verify-satisfied` reads about one pull request, in one
-# query. Two connections page independently (head contexts, review threads):
-# `fetch_pr_done` in src/pr_done.rs re-issues this document with each cursor until
-# both are exhausted and ignores a finished connection's repeat nodes. Heads in
-# this estate carry up to ~95 contexts; an unpaginated read reports present
-# checks as absent, which would pass a pending review bot vacuously.
-query PrDone($owner: String!, $name: String!, $number: Int!, $ctxAfter: String, $thrAfter: String) {
+# query. Three connections page independently (head contexts, review threads,
+# the PR's commits): `fetch_pr_done` in src/pr_done.rs re-issues this document
+# with each cursor until all are exhausted and ignores a finished connection's
+# repeat nodes. Heads in this estate carry up to ~95 contexts; an unpaginated
+# read reports present checks as absent, which would pass a pending review bot
+# vacuously. `prCommits` is aliased because `commits(last: 1)` already reads the
+# head; every commit on the PR is read for `required_signatures`, which GitHub
+# applies to all of them, not to the squash it lands.
+query PrDone($owner: String!, $name: String!, $number: Int!, $ctxAfter: String, $thrAfter: String, $cmtAfter: String) {
   rateLimit { cost remaining resetAt }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -31,6 +34,16 @@ query PrDone($owner: String!, $name: String!, $number: Int!, $ctxAfter: String, 
           path
           line
           comments(first: 1) { nodes { author { login } url } }
+        }
+      }
+      prCommits: commits(first: 100, after: $cmtAfter) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          commit {
+            oid
+            author { name user { login } }
+            signature { isValid state }
+          }
         }
       }
       commits(last: 1) {
