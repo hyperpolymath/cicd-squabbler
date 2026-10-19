@@ -9,6 +9,9 @@ members = [
     "crates/squabble-app",
     "crates/squabble-forge",
 ]
+# Governance builds this checker from a temporary sparse standards checkout.
+# It is an independent package, not a member of the application workspace.
+exclude = [".standards-js/tools/js-runtimes"]
 
 [workspace.package]
 version = "0.1.0"

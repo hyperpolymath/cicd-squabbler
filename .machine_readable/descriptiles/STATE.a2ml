@@ -49,7 +49,7 @@ actions = [
   "Add the squabble-app GitHub App webhook leg (check_run.requested_action + octocrab — the \"Squabble!\" button) so a fight can be triggered from a PR, not only from the CLI; still honestly absent (no webhook route registered).",
   "Live-fire --summon against a running boj-server with the expert backends up (hypatia :7701, panic-attack, echidna) — today's verification proves the wiring + fail-closed degradation; the experts themselves are not yet deployed.",
   "Extend the SPARK invariant to cover the licence-policy gate class (v0.2; v0.1 moves are Rust-only for that class).",
-  "Register the CLADE (uuid 38bec2ed-bb12-44ee-9fb4-08872370c27b) into hyperpolymath/gv-clade-index (owner action).",
+  "Register the CLADE (uuid 02d29e41-94bc-80c5-b741-09a9d39b858c) into hyperpolymath/gv-clade-index (owner action).",
 ]
 
 [maintenance-status]
