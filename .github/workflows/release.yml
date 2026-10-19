@@ -35,7 +35,7 @@ jobs:
           persist-credentials: false
       # Untagged dtolnay/rust-toolchain master commit (2026-08-04, merge of #182);
       # an ancestor of the moving `v1` branch. Pinned by SHA, so no tag applies.
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master 2026-08-04
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-08-04
         with:
           toolchain: 1.85.0
           targets: x86_64-unknown-linux-musl
