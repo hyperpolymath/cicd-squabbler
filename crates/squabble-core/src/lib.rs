@@ -81,12 +81,12 @@ fn propose_for(required_context: &str) -> Move {
 ///
 /// `diagnose` is deliberately name-only: [`gate::Gate`] carries nothing about
 /// *why* a check is unsatisfied, so its default proposal falls back to
-/// [`propose_for`]'s heuristics. A host with more context (fetched workflow
+/// `propose_for`'s heuristics. A host with more context (fetched workflow
 /// source, a check's own failure history, known-bad reusable-workflow
 /// patterns — see `hyperpolymath/hypatia#566`) can supply a `hints` map from
 /// `required_context` to the specific [`Move`] it has already classified,
 /// and this function uses that instead of guessing. Contexts absent from
-/// `hints` fall back to [`propose_for`], so this is a strict refinement of
+/// `hints` fall back to `propose_for`, so this is a strict refinement of
 /// `diagnose`, never a divergence from it.
 pub fn diagnose_with_hints(
     gate: &Gate,
