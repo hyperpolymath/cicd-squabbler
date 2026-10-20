@@ -13,8 +13,18 @@ permissions:
   contents: read
 jobs:
   mirror:
-    uses: hyperpolymath/standards/.github/workflows/mirror-reusable.yml@8f2ee50841e216cd8c192eeb68953118190f105c
-    secrets: inherit
+    uses: hyperpolymath/standards/.github/workflows/mirror-reusable.yml@75bd5994470661a099df562d6d5ad2fe744dbd66
+    # Only the seven forge keys the callee declares (standards#1108 §6b);
+    # `secrets: inherit` forwarded every repository secret (WH008, zizmor
+    # secrets-inherit) to a workflow that asks for exactly these.
+    secrets:
+      GITLAB_SSH_KEY: ${{ secrets.GITLAB_SSH_KEY }}
+      BITBUCKET_SSH_KEY: ${{ secrets.BITBUCKET_SSH_KEY }}
+      CODEBERG_SSH_KEY: ${{ secrets.CODEBERG_SSH_KEY }}
+      SOURCEHUT_SSH_KEY: ${{ secrets.SOURCEHUT_SSH_KEY }}
+      DISROOT_SSH_KEY: ${{ secrets.DISROOT_SSH_KEY }}
+      GITEA_SSH_KEY: ${{ secrets.GITEA_SSH_KEY }}
+      RADICLE_KEY: ${{ secrets.RADICLE_KEY }}
     permissions:
       actions: read
       contents: read

@@ -167,7 +167,7 @@ pub struct ScannerSignature {
 /// So the set quantifies with `any`: a job is vacuous if it matches ANY
 /// scanner's signature, having matched that scanner's steps in full.
 ///
-/// The disjunction cannot leak across scanners. [`step_concluded`] returns
+/// The disjunction cannot leak across scanners. `step_concluded` returns
 /// `false` for a step that is absent from the list, so signature A cannot
 /// match a job that never recorded A's steps — the panic-attack job cannot be
 /// judged by the hypatia signature. That is asserted in the tests, not

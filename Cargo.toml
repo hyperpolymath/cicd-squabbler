@@ -9,6 +9,12 @@ members = [
     "crates/squabble-app",
     "crates/squabble-forge",
 ]
+# standards' governance "JS runtimes" job checks its js-runtimes crate out at
+# .standards-js/ inside this checkout and `cargo install`s it from there. It is
+# an independent package, not a member of this workspace; without this cargo
+# refuses to build it (governance run 39253292198, 2026-10-19; root fix is
+# hyperpolymath/standards#1299, after which this is harmless).
+exclude = [".standards-js"]
 
 [workspace.package]
 version = "0.1.0"

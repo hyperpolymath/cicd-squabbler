@@ -3,7 +3,8 @@
 # See: https://github.com/hyperpolymath/gv-clade-index
 
 [identity]
-uuid = "38bec2ed-bb12-44ee-9fb4-08872370c27b"   # PROVISIONAL — owner ratifies via gv-clade-index
+# ESTATE-UUID-V8 profile C: gv-clade-index:github.com/hyperpolymath/cicd-squabbler
+uuid = "02d29e41-94bc-80c5-b741-09a9d39b858c"   # PROVISIONAL — owner ratifies via gv-clade-index
 primary-forge = "github"
 primary-owner = "hyperpolymath"
 canonical-name = "cicd-squabbler"

@@ -68,21 +68,48 @@ jobs:
       - name: Check SHA-Pinned Actions
         run: |
           echo "=== Checking Action Pinning ==="
-          # Find any uses: lines that don't have @SHA format
-          # Pattern: uses: owner/repo@<40-char-hex>
-          unpinned=$(grep -rnE "^[[:space:]]+uses:" .github/workflows/ | \
-            grep -v "@[a-f0-9]\{40\}" | \
-            grep -v "uses: \./\|uses: docker://\|uses: actions/github-script" || true)
+          # Every `uses:` must resolve to a commit. Two forms count:
+          #   1. `owner/repo[/path]@<40-hex>` in the workflow itself;
+          #   2. `owner/repo[/path]@<tag>` whose `owner/repo@<tag>` record in
+          #      .github/workflows/actions.lock carries a `commit: 'sha1-…'`
+          #      line — that record IS the pin, and the runner resolves the
+          #      tag through it ("Using locked action versions from the
+          #      workflow's lockfile"). This repository is managed by
+          #      gh actions-lock, whose convention is tag refs in YAML and
+          #      SHAs in the lock; a lock record whose ref is itself a bare
+          #      SHA is what GitHub rejects as an invalid lockfile pin.
+          # An unlocked tag ref is still unpinned and still fails. The lock's
+          # sync with the YAML is a separate gate (scripts/check-lock-sync.sh).
+          lock=.github/workflows/actions.lock
+          unpinned=""
+          while IFS= read -r line; do
+            ref=$(printf '%s' "$line" | sed -E 's/^[^:]+:[0-9]+:[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*//; s/[[:space:]]*#.*$//; s/^["'"'"']//; s/["'"'"']$//')
+            case "$ref" in
+              ./*|docker://*) continue ;;
+            esac
+            if printf '%s' "$ref" | grep -qE '@[a-f0-9]{40}$'; then
+              continue
+            fi
+            # owner/repo@ref, sub-path stripped, compared case-insensitively
+            # (GitHub owner and repository names are case-insensitive).
+            key=$(printf '%s' "$ref" | sed -E 's#^([^/@]+/[^/@]+)(/[^@]*)?@(.+)$#\1@\3#' | tr '[:upper:]' '[:lower:]')
+            if [ -f "$lock" ] && awk -v key="$key" '
+                  /^    '"'"'/ { rec = tolower($0); sub(/^    '"'"'/, "", rec); sub(/'"'"':[[:space:]]*$/, "", rec); inrec = (rec == key); next }
+                  inrec && /^        commit: '"'"'sha1-[0-9a-f]{40}'"'"'$/ { found = 1 }
+                  END { exit found ? 0 : 1 }' "$lock"; then
+              continue
+            fi
+            unpinned="${unpinned}${line}"$'\n'
+          done < <(grep -rnE "^[[:space:]]+(-[[:space:]]+)?uses:" .github/workflows/ --include='*.yml' --include='*.yaml')
 
           if [ -n "$unpinned" ]; then
-            echo "ERROR: Found unpinned actions:"
-            echo "$unpinned"
+            echo "ERROR: Found unpinned actions (neither a 40-hex SHA in the workflow nor a commit-bearing record in $lock):"
+            printf '%s' "$unpinned"
             echo ""
-            echo "Replace version tags with SHA pins, e.g.:"
-            echo "  uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.1"
+            echo "Pin with a SHA, or lock the tag: run gh actions-lock and commit $lock."
             exit 1
           fi
-          echo "All actions are SHA-pinned"
+          echo "All actions are pinned: by SHA in the workflow, or by a commit-bearing actions.lock record"
 
       - name: Check for Duplicate Workflows
         run: |
