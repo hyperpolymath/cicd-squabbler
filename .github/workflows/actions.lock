@@ -36,8 +36,6 @@ workflows:
         - 'actions/upload-pages-artifact@v5.0.0'
     '.github/workflows/push-email-notify.yml':
         - 'hyperpolymath/smtp-notify-action@v0.5.0'
-    '.github/workflows/probe-reusable-resolution.yml':
-        - 'hyperpolymath/cicd-suite@bf7dd95cf49733019343ff485c2f45c6b261839c'
     '.github/workflows/quality.yml':
         - 'actions/checkout@v7.0.1'
         - 'editorconfig-checker/action-editorconfig-checker@v3.0.0'
@@ -197,11 +195,6 @@ dependencies:
         commit: 'sha1-0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d'
         owner_id: 75048950
         repo_id: 623796603
-    'hyperpolymath/cicd-suite@bf7dd95cf49733019343ff485c2f45c6b261839c':
-        ref: 'bf7dd95cf49733019343ff485c2f45c6b261839c'
-        commit: 'sha1-bf7dd95cf49733019343ff485c2f45c6b261839c'
-        owner_id: 6759885
-        repo_id: 1114455584
     'hyperpolymath/smtp-notify-action@v0.5.0':
         ref: 'v0.5.0'
         commit: 'sha1-c1c9fa07992a02c1fd3d67a0dc1b08cccb852aef'
