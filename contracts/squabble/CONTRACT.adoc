@@ -1,0 +1,492 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= squabble downstream contract — revision `squabble-contract/1.0.0`
+:toc: left
+:toclevels: 3
+:sectnums:
+
+[.lead]
+This is the contract a *different* repository's CI integrates against. It is
+read-only by construction, pinned by content, and it distinguishes three claims
+that are routinely confused: "GitHub would let this merge", "the gate is
+satisfied", and "every required check actually ran and passed". Only the third
+is `legitimate_green`, and this revision can certify it only from a gate bound
+to one commit.
+
+IMPORTANT: *Immutability.* Revision `squabble-contract/1.0.0` is frozen. Any
+change to the meaning of a field, a rule id, an exit code or a decision
+procedure is a new major revision. Errata that change no behaviour ship as
+`1.0.1` with a new `SHASUMS`. Consumers pin the revision id *and* the
+`SHASUMS` digest (`bash contracts/bin/verify-pin.sh squabble 1.0.0`); nothing
+here is to be consumed from a branch.
+
+== 1. Scope: the read-only invocation surface
+
+The contract covers exactly four subcommands. All four only read from GitHub and
+write only to stdout/stderr.
+
+[cols="2,1,1,3"]
+|===
+| Invocation | Writes | Exit codes | Contract role
+
+| `squabble fetch <owner>/<repo> <pr-number>`
+| nothing
+| `0` gate JSON on stdout · `3` no `required_status_checks` rule on the base branch · `2` failure
+| *The* evidence source. Emits the required-context set and the run bound to each.
+
+| `squabble diagnose <gate.json>`
+| nothing
+| `0` · `2` unreadable or invalid gate
+| Offline triage of a saved gate. Human text; the JSON surface is `fetch`'s output.
+
+| `squabble verify-satisfied <owner>/<repo> <pr-number>`
+| nothing
+| `0` done · `5` agent items remain · `3` no gate · `2` failure
+| The agent loop's "is there work left". *Not* a green claim — see §5.
+
+| `squabble chains <path[=owner/repo] | gh:owner/repo>... [--json]`
+| nothing
+| `0` · `4` blocking finding (cycle, dead upstream) · `2` failure
+| Optional cross-repo CI dependency check.
+|===
+
+Out of contract, and refused by the consumer audit (§8):
+
+* `squabble fight --apply` — writes a workflow file.
+* `squabble board` — publishes.
+* `squabble inbox-sweep` — writes.
+* `squabble fight --summon` — network I/O to a boj-server the consumer does not
+  own.
+
+A consumer that needs these is not doing gate verification; it is doing
+remediation, which is a human's or an owner agent's job with a human's token.
+
+== 2. Required GitHub permissions
+
+The gate is read through two APIs: the branch rules (the required set) and the PR's
+`statusCheckRollup` (realised runs). Both are reads.
+
+[cols="2,1,3"]
+|===
+| Permission | Access | Why the tool needs it
+
+| `contents` | read | Reads workflow files to attribute a context that never started (`STARTUP_FAILURE`), and resolves `uses:` refs for `chains`.
+| `checks` | read | The realised check runs and their conclusions.
+| `statuses` | read | Legacy commit statuses appear in the same rollup as check runs.
+| `pull_requests` | read | The PR head, base, review threads and review decisions.
+| `actions` | read | Whether Actions is enabled and what the repository's Actions policy allows, when a required context refuses to start.
+| `metadata` | read | Implied by every installation token; not requestable, always present.
+| `administration` | read | The branch *ruleset* / classic protection read. `verify-satisfied` and `fetch` both need it.
+|===
+
+=== 2.1 A workflow token cannot satisfy this
+
+`administration` is not on the list of scopes `GITHUB_TOKEN` can hold, so a
+job-scoped `github.token` cannot read the required-context set. `squabble fetch`
+and `squabble verify-satisfied` therefore need either:
+
+* a GitHub App installation token with `Administration: read` (plus the read
+  scopes above) on the *caller's* repository, or
+* a fine-grained PAT with `Administration: read` on the caller's repository.
+
+Mint the narrowest of these. An App token scoped to the caller is enough; a
+token with write scopes is a bypass waiting to happen (§8).
+
+=== 2.2 The permission floor and ceiling
+
+[source,yaml]
+----
+# Prescribed. Read-only at workflow level; nothing elevated per job.
+permissions:
+  contents: read
+  checks: read
+  statuses: read
+  pull-requests: read
+  actions: read
+----
+
+* Floor: the six read scopes above (or `read-all`, which is equivalent but
+  wider than necessary).
+* Ceiling: *any* `: write` scope is a contract violation. The consumer audit
+  refuses `write-all` and any `*: write`. The tool cannot use them, and their
+  presence turns a read-only verification into a credential that can merge,
+  re-run, dismiss or edit — the exact things this contract exists to prevent.
+* `id-token: write` is not needed and is refused by the audit as well: nothing
+  in the read-only surface needs OIDC.
+
+== 3. Pinned installation and release path
+
+Two pins, both content pins: the *action* is pinned to a commit, and the
+*binary* it installs is pinned to a digest plus a build-provenance attestation.
+
+[source,yaml]
+----
+- name: Install pinned squabble
+  uses: hyperpolymath/cicd-squabbler/.github/actions/squabble@<40-hex commit sha>
+----
+
+What the action does, in order (see `.github/actions/squabble/install.sh`):
+
+. Refuses any platform that is not Linux on x86_64 — that is the only asset
+  published (`squabble-x86_64-linux-musl`).
+. Downloads the release asset into a fresh directory.
+. Refuses it unless its sha256 equals the pinned digest, *before* the file is
+  made executable or read by anything else.
+. Refuses it unless `gh attestation verify` proves that asset was built by
+  `hyperpolymath/cicd-squabbler/.github/workflows/release.yml` at the pinned
+  tag, from the pinned source commit, on a GitHub-hosted runner, and that the
+  attested subject carries the same digest. The check reads the *JSON* form: the
+  plain-text form has been observed empty with exit 0 when stdout is not a
+  terminal.
+. Only then makes it executable, and requires it to report the pinned version.
+
+[cols="1,3"]
+|===
+| Release tag | `v0.1.0` (a locator — the digest is the trust anchor)
+| Asset | `squabble-x86_64-linux-musl`
+| Asset sha256 | `6cbeb4577d83ccf2dea3405a3afb0d34b7fee422af73f2113d413ea7edba026c`
+| Source commit | `b854d17abc0dce296719a349ebe856ff945cf03e`
+| Signer workflow | `hyperpolymath/cicd-squabbler/.github/workflows/release.yml`
+|===
+
+*Never* `@main`, `@master`, `@v0.1.0` or a mutable tag for the action: the
+audit refuses a non-40-hex ref for this action, and refuses `@main`/`@master`
+anywhere in the workflow. Release tags in this repository are immutable by
+ruleset (`.github/rulesets/Immutable-Tags.json`); the digest and the attestation
+do not depend on that being true.
+
+== 4. Machine-readable output
+
+Everything below is JSON on stdout, one document per invocation, and is
+deterministic: no timestamps, no map ordering, no locale-dependent formatting.
+Schemas live in `schema/`; the field names are the contract. Unknown fields may
+appear in a later minor revision, so consumers must ignore unknown keys — but
+must never *default* an unknown value to the favourable one (see §5.3).
+
+=== 4.1 Gate (from `squabble fetch`)
+
+[source,json]
+----
+{
+  "checks": [
+    { "required_context": "ci / test", "run": "passed", "missing_cause": null },
+    { "required_context": "scan / gitleaks", "run": "skipped" }
+  ]
+}
+----
+
+[cols="1,1,3"]
+|===
+| Field | Values | Meaning
+
+| `required_context` | string | The exact context name the ruleset requires. Case-sensitive.
+| `run` | `missing` \| `pending` \| `failed` \| `skipped` \| `passed` | The run bound to that context on the head commit. When more than one run matches the name, the *worst* wins (`failed` > `missing` > `pending` > `skipped` > `passed`), so a passing twin cannot mask a failing one.
+| `missing_cause` | `null` \| `no_such_job` \| `dead_action_pin` \| `actions_policy_refusal` \| `empty_jobs_map` \| `not_triggered_on_pull_request` \| `unknown` | Why a context is `missing`. Never changes `run`; a diagnosis is not a fix.
+|===
+
+`GitHub CANCELLED`, `TIMED_OUT`, `STARTUP_FAILURE`, `ERROR`, `ACTION_REQUIRED`,
+`STALE` and any unrecognised conclusion all map to `failed`. They are never
+folded into `skipped` and never into `passed`. `SKIPPED`/`NEUTRAL` map to
+`skipped`, which the ruleset accepts and which carries no evidence.
+
+=== 4.2 Verdict (from `squabble verify-satisfied`)
+
+[source,json]
+----
+{
+  "repo": "owner/name",
+  "pr": 42,
+  "head_oid": "…",
+  "base_ref": "main",
+  "done": false,
+  "agent_items": [ { "kind": "required_not_satisfied", "context": "ci / test", "run": "failed" } ],
+  "held_by_human": [],
+  "evidence_free": [ "scan / gitleaks" ],
+  "notes": [ "…" ]
+}
+----
+
+`agent_items[].kind` is one of `conflicting`, `mergeability_unknown`, `draft`,
+`required_not_satisfied`, `check_failed`, `unresolved_thread`,
+`changes_requested`, `review_bot_pending`, `auto_merge_not_armed`,
+`wrong_merge_method`, `branch_behind`, `merge_queue`, `unverified_commits`,
+`awaiting_approval`, `awaiting_deployment`, `awaiting_human_merge`.
+`evidence_free` lists required contexts satisfied by a skip or neutral.
+
+=== 4.3 Bound gate envelope (the input to a green claim)
+
+Because a bare gate document carries no commit, it can be replayed. A green
+claim therefore needs an envelope, which this contract's `bind-gate` produces:
+
+[source,json]
+----
+{
+  "contract": "squabble-contract/1.0.0",
+  "subject": { "repo": "owner/name", "head_sha": "<40 hex>", "pr": 42 },
+  "gate": { "checks": [ … ] }
+}
+----
+
+`subject.head_sha` must be the head commit the gate was sampled at — in a
+workflow, `${{ github.event.pull_request.head.sha }}` (or `${{ github.sha }}`
+for a `merge_group`/push gate), never a branch name.
+
+=== 4.4 Verdict document (from `legitimate-green`)
+
+[source,json]
+----
+{
+  "contract": "squabble-contract/1.0.0",
+  "input": "envelope",
+  "verdict": "legitimate_green",
+  "legitimate_green": true,
+  "subject": { "repo": "owner/name", "head_sha": "<40 hex>", "pr": 42 },
+  "subject_bound": true,
+  "requirement_count": 2,
+  "passed_evidence_count": 2,
+  "evidence_free": [],
+  "blocking": [],
+  "reasons": []
+}
+----
+
+`verdict` is `legitimate_green`, `not_green`, or `not_certifiable`. `blocking[]`
+entries are `{context, run, reason}`. `reasons[]` explains a non-green verdict
+that is not attributable to one context (no requirements, unbound input, a
+verdict document instead of a gate).
+
+== 5. Three claims that are not the same claim
+
+This is the whole point of the contract, and the reason a single exit code
+cannot carry it.
+
+[cols="1,2,2"]
+|===
+| Claim | Established by | What it does *not* mean
+
+| *ruleset-legitimate* (GitHub will merge it)
+| `squabble verify-satisfied` exit `0` (`done: true`)
+| That the required checks ran. GitHub accepts `skipped`/`neutral` for a required context, and a required check that is merely `pending` is not an agent item, so `done` can be true with a required check still in flight.
+
+| *gate satisfied* (no unsatisfied required context)
+| `squabble fetch` gate with no `missing`/`pending`/`failed` run
+| That every requirement carried evidence — a `skipped` run satisfies the gate.
+
+| *legitimate_green*
+| §5.1, over a bound envelope
+| Anything about non-required checks, review threads, or the human review. It is a statement about the required set only.
+|===
+
+=== 5.1 The decision procedure (normative)
+
+Given a *bound envelope* (§4.3):
+
+[source]
+----
+legitimate_green ⇔
+      subject.head_sha is 40 lowercase hex
+    ∧ subject.repo is owner/name
+    ∧ |gate.checks| ≥ 1
+    ∧ ∀ c ∈ gate.checks : c.run = "passed"
+----
+
+Equivalently for the emitted document: `legitimate_green: true` and exit `0`.
+`evidence_free` must be empty and `blocking` must be empty; both follow from the
+third clause and are emitted so a reader does not have to re-derive them.
+
+=== 5.2 What makes a green claim uncertifiable
+
+[cols="1,2"]
+|===
+| Input | Verdict | Why
+| Bare gate (`{"checks": …}`) without an envelope
+| `not_certifiable`, exit `3`
+| It names no commit, so it can be replayed from any run. `--allow-unbound` allows the *document* to be evaluated for triage, and still exits `3`: an unbound gate can never certify green.
+| `verify-satisfied` verdict document
+| `not_certifiable`, exit `3`
+| It carries no per-requirement run states (`evidence_free` is the only trace of a skip), and `done` tolerates a pending required check. A verdict document can never certify green, in any combination of flags.
+| A gate directory or array at top level
+| `not_certifiable`, exit `3`
+| Not a document this contract knows. Fail closed.
+|===
+
+=== 5.3 Rule: never default an unknown value to the favourable one
+
+If a `run` value is not one of the five known values, the requirement is
+blocking (`unrecognised run state`). If the document has an unknown shape, the
+answer is `not_certifiable`. A consumer that parses this contract's JSON must
+apply the same rule: `passed` is matched explicitly, never inferred from "not
+failed".
+
+== 6. Exit semantics
+
+[cols="1,1,3"]
+|===
+| Code | Name | Prescribed consumer handling
+
+| `0` | green / ok | Proceed. For `legitimate-green` this is the only code that may be reported as a legitimate green.
+| `2` | failure | The tool could not do its job (usage, `gh` failed, unparseable input, missing token). Fail the job. Do *not* treat as a finding.
+| `3` | finding: no gate, or not certifiable | Report it and fail the job. It is not a green and not a tool failure. `squabble fetch` uses `3` for "the base branch requires no status checks"; `legitimate-green` uses `3` for every non-certifiable or non-green verdict.
+| `4` | finding: blocking `chains` result | Report it and fail the job.
+| `5` | finding: `verify-satisfied` not done | Report it. In an agent loop, keep working; in a merge gate, fail.
+| other non-zero | unexpected | Fail the job.
+|===
+
+`3`, `4` and `5` exist so that a pipeline can distinguish "there is something
+here to report" from "the tool is broken". Collapsing them into `1` is a
+contract violation because it makes the two indistinguishable.
+
+== 7. Negative fixtures: what cannot be green
+
+`fixtures/` holds one document per case and `fixtures/expectations.json` holds
+the expected exit code and verdict for each. `tests/run-conformance.sh` runs
+every case and fails unless every planned case ran.
+
+[cols="2,1,3"]
+|===
+| Fixture | Expected | Proves
+
+| `gate/all-passed.bound.json`
+| `0`, `legitimate_green`
+| The positive control: a bound envelope whose every requirement passed certifies green. Without this the negatives prove only that the tool says no.
+
+| `gate/single-passed.bound.json`
+| `0`, `legitimate_green`
+| One requirement is enough; the procedure is not "at least two".
+
+| `gate/required-missing.bound.json`
+| `3`, `not_green`, blocking `missing`
+| A required check with no run bound on the head commit cannot be green — the `Missing` deadlock, where nothing reported at all.
+
+| `gate/required-skipped.bound.json`
+| `3`, `not_green`, `evidence_free: ["scan / gitleaks"]`
+| A *skipped* required check is accepted by GitHub's ruleset but is not a legitimate green here. This is the case a merge would hide.
+
+| `gate/required-cancelled.bound.json`
+| `3`, `not_green`, blocking `failed`
+| A cancelled run maps to `failed` and blocks. Cancellation is not a pass and not a skip.
+
+| `gate/required-failed.bound.json`
+| `3`, `not_green`, blocking `failed`
+| An ordinary failure blocks.
+
+| `gate/required-pending.bound.json`
+| `3`, `not_green`, blocking `pending`
+| An unfinished run blocks. Note `verify-satisfied` does *not* call a pending *required* check an agent item; that is exactly why a verdict document cannot certify green.
+
+| `gate/passed-and-skipped.bound.json`
+| `3`, `not_green`
+| One passing requirement does not launder a skipped sibling.
+
+| `gate/no-required-checks.bound.json`
+| `3`, `not_green`, reason `no-required-checks`
+| Dropping the required set is not a win: an unprotected gate is `Blocked`, never green.
+
+| `gate/unknown-run-state.bound.json`
+| `3`, `not_green`, blocking `unrecognised`
+| A state this revision does not know is blocking. Fail closed on vocabulary drift.
+
+| `gate/all-passed.unbound.json`
+| `3`, `not_certifiable`
+| Correct-looking evidence with no commit binding does not certify.
+
+| `envelope/all-passed.wrong-head.bound.json`
+| `3`, `not_green`
+| `--expect-head-sha` mismatch: evidence for another commit is refused, so a replayed envelope fails.
+
+| `envelope/all-passed.bad-subject.bound.json`
+| `3`, `not_green`
+| `head_sha: "main"` is not a commit. A branch is a moving pin (see §3) and is refused.
+
+| `verdict/done-with-skipped.json`
+| `3`, `not_certifiable`
+| `done: true` with `evidence_free: ["scan / gitleaks"]` — the mergeable-but-evidence-free case, refused.
+
+| `verdict/done-clean.json`
+| `3`, `not_certifiable`
+| Even a clean `done: true` cannot certify green, because the document carries no run states. A consumer that gates on exit `0` here has no contract, only a habit.
+
+| `verdict/not-done.json`
+| `3`, `not_certifiable`
+| The negative control for the previous case.
+|===
+
+== 8. Bypass resistance
+
+`squabble ≠ bypass` is a property of the engine: the only path to `Green` is a
+run that passed, an empty requirement set is `Blocked`, a diagnosis never moves
+the state, and a context's worst run decides. Nothing in this contract adds a
+path around that. This contract adds the consumer-side half:
+
+[cols="1,2"]
+|===
+| Rule (audit id) | Refusal
+| `E-UNPINNED-ACTION`
+| The squabble action is not pinned to a 40-hex commit. A moving branch means the rules that gated the reviewed run are not the rules that gate the merge.
+| `E-MOVING-REF`
+| Any `@main`/`@master`/`@HEAD` ref in the workflow.
+| `E-WRITE-PERMISSION`
+| `write-all`, or any `*: write` scope. The read-only surface cannot use them; their presence is an unused capability that a later edit can arm.
+| `E-MASKED-STEP`
+| `continue-on-error: true`, or `|| true`, or `set +e` around a squabble step. A gate whose failure cannot fail the job is not a gate.
+| `E-BYPASS-COMMAND`
+| `gh pr merge … --admin`, `enforce_admins`, a write to a protection/ruleset endpoint, `fight --apply`, `squabble board`, `inbox-sweep`, `gh run rerun`, `gh workflow run`. These change the gate rather than win it.
+| `E-PRIVILEGED-TRIGGER`
+| `pull_request_target` alongside a checkout of the PR head: write-capable token plus attacker-controlled code.
+| `E-NO-ORACLE`
+| The workflow runs squabble but never asks `legitimate-green`. Then it is gating on `done`, which §5 shows is a weaker claim.
+|===
+
+The audit is a lint, not a sandbox: it reads the workflow text and refuses
+patterns it knows. The real boundary is the permission set — a read-only token
+cannot merge, re-run or edit anything, whatever the workflow says. Run both.
+
+== 9. Known limitations of revision 1.0.0
+
+Stated because a contract that hides its blind spots is a claim, not a contract.
+
+* *Replay without an envelope.* A bare gate document names no commit. The
+  envelope closes this, and `legitimate-green` refuses to certify without one;
+  nothing in the tool itself records the sampling commit.
+* *`github.token` cannot read the gate.* `administration: read` needs an App or
+  fine-grained PAT (§2.1). This is a GitHub constraint, not a choice.
+* *Classic branch protection.* `fetch` reads both rulesets and classic
+  protection, but `main.rs`'s own note still applies to the rules API path:
+  a `3` ("no gate") speaks only to the endpoint that was queried. Treat `3` as
+  "no gate found by the surfaces this revision reads".
+* *Required contexts are matched by name.* Two jobs with the same name are
+  resolved worst-first, which is safe, but a workflow that emits the required
+  name from a *different* job than intended is indistinguishable from the
+  intended one.
+* *x86_64 Linux only.* No other asset is published or attested.
+* *Non-required checks* are outside `legitimate_green`. A red non-required check
+  is reported by `verify-satisfied` (`check_failed`), not by this procedure.
+* *Review human-facing obligations* (threads, requested changes) are not part of
+  a green claim; they are `verify-satisfied` items.
+
+== 10. Change policy
+
+[cols="1,2"]
+|===
+| Change | Version
+| A new fixture, a new audit rule that refuses something previously allowed, a documentation fix | major — consumers were relying on the old allowance
+| A new optional field, a new subcommand in the read-only surface, a new fixture for an already-covered rule | minor (`1.1.0`)
+| A typo that changes no byte of behaviour | patch (`1.0.1`) with a regenerated `SHASUMS`
+|===
+
+Any change regenerates `SHASUMS`
+(`bash contracts/bin/make-shasums.sh contracts/squabble`) and must keep
+`bash contracts/squabble/tests/run-conformance.sh` green with every planned case
+run.
+
+== 11. Verifying this revision
+
+[source,sh]
+----
+bash contracts/bin/verify-pin.sh squabble 1.0.0   # revision + digest, as a consumer checks it
+bash contracts/squabble/tests/run-conformance.sh  # every fixture, every audit case
+----
+
+The conformance suite needs `bash`, coreutils and `jq` (1.6+). It needs no
+network, no token and no Rust toolchain, which is what makes it runnable in a
+consumer's CI as well as here.

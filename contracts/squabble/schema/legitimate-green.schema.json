@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hyperpolymath/cicd-squabbler/contracts/squabble/schema/legitimate-green.schema.json",
+  "title": "legitimate-green verdict document (squabble-contract/1.0.0)",
+  "description": "The single JSON document contracts/squabble/bin/legitimate-green writes. Deterministic: no timestamps, no ordering by map iteration. `legitimate_green` is the only field a consumer may gate on, and it is true only for a bound envelope whose every required check has run `passed`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "input",
+    "verdict",
+    "legitimate_green",
+    "subject",
+    "subject_bound",
+    "requirement_count",
+    "passed_evidence_count",
+    "evidence_free",
+    "blocking",
+    "reasons"
+  ],
+  "properties": {
+    "contract": {
+      "const": "squabble-contract/1.0.0"
+    },
+    "input": {
+      "enum": [
+        "envelope",
+        "gate",
+        "verdict",
+        "unknown"
+      ]
+    },
+    "verdict": {
+      "enum": [
+        "legitimate_green",
+        "not_green",
+        "not_certifiable"
+      ]
+    },
+    "legitimate_green": {
+      "type": "boolean"
+    },
+    "subject": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "repo": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "head_sha": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pr": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "subject_bound": {
+      "type": "boolean"
+    },
+    "requirement_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "null when the input is a verify-satisfied verdict, which carries no per-requirement run states: a number there would be invented."
+    },
+    "passed_evidence_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "null when the input is a verify-satisfied verdict, which carries no per-requirement run states: a number there would be invented."
+    },
+    "evidence_free": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blocking": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "context",
+          "run",
+          "reason"
+        ],
+        "properties": {
+          "context": {
+            "type": "string"
+          },
+          "run": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "unknown-document",
+          "verdict-input-cannot-certify",
+          "unbound-gate",
+          "gate-shape-invalid",
+          "no-required-checks",
+          "subject-invalid",
+          "subject-repo-invalid",
+          "subject-head-sha-not-a-commit",
+          "subject-pr-invalid",
+          "head-sha-mismatch",
+          "repo-mismatch"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,5 @@
+firing fixture — a comparator that reports both a<b and b<a.
+
+Specimen of the declared defect class. cmp_total is fed a reversed comparator;
+is_total MUST return false. If it returns true, the payload is not testing what
+it claims (TEST-DOCTRINE R10.2).

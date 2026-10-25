@@ -1,0 +1,37 @@
+{
+  "contract": "proven-tests-evidence/1.0.0",
+  "tests": {
+    "ordering::is_total": {
+      "kind": "example",
+      "coord": { "category": "UnitTest", "aspect": "Functionality" },
+      "claim": "unproven",
+      "fixtures": {
+        "silence": { "path": "tests/fixtures/empty_slice.txt", "description": "an empty slice: no pair is ever out of order" },
+        "firing": { "path": "tests/fixtures/inverted_pair.txt", "defect_class": "a pair whose comparator reports both a<b and b<a" }
+      }
+    },
+    "ordering::sorts_pair": {
+      "kind": "example",
+      "coord": { "category": "UnitTest", "aspect": "Dependability" },
+      "claim": "unproven",
+      "fixtures": {
+        "silence": { "path": "tests/fixtures/sorted_pair.txt", "description": "the pair is already in order" },
+        "firing": { "path": "tests/fixtures/inverted_pair.txt", "defect_class": "a pair whose comparator reports both a<b and b<a" }
+      }
+    },
+    "ordering::is_stable": {
+      "kind": "property",
+      "coord": { "category": "PropertyBasedTest", "aspect": "Dependability" },
+      "claim": "provisionally_proven",
+      "evidence": {
+        "property": { "generator": "arb_inverted_pairs", "shrinker": true, "cases_run": 256, "failures": 0, "seed": "0x5eed" },
+        "type_safety": { "kategoria_level": 6, "type_system": "proptest + Idris2", "verified_by": "ProvenTests.Types.TypeSafetyCertificate" },
+        "framework_safety": "ProvenTests.Cells.provenTestsFrameworkProof"
+      },
+      "fixtures": {
+        "silence": { "path": "tests/fixtures/empty_slice.txt", "description": "an empty slice: stability is vacuous and must not fire" },
+        "firing": { "path": "tests/fixtures/unstable_pair.txt", "defect_class": "equal keys whose relative order flips between runs" }
+      }
+    }
+  }
+}

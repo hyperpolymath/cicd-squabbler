@@ -1,0 +1,76 @@
+{
+  "contract": {
+    "name": "hyperpolymath/proven-tests/evidence",
+    "revision": "1.0.0",
+    "major": 1
+  },
+  "subject": {
+    "repo": "hyperpolymath/ordering-demo",
+    "commit": "1111111111111111111111111111111111111111",
+    "producer": {
+      "tool": "proven-tests collect-evidence",
+      "version": "1.0.0"
+    }
+  },
+  "toolchain": {
+    "runner": "ubuntu-24.04",
+    "rust": "1.85.0",
+    "idris2": null
+  },
+  "taxonomy": {
+    "revision": "proven-tests/taxonomy/1",
+    "cells": 238
+  },
+  "tests": [
+    {
+      "id": "proof::oplus_commutative",
+      "kind": "proof",
+      "coord": {
+        "category": "ProofRegressionTest",
+        "aspect": "Dependability"
+      },
+      "result": "passed",
+      "execution": {
+        "ran": true,
+        "command": [
+          "idris2",
+          "--check",
+          "src/ProvenTests/Tropical.idr"
+        ],
+        "runner": "ubuntu-24.04",
+        "started_at": "2026-10-25T10:00:00Z",
+        "finished_at": "2026-10-25T10:00:07Z",
+        "duration_ms": 7000,
+        "exit_code": 0,
+        "observed_output_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "claim": "actually_proven",
+      "evidence": {
+        "type_safety": {
+          "kategoria_level": 6,
+          "type_system": "Idris2",
+          "verified_by": "ProvenTests.Types.TypeSafetyCertificate"
+        },
+        "proof": {
+          "checked": true,
+          "checker": {
+            "name": "idris2",
+            "version": "0.7.0"
+          },
+          "design_proof": {
+            "technique": "total, machine-checked Idris2 proof",
+            "limitations": []
+          },
+          "theorems": []
+        }
+      },
+      "fixtures": {
+        "cannot_fail_by_design": "the property is enforced by the typechecker; no runtime firing fixture can exist"
+      },
+      "anchor": {
+        "log": "check.log",
+        "line": 1
+      }
+    }
+  ]
+}

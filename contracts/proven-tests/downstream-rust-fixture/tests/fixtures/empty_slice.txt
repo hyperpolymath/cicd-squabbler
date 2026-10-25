@@ -1,0 +1,4 @@
+silence fixture — an empty slice.
+
+No pair exists, so totality and stability are vacuously true. A check that fires
+on this input is a harness fault, not a finding (TEST-DOCTRINE R10.6).

@@ -1,0 +1,128 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= Minimal downstream fixture: a Rust repository submitting Proven-Tests evidence
+:toc: preamble
+
+A whole repository's worth of integration, small enough to read in one sitting:
+one crate, one test file, three tests, a coordinate map, and a workflow. Copy it,
+replace the subject, keep the shape.
+
+== What is here
+
+[cols="1,3"]
+|===
+| `Cargo.toml`
+| `ordering-demo`: no dependencies, `rust-version = 1.85`, `publish = false`.
+
+| `src/lib.rs`
+| The subject: a `Pair` with a total order, `is_total`, `sorted_seqs`.
+
+| `tests/ordering.rs`
+| Three tests in `mod ordering`, so libtest prints `test ordering::<name> ... ok`.
+| Those printed names are the keys of `.proven/coords.json` — the evidence path
+| never guesses a coordinate from a test name.
+
+| `.proven/coords.json`
+| The declaration: kind, typed coordinate, claim tier, tier evidence, fixture
+| position, per test.
+
+| `tests/fixtures/*.txt`
+| The silence and firing fixtures the declaration names. They exist so the
+| paths are not aspirational.
+
+| `.github/workflows/proven-evidence.yml`
+| Runs the suite, collects evidence from that one run, and gates on
+| `verify-evidence --require-green --expect-commit "$GITHUB_SHA"`.
+|===
+
+== What each test claims, and why
+
+[cols="2,1,1,3"]
+|===
+| Test | kind | claim | Why that is the honest label
+
+| `ordering::is_total`
+| example
+| unproven
+| One fixed slice, one assertion. It would fail if totality broke, and it
+  establishes nothing beyond that slice.
+
+| `ordering::sorts_pair`
+| example
+| unproven
+| Same shape. Declaring it `provisionally_proven` would need a type-safety
+  certificate for the subject, which this crate does not have.
+
+| `ordering::is_stable`
+| property
+| provisionally_proven
+| 256 generated cases from a seeded LCG, with a shrinker that minimises a
+  failure. It is **sampling**: no total proof exists, so `actually_proven` is
+  refused here and the coordinate map says `provisionally_proven` in as many
+  words.
+|===
+
+The third test is the interesting one. A fixed vector loop is *not* a property —
+the framework's own `TEST-NEEDS.adoc` records five such cells as THIN and re-labels
+them Unproven. So this fixture writes a real generator, a real shrinker and a real
+case count, or it would be demonstrating the defect the contract exists to catch.
+
+== How to run it
+
+[source,sh]
+----
+cargo test -- --test-threads=1          # what the workflow runs
+bash ../bin/collect-evidence.sh --help  # the producer
+bash ../bin/verify-evidence --help      # the gate
+----
+
+The workflow is the complete path; `verify-evidence --grid` prints the 17×14 map
+to stderr so a reader can see which cells the three tests actually occupy.
+
+== What this fixture does not claim
+
+* *It has not been executed here.* No Rust toolchain is present in the
+  environment where this contract package was written, so the crate is compiled
+  and run by **its own** workflow in the repository that adopts it. The contract's
+  conformance suite exercises the producer and the gate against recorded libtest
+  logs (`../fixtures/libtest/*.txt`), not against this crate. Nothing in this
+  package asserts that `cargo test` has run on it.
+* *No evidence file is committed.* Committing a submission nobody produced would
+  be the exact forgery the contract refuses. The workflow writes `evidence.json`
+  and `verdict.json` and uploads them with the log.
+* *The coordinates are declarations.* `UnitTest/Functionality` for `is_total` is
+  a judgement a reviewer can disagree with. What the gate can check is that the
+  coordinate exists, that the tier's evidence is present, and that coverage is
+  derived only from executed passes.
+
+== Promoting the third test, honestly
+
+If `ordering-demo` grew a machine-checked proof of stability — say an Idris2
+model of the comparator with a totality proof — the promotion is:
+
+. a `kind: "proof"` record whose `evidence.proof.checker` names the checker and
+  its version, whose `theorems` ladder has at least one rung with a
+  `term_digest`, and whose `execution.command` is that checker's own invocation;
+. `claim: "actually_proven"`, which the validator will refuse for any
+  non-`proof` kind;
+. a `design_proof` naming the technique and its limitations.
+
+Until then the label stays `provisionally_proven`. That is not modesty; it is the
+rule.
+
+== Failure modes the fixture is built to show
+
+[cols="2,3"]
+|===
+| Situation | What the path does
+| A test panics
+| libtest prints `FAILED`; the collector records `result: "failed"` with a detail and a per-test non-zero status; the gate admits the evidence and refuses green. The build fails on the gate, not on the cargo step.
+| A test is `#[ignore]`d
+| Recorded as `skipped` with its reason; it covers nothing and it stops green. Delete the attribute or delete the test — do not let the submission absorb it.
+| The suite does not compile
+| No per-test lines; the collector refuses (a run that executed nothing is not evidence).
+| A new test is added without a coordinate
+| The collector refuses it **by name**. A coordinate invented by the producer would be a fabricated cell.
+| Coverage is claimed beyond the derivation
+| Refused (R4). The report still prints the derived number, so the disagreement is visible rather than averaged away.
+|===

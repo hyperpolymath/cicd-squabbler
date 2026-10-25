@@ -222,6 +222,28 @@ crg-badge:
 test-all: test e2e aspect bench readiness
     @echo "All test categories passed — safe to merge!"
 
+# ── Downstream integration contracts ──────────────────────────────────────────
+# Two published, immutable-revision contracts live in contracts/: the read-only
+# CI invocation of squabble (contracts/squabble), and the evidence format a Rust
+# repository submits to Proven-Tests (contracts/proven-tests). Both suites need
+# bash, awk, coreutils and jq — no Rust and no Idris2 — so they run anywhere.
+# See contracts/README.adoc.
+
+# Run both contract conformance suites
+contract-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bash contracts/squabble/tests/run-conformance.sh
+    bash contracts/proven-tests/tests/run-conformance.sh
+
+# Verify a contract pin exactly as a downstream consumer does: just contract-pin squabble 1.0.0
+contract-pin CONTRACT REVISION:
+    bash contracts/bin/verify-pin.sh {{CONTRACT}} {{REVISION}}
+
+# Regenerate a contract's sha256 manifest after an intended change: just contract-manifest squabble
+contract-manifest CONTRACT:
+    bash contracts/bin/make-shasums.sh contracts/{{CONTRACT}}
+
 # Run all quality checks
 quality: fmt-check lint test
     @echo "All quality checks passed!"

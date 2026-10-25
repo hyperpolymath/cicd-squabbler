@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hyperpolymath/cicd-squabbler/contracts/squabble/schema/envelope.schema.json",
+  "title": "commit-bound gate envelope (squabble-contract/1.0.0)",
+  "description": "A gate document plus the commit it was sampled at. The ONLY input from which legitimately-green can be certified. Produced by contracts/squabble/bin/bind-gate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "subject", "gate"],
+  "properties": {
+    "contract": { "const": "squabble-contract/1.0.0" },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo", "head_sha"],
+      "properties": {
+        "repo": { "type": "string", "pattern": "^[^/[[:space:]]+/[^/[:space:]]+$" },
+        "head_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "The head commit the gate was sampled at. Never a branch name: a branch is a moving pin."
+        },
+        "pr": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+    "gate": { "$ref": "gate.schema.json" }
+  }
+}

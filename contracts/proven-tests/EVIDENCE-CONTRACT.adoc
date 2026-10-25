@@ -1,0 +1,329 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= Proven-Tests evidence contract — revision `proven-tests-evidence/1.0.0`
+:toc: left
+:toclevels: 3
+:sectnums:
+
+[.lead]
+How a *Rust* repository submits evidence that its tests really ran, without
+being able to claim more than it can show. One JSON document, one validator, one
+derived coverage number. Example, property and proof evidence are separate kinds
+with separate obligations, and a claim above `unproven` needs the evidence its
+tier requires — in the same run that this document describes.
+
+IMPORTANT: *Immutability.* Revision `proven-tests-evidence/1.0.0` is frozen.
+Consumers pin the revision id and the `SHASUMS` digest
+(`bash contracts/bin/verify-pin.sh proven-tests 1.0.0`), never a branch. A
+change to a rule id, a field meaning or the decision procedure is a new major
+revision; `2.0.0` is refused by this revision's validator rather than
+reinterpreted (R7).
+
+== 1. What a submitter does (four steps, no Idris2 required)
+
+[source,sh]
+----
+# 1. pin this contract by content, not by branch
+git clone https://github.com/hyperpolymath/proven-tests-and-benches && cd proven-tests-and-benches
+git checkout <40-hex commit>            # v0.2.0 == ffb26772e9e3bbb99f0c7f6cd3796e7d99eb64c1
+bash contracts/bin/verify-pin.sh proven-tests 1.0.0
+
+# 2. run the tests and keep the log and the exit code
+cargo test -- --test-threads=1 2>&1 | tee test.log
+cargo_exit="${PIPESTATUS[0]}"
+
+# 3. turn that one run into evidence (the reference producer)
+bash contracts/proven-tests/bin/collect-evidence.sh \
+  --repo "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" \
+  --log test.log --exit-code "$cargo_exit" \
+  --coords .proven/coords.json \
+  --command-argv '["cargo","test","--","--test-threads=1"]' \
+  --started-at "$STARTED" --finished-at "$FINISHED" \
+  --runner "$ImageOS" --rust "$(rustc --version | cut -d' ' -f2)" \
+  > evidence.json
+
+# 4. admit it, or be refused — and gate the build on the answer
+bash contracts/proven-tests/bin/verify-evidence \
+  --expect-commit "$GITHUB_SHA" --expect-repo "$GITHUB_REPOSITORY" \
+  --require-green evidence.json
+----
+
+The submitter needs `bash`, coreutils, `awk`, `jq` (1.6+) and a Rust toolchain.
+It does **not** need Idris2 (§6). The validator is the gate; the collector is a
+convenience that refuses rather than guesses (§5).
+
+== 2. The document
+
+[source,json]
+----
+{
+  "contract": { "name": "hyperpolymath/proven-tests/evidence", "revision": "1.0.0", "major": 1 },
+  "subject":  { "repo": "owner/name", "commit": "<40 hex>",
+                "producer": { "tool": "proven-tests collect-evidence", "version": "1.0.0" } },
+  "toolchain": { "runner": "ubuntu-24.04", "rust": "1.85.0", "idris2": null },
+  "taxonomy": { "revision": "proven-tests/taxonomy/1", "cells": 238 },
+  "run": { "command": ["cargo","test"], "exit_code": 0,
+           "started_at": "…Z", "finished_at": "…Z", "duration_ms": 2000,
+           "observed_output_digest": "sha256:…" },
+  "tests": [ {
+      "id": "ordering::is_total",
+      "kind": "example",                                  // example | property | proof
+      "coord": { "category": "UnitTest", "aspect": "Functionality" },
+      "result": "passed",                                 // passed | failed | error | skipped | not_run
+      "execution": { "ran": true, "command": ["cargo","test"],
+                     "runner": "ubuntu-24.04",
+                     "started_at": "…Z", "finished_at": "…Z", "duration_ms": 2000,
+                     "exit_code": 0,                      // per-test attributed status
+                     "observed_output_digest": "sha256:…" },
+      "claim": "unproven",                               // unproven | provisionally_proven | actually_proven
+      "evidence": { },                                    // tier-specific, see §3
+      "fixtures": { "silence": { "path": "…", "description": "…" },
+                    "firing":  { "path": "…", "defect_class": "…" } },
+      "anchor": { "log": "test.log", "line": 7 }
+  } ],
+  "coverage_claim": { "cells_covered": 2, "tests_passed": 3, "coords": [ … ] },   // optional
+  "counts": { "records": 3, "executed": 3, "passed": 3, "failed": 0,
+              "error": 0, "skipped": 0, "not_run": 0, "excluded_debt": 0 }        // optional
+}
+----
+
+Machine-readable shape: `schema/evidence-v1.schema.json`. The validator is the
+normative enforcer: it refuses a document with a field it cannot interpret as
+the type it needs, and it never defaults an unknown value to the favourable one
+(an unknown `result` is `R2-result-unknown`, not an implied pass).
+
+`coverage_claim` and `counts` are *claims*. If present they must agree with the
+derivation and with the records (R4, R9). Omitting them is the safest thing a
+producer can do, and the reference collector omits `coverage_claim` entirely: it
+states what ran, not what is covered.
+
+== 3. The honesty model: three axes, never collapsed
+
+A record says three different things. Conflating them is how fabricated green
+happens.
+
+[cols="1,2,2"]
+|===
+| Axis | Values | Meaning
+
+| `result` | `passed` `failed` `error` `skipped` `not_run` | What *this run* did. Only `passed` can be evidence of a property holding.
+| `kind` | `example` `property` `proof` | The *shape* of the assertion: one case, many generated cases, or a machine-checked term.
+| `claim` | `unproven` `provisionally_proven` `actually_proven` | The warrant this submission establishes for the assertion — not the author's opinion of it.
+|===
+
+The tier rules, as enforced:
+
+[cols="1,2,2"]
+|===
+| `kind` | Required evidence | Permitted `claim`
+
+| `example`
+| Nothing beyond the execution record. Carries no `property` or `proof` block.
+| `unproven`, `provisionally_proven` (the latter needs a type-safety certificate and a named framework certificate)
+
+| `property`
+| `evidence.property` with a generator, `shrinker: true`, `cases_run ≥ 1`, and `failures: 0` when it passed. Zero cases is a runner fault, not evidence.
+| `unproven`, `provisionally_proven`
+
+| `proof`
+| `evidence.proof` with `checked: true`, a checker name **and version**, and at least one witnessed rung (`name`, `statement`, `term_digest` as sha256, `file`, `line ≥ 1`). The run must have passed, and its command must be the checker's own invocation.
+| `actually_proven` only
+|===
+
+`actually_proven` is not available to `example` or `property`: sampling is not
+proof, however many cases ran. This mirrors `ProvenTests.Types` in the framework,
+where `PActuallyProven` requires a non-empty `List1 Witnessed` and
+`ActuallyProven` cannot be constructed without it. The difference is that the
+framework checks the proof *term* and this contract can only check that a checker
+was named, ran, and exited 0 — see §8.
+
+A record that did not pass may not claim any tier above `unproven` (R2): a
+citation that was not re-checked in this run evidences nothing about this tree.
+
+== 4. Coverage: derived, never accepted
+
+[source]
+----
+covered_cell(t)  ⇔  t.result = "passed"
+                  ∧ t.execution is a real execution (R1)
+                  ∧ t.coord is in taxonomy revision proven-tests/taxonomy/1
+                  ∧ t is not FixtureDebt
+                  ∧ t has no finding of its own
+coverage         =  |{ (c.category, c.aspect) : covered_cell(t) }|
+cells_total      =  17 × 14 = 238
+----
+
+Consequences, each pinned by a fixture:
+
+* A missing record is **not** coverage. Nothing is inferred from silence; the
+  report prints the true count and the grid shows `.`.
+* A skipped or not-run record is **not** coverage, whatever its claim (§7).
+* A record with any finding is **not** coverage: an inadmissible pass must not
+  paint the map. A forged pass is refused *and* covers nothing.
+* A `FixtureDebt` record is **not** coverage and is **not** counted as a test
+  (`counts.excluded_debt`). This is TEST-DOCTRINE B.4 in the framework
+  repository: "any check with neither a firing fixture nor this annotation is
+  not counted", plus "debt-marked tests are not counted in any ledger". The
+  register may only shrink.
+* A `cannot_fail_by_design` record *is* countable: the property is enforced by
+  the typechecker, which is a stronger thing than a runtime fixture.
+* Cells are typed. `UnitTest/Functionality` and `UnitTest/Dependability` are two
+  cells, and `Unit` (a display name) is not a category at all.
+
+`verify-evidence --grid` prints the 17×14 map to stderr; the JSON on stdout
+carries `coverage.cells_covered`, `coverage.coords` and `coverage.by_category`.
+
+== 5. The reference producer, and what it refuses
+
+`bin/collect-evidence.sh` turns one captured libtest run into a submission. It
+is a convenience with a strict disposition: it refuses (exit 3, nothing written)
+rather than producing a document it cannot stand behind.
+
+[cols="1,3"]
+|===
+| Refusal | Why
+| No per-test lines in the log
+| Zero tests is not evidence, and an empty submission would read as green-adjacent.
+| The libtest summary disagrees with the per-test lines
+| The log is truncated or tampered with; 3 claimed and 1 named is not a rounding error.
+| Exit code 0 with failures, or non-zero with none
+| The harness failed outside the tests, so the run evidences nothing about the suite.
+| A test the coordinates file does not map
+| A coordinate invented by the producer would be a fabricated cell. Refused by name.
+| `--finished-at` before `--started-at`, or a non-UTC timestamp
+| An invented execution window is an invented execution. Both timestamps are required.
+|===
+
+`execution.exit_code` is the status **attributed to that test**: 0 when it
+passed, non-zero when it failed, `null` when it did not run. The aggregate status
+of the whole invocation is `run.exit_code`, and the gate checks that the two
+agree (R11) — including the case where every record passed but the process
+exited non-zero.
+
+== 6. Toolchain
+
+=== 6.1 To submit evidence (a Rust repository)
+
+[cols="1,2"]
+|===
+| Required | Version / note
+| `bash` | 4.0 or later
+| `jq` | 1.6 or later (GitHub-hosted Ubuntu runners ship it)
+| coreutils / awk / sha256 | `sha256sum` or `shasum -a 256`
+| Rust | whichever toolchain the subject crate uses (`toolchain.rust` records it)
+| Idris2 | **not required**
+|===
+
+That is the whole list: the evidence path parses a log and checks JSON. It does
+not compile Idris2 and does not need the framework installed.
+
+=== 6.2 To build or run the Proven-Tests framework itself (Idris2)
+
+Needed only if the subject *is* the framework, or if it authors Idris2 test
+suites. The framework repository pins these; do not invent your own.
+
+[cols="1,3"]
+|===
+| Component | Pin and how it is installed
+| Idris2 | `0.7.0`, pinned in `.mise.toml`, `scripts/install-idris2.sh` and both CI pipelines, and cross-checked by `scripts/check-toolchain-pins.sh` (which fails on drift).
+| Chez Scheme + GMP headers | The chez backend invokes Chez at *build* time, not only to bootstrap: `chezscheme libgmp-dev` (Debian/Ubuntu) or `chez-scheme gmp-dev` (apk).
+| Install | `bash scripts/install-idris2.sh` → installs into `$HOME/.idris2` (idempotent; skips the bootstrap if a compiler is already there).
+| Build | `idris2 --build proven-tests.ipkg`, then `idris2 --install proven-tests.ipkg` so dependents can import it.
+| Suites | `just test` (framework self-test + type-safe suite + spec suite) or `bash scripts/ci-build.sh`, which is the single source of truth for the CI gate.
+| Runtime library path | Idris2 executables need `LD_LIBRARY_PATH` set to `$HOME/.idris2/idris2-*/lib`; both `just test` and `ci-build.sh` derive it from the installed version rather than hardcoding one.
+| Downstream `.ipkg` | `depends = proven-tests`, then `import ProvenTests.Framework`.
+| Framework source pin | tag `v0.2.0` = commit `ffb26772e9e3bbb99f0c7f6cd3796e7d99eb64c1`. Pin the commit; the tag is a locator.
+|===
+
+If a repository only *submits* Rust evidence, none of §6.2 applies. A contract
+that demanded Idris2 to submit a `cargo test` log would be a reason not to
+submit at all.
+
+== 7. Rules, ids and exit semantics
+
+[cols="1,3"]
+|===
+| Rule id | What it refuses
+| `R0-shape` | A document or record that is not an object, or has no `id`.
+| `R1-executed-pass` | A `passed` record without `execution.ran = true`, without a non-empty argv whose first element is not a no-op (`true`, `echo`, `sleep`, …), without integer `duration_ms ≥ 0`, with a non-UTC or inverted timestamp pair, without a `sha256:` digest of its captured output, or with `exit_code ≠ 0`. Also a `failed` record whose own execution exited 0.
+| `R2-not-run-is-not-a-pass` | A `claim` above `unproven` on a record that did not pass in this submission; an unknown `result`.
+| `R3-kind-honesty` | An `example` carrying a property or proof block; a `property` with no generator, no shrinker, zero cases, or failures on a pass; a `proof` that was not checked, names no checker version, has no witnessed rung, or is claimed below `actually_proven`; `actually_proven` claimed by a non-proof kind.
+| `R3-tier-evidence` | A tier claimed without its evidence: `provisionally_proven` needs a type-safety certificate and a `framework_safety`; `actually_proven` needs a `design_proof`; `kategoria_level` outside 1..12.
+| `R4-coord-unknown` | A category or aspect that is not in taxonomy revision `proven-tests/taxonomy/1`.
+| `R4-coverage-claim` | A `coverage_claim` that overstates or omits what the derivation supports, or a `tests_passed` count the records do not back.
+| `R5-labelled-skips` | A `skipped`/`not_run` record with no `skip_reason`; a `failed`/`error` record with no `detail`.
+| `R6-subject-binding` | A `subject.commit` that is not 40 hex, a repo that is not `owner/name`, or a mismatch against `--expect-commit`/`--expect-repo`.
+| `R7-contract-version` | A document whose contract name/major this revision cannot read.
+| `R8-duplicate-id` | The same test id twice.
+| `R9-counts-reconcile` | A `counts` block that disagrees with the records.
+| `R10-fixtures` | A record with no fixture position, or a silence fixture with no reason / a firing fixture with no defect class.
+| `R11-run-consistency` | A `run` block whose `exit_code` disagrees with the records, a record citing a different output digest than its run, or a malformed `run`.
+|===
+
+[cols="1,1,3"]
+|===
+| Code | Name | Meaning
+| `0` | admissible | Every rule passed. With `--require-green`, additionally: no failed/errored/skipped/not-run record, at least one execution, and `run.exit_code` consistent.
+| `3` | refused | A rule fired, or `--require-green` was asked for and the evidence is not green. A finding, not a tool failure.
+| `2` | tool failure | Usage, unreadable file, invalid JSON, more than one JSON document, missing `jq`.
+|===
+
+Admissibility and greenness are deliberately separate. A failing test is
+*admissible evidence of failure* — the thing a reviewer most needs — and it can
+never be green. The `valid/` fixtures are admissible **and** green; the
+`invalid/failing-test-claims-green.json` fixture is admissible and not green.
+
+`green` requires `passed ≥ 1` on an execution: an empty run is not green, it is
+nothing. Neither is a submission whose every test was skipped.
+
+== 8. Known limitations
+
+Stated because a contract that hides its blind spots is a claim, not a contract.
+
+* *Coordinates are declarations.* The validator checks that a coordinate exists
+  in the taxonomy and that a claim is backed by the evidence its tier requires.
+  It cannot check that the coordinate is the *right* one for the test. That is
+  review, and the silence/firing fixture pair is how a coordinate is audited —
+  which is why R10 exists.
+* *The proof term is not checked here.* This revision can require a named
+  checker, a version, a witnessed rung typechecked by that checker in this run,
+  and a passing exit — it cannot re-elaborate the term. `ProvenTests.Types`
+  can; that is what the framework is for.
+* *Per-test status is attributed.* `cargo test` runs many tests in one process,
+  so `execution.exit_code` is the per-test attribution libtest reports, while
+  `run.exit_code` is the process's own status. R11 refuses the two disagreeing.
+* *Binding is the caller's job.* Without `--expect-commit`, the validator cannot
+  know which commit was intended, and a submission for another commit is
+  admissible. Pin it. (`invalid/stale-commit.json` is exercised both ways to
+  make this visible rather than rhetorical.)
+* *The log is not embedded.* Only its sha256 is. Retention is the submitter's
+  job; the digest is what makes the reference checkable.
+* *No network.* Nothing here fetches the framework, the taxonomy or the subject;
+  the taxonomy is pinned inside this revision by digest.
+
+== 9. Change policy
+
+[cols="1,2"]
+|===
+| Change | Version
+| A new rule, a stricter rule, a removed field, a redefined field | major
+| A new optional field, a new fixture for an existing rule, a new rule id that refuses something previously allowed | major (a consumer was relying on the old allowance)
+| Documentation, or a typo that changes no byte of behaviour | patch, with a regenerated `SHASUMS`
+|===
+
+Any change regenerates the manifest
+(`bash contracts/bin/make-shasums.sh contracts/proven-tests`) and must keep
+`bash contracts/proven-tests/tests/run-conformance.sh` green with every planned
+case run.
+
+== 10. Verifying this revision
+
+[source,sh]
+----
+bash contracts/bin/verify-pin.sh proven-tests 1.0.0     # revision + digest, as a consumer checks it
+bash contracts/proven-tests/tests/run-conformance.sh    # 35 cases: 26 documents + 7 recorded log runs + 2 revision/manifest
+----
+
+The suite needs `bash`, `awk`, coreutils and `jq`. It needs **no** Rust and no
+Idris2 — that is part of the claim, and the suite would fail to start without
+them only if the contract had broken it.

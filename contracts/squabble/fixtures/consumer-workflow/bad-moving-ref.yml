@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: CC0-1.0
+# Planted defect: a helper action on a moving ref, in a workflow that otherwise
+# looks pinned. A moving pin anywhere is a moving pin.
+name: gate
+on: pull_request
+permissions:
+  contents: read
+  checks: read
+  statuses: read
+  pull-requests: read
+  actions: read
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hyperpolymath/cicd-squabbler/.github/actions/squabble@b854d17abc0dce296719a349ebe856ff945cf03e
+      - uses: hyperpolymath/some-helper@master
+      - run: squabble fetch "$GITHUB_REPOSITORY" "$PR_NUMBER" | bind-gate --repo "$GITHUB_REPOSITORY" --head-sha "$PR_HEAD_SHA" | legitimate-green

@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# bind-gate — wrap a gate document in the bound envelope of
+# squabble-contract/1.0.0, so a green claim names the commit it was sampled at.
+#
+#   squabble fetch owner/repo 42 \
+#     | bind-gate --repo owner/repo --head-sha "$PR_HEAD_SHA" --pr 42 \
+#     > bound-gate.json
+#
+# A bare gate document carries no commit, so it can be replayed from any run.
+# The envelope fixes the subject; `legitimate-green` refuses to certify without
+# one. The gate is re-emitted field by field, so nothing can ride along inside
+# it: only `required_context`, `run` and `missing_cause` survive.
+#
+#   exit 0  envelope on stdout
+#   exit 3  the input is not a gate document this contract knows
+#   exit 2  usage error, unreadable input, invalid JSON, bad --repo/--head-sha
+#
+# Contract revision: squabble-contract/1.0.0. Writes nothing; reads one document.
+
+set -euo pipefail
+
+readonly CONTRACT_REVISION="squabble-contract/1.0.0"
+readonly EXIT_OK=0
+readonly EXIT_REFUSED=3
+readonly EXIT_USAGE=2
+
+usage() {
+  printf 'usage: bind-gate --repo OWNER/NAME --head-sha <40-hex> [--pr N] [FILE|-]\n' >&2
+  printf '  wraps a `squabble fetch` gate document in a commit-bound envelope\n' >&2
+}
+
+die() {
+  printf 'bind-gate: %s\n' "$*" >&2
+  exit "$EXIT_USAGE"
+}
+
+read -r -d '' JQ_PROGRAM <<'JQ' || true
+def kept:
+  { required_context: .required_context, run: .run }
+  + (if has("missing_cause") then { missing_cause: .missing_cause } else {} end);
+
+(if length != 1 then error("expected exactly one JSON document") else .[0] end) as $doc
+| (if ($doc | type) == "object" and (($doc.checks | type) == "array") then
+     { checks: [ $doc.checks[] | kept ] }
+   else null end) as $gate
+| if $gate == null
+  then { contract: $revision, gate: null, refused: "not-a-gate-document" }
+  else { contract: $revision,
+         subject: { repo: $repo, head_sha: $head, pr: ($pr | if . == "" then null else tonumber end) },
+         gate: $gate }
+  end
+JQ
+
+main() {
+  local repo="" head_sha="" pr="" file="-"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)      [[ $# -ge 2 ]] || die "--repo needs a value"; repo="$2"; shift 2 ;;
+      --head-sha)  [[ $# -ge 2 ]] || die "--head-sha needs a value"; head_sha="$2"; shift 2 ;;
+      --pr)        [[ $# -ge 2 ]] || die "--pr needs a value"; pr="$2"; shift 2 ;;
+      -h|--help)   usage; exit 0 ;;
+      --)          shift; [[ $# -eq 1 ]] || { usage; die "one FILE only"; }; file="$1"; shift ;;
+      -)           file="-"; shift ;;
+      -*)          usage; die "unknown option: $1" ;;
+      *)           [[ "$file" == "-" ]] || { usage; die "one FILE only"; }; file="$1"; shift ;;
+    esac
+  done
+  [[ -n "$repo" ]] || { usage; die "missing --repo"; }
+  [[ -n "$head_sha" ]] || { usage; die "missing --head-sha"; }
+  [[ "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || die "--repo must be OWNER/NAME (got: $repo)"
+  [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || die "--head-sha must be 40 lowercase hex characters (got: $head_sha)"
+  if [[ -n "$pr" && ! "$pr" =~ ^[1-9][0-9]*$ ]]; then
+    die "--pr must be a positive integer (got: $pr)"
+  fi
+  command -v jq >/dev/null 2>&1 || die "jq (1.6 or later) is required"
+  if [[ "$file" != "-" && ! -r "$file" ]]; then
+    die "cannot read $file"
+  fi
+
+  local out rc=0
+  out="$(jq --slurp \
+        --arg revision "$CONTRACT_REVISION" \
+        --arg repo "$repo" \
+        --arg head "$head_sha" \
+        --arg pr "$pr" \
+        "$JQ_PROGRAM" -- "$file" 2>/dev/null)" || rc=$?
+  if (( rc != 0 )); then
+    printf 'bind-gate: %s is not a single valid JSON document\n' "$file" >&2
+    exit "$EXIT_USAGE"
+  fi
+  if printf '%s\n' "$out" | jq -e '.gate == null' >/dev/null 2>&1; then
+    printf 'bind-gate: the input is not a gate document (expected {"checks": [...]})\n' >&2
+    exit "$EXIT_REFUSED"
+  fi
+  printf '%s\n' "$out"
+  exit "$EXIT_OK"
+}
+
+main "$@"

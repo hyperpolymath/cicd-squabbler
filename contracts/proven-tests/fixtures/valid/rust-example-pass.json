@@ -1,0 +1,169 @@
+{
+  "contract": {
+    "name": "hyperpolymath/proven-tests/evidence",
+    "revision": "1.0.0",
+    "major": 1
+  },
+  "subject": {
+    "repo": "hyperpolymath/ordering-demo",
+    "commit": "1111111111111111111111111111111111111111",
+    "producer": {
+      "tool": "proven-tests collect-evidence",
+      "version": "1.0.0"
+    }
+  },
+  "toolchain": {
+    "runner": "ubuntu-24.04",
+    "rust": "1.85.0",
+    "idris2": null
+  },
+  "taxonomy": {
+    "revision": "proven-tests/taxonomy/1",
+    "cells": 238
+  },
+  "tests": [
+    {
+      "id": "ordering::is_total",
+      "kind": "example",
+      "coord": {
+        "category": "UnitTest",
+        "aspect": "Functionality"
+      },
+      "result": "passed",
+      "execution": {
+        "ran": true,
+        "command": [
+          "cargo",
+          "test",
+          "--test",
+          "ordering",
+          "--",
+          "--test-threads=1"
+        ],
+        "runner": "ubuntu-24.04",
+        "started_at": "2026-10-25T10:00:00Z",
+        "finished_at": "2026-10-25T10:00:02Z",
+        "duration_ms": 2000,
+        "exit_code": 0,
+        "observed_output_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "claim": "unproven",
+      "evidence": {},
+      "fixtures": {
+        "silence": {
+          "path": "tests/fixtures/empty.txt",
+          "description": "an empty slice: no pair is ever out of order"
+        },
+        "firing": {
+          "path": "tests/fixtures/inverted.txt",
+          "defect_class": "a pair whose comparator reports both a<b and b<a"
+        }
+      },
+      "anchor": {
+        "log": "test.log",
+        "line": 3
+      }
+    },
+    {
+      "id": "ordering::sorts_pair",
+      "kind": "example",
+      "coord": {
+        "category": "UnitTest",
+        "aspect": "Functionality"
+      },
+      "result": "passed",
+      "execution": {
+        "ran": true,
+        "command": [
+          "cargo",
+          "test",
+          "--test",
+          "ordering",
+          "--",
+          "--test-threads=1"
+        ],
+        "runner": "ubuntu-24.04",
+        "started_at": "2026-10-25T10:00:00Z",
+        "finished_at": "2026-10-25T10:00:02Z",
+        "duration_ms": 2000,
+        "exit_code": 0,
+        "observed_output_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "claim": "unproven",
+      "evidence": {},
+      "fixtures": {
+        "silence": {
+          "path": "tests/fixtures/empty.txt",
+          "description": "an empty slice: no pair is ever out of order"
+        },
+        "firing": {
+          "path": "tests/fixtures/inverted.txt",
+          "defect_class": "a pair whose comparator reports both a<b and b<a"
+        }
+      },
+      "anchor": {
+        "log": "test.log",
+        "line": 3
+      }
+    },
+    {
+      "id": "ordering::is_stable",
+      "kind": "example",
+      "coord": {
+        "category": "RegressionTest",
+        "aspect": "Maintainability"
+      },
+      "result": "passed",
+      "execution": {
+        "ran": true,
+        "command": [
+          "cargo",
+          "test",
+          "--test",
+          "ordering",
+          "--",
+          "--test-threads=1"
+        ],
+        "runner": "ubuntu-24.04",
+        "started_at": "2026-10-25T10:00:00Z",
+        "finished_at": "2026-10-25T10:00:02Z",
+        "duration_ms": 2000,
+        "exit_code": 0,
+        "observed_output_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "claim": "provisionally_proven",
+      "evidence": {
+        "type_safety": {
+          "kategoria_level": 6,
+          "type_system": "Idris2",
+          "verified_by": "ProvenTests.Types.TypeSafetyCertificate"
+        },
+        "framework_safety": "ProvenTests.Cells.provenTestsFrameworkProof"
+      },
+      "fixtures": {
+        "silence": {
+          "path": "tests/fixtures/empty.txt",
+          "description": "an empty slice: no pair is ever out of order"
+        },
+        "firing": {
+          "path": "tests/fixtures/inverted.txt",
+          "defect_class": "a pair whose comparator reports both a<b and b<a"
+        }
+      },
+      "anchor": {
+        "log": "test.log",
+        "line": 3
+      }
+    }
+  ],
+  "counts": {
+    "records": 3,
+    "executed": 3,
+    "passed": 3,
+    "failed": 0,
+    "error": 0,
+    "skipped": 0,
+    "not_run": 0,
+    "excluded_debt": 0
+  }
+}

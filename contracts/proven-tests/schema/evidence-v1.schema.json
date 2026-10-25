@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hyperpolymath/proven-tests-and-benches/contracts/proven-tests/schema/evidence-v1.schema.json",
+  "title": "Proven-Tests evidence submission (proven-tests-evidence/1.0.0)",
+  "description": "The document a repository submits to describe what its tests actually did. This schema is for editors and other tooling; bin/verify-evidence is the normative enforcer, because several rules (derived coverage, tier/kind agreement, per-test status attribution) cannot be expressed here. Unknown fields are ignored by revision 1.0.0 and must not be relied on.",
+  "type": "object",
+  "required": ["contract", "subject", "taxonomy", "tests"],
+  "properties": {
+    "contract": {
+      "type": "object",
+      "required": ["name", "revision", "major"],
+      "properties": {
+        "name": { "const": "hyperpolymath/proven-tests/evidence" },
+        "revision": { "type": "string", "pattern": "^1\\.[0-9]+\\.[0-9]+$" },
+        "major": { "const": 1 }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "required": ["repo", "commit"],
+      "properties": {
+        "repo": { "type": "string", "pattern": "^[^/[[:space:]]+/[^/[:space:]]+$" },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$", "description": "The commit the evidence describes. Evidence naming no commit is replayable." },
+        "producer": { "type": "object", "properties": { "tool": { "type": "string" }, "version": { "type": "string" } } }
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "properties": {
+        "runner": { "type": ["string", "null"] },
+        "rust": { "type": ["string", "null"] },
+        "idris2": { "type": ["string", "null"], "description": "null when the subject does not use Idris2; the evidence path never requires it" }
+      }
+    },
+    "taxonomy": {
+      "type": "object",
+      "required": ["revision", "cells"],
+      "properties": {
+        "revision": { "const": "proven-tests/taxonomy/1" },
+        "cells": { "const": 238 }
+      }
+    },
+    "run": {
+      "type": "object",
+      "description": "The whole invocation: command, aggregate exit status, window, and the digest of the output it produced. R11 checks the records agree with it.",
+      "properties": {
+        "command": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "runner": { "type": ["string", "null"] },
+        "started_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+        "finished_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "exit_code": { "type": "integer" },
+        "observed_output_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      }
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "coord", "result", "execution", "claim", "fixtures"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": { "enum": ["example", "property", "proof"] },
+          "coord": {
+            "type": "object",
+            "required": ["category", "aspect"],
+            "properties": {
+              "category": { "type": "string", "description": "One of the 17 categories of taxonomy proven-tests/taxonomy/1" },
+              "aspect": { "type": "string", "description": "One of the 14 aspects of taxonomy proven-tests/taxonomy/1" }
+            }
+          },
+          "result": { "enum": ["passed", "failed", "error", "skipped", "not_run"] },
+          "detail": { "type": "string", "description": "Required when result is failed or error (R5)" },
+          "skip_reason": { "type": "string", "description": "Required when result is skipped or not_run (R5)" },
+          "execution": {
+            "type": "object",
+            "required": ["ran", "started_at", "finished_at", "duration_ms", "observed_output_digest"],
+            "properties": {
+              "ran": { "type": "boolean" },
+              "command": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+              "runner": { "type": ["string", "null"] },
+              "started_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+              "finished_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+              "duration_ms": { "type": "integer", "minimum": 0 },
+              "exit_code": {
+                "type": ["integer", "null"],
+                "description": "Per-test attributed status: 0 when the test passed, non-zero when it failed, null when it did not run. The aggregate is run.exit_code; R11 checks they agree."
+              },
+              "observed_output_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+            }
+          },
+          "claim": { "enum": ["unproven", "provisionally_proven", "actually_proven"] },
+          "evidence": {
+            "type": "object",
+            "properties": {
+              "type_safety": {
+                "type": "object",
+                "required": ["kategoria_level", "type_system", "verified_by"],
+                "properties": {
+                  "kategoria_level": { "type": "integer", "minimum": 1, "maximum": 12 },
+                  "type_system": { "type": "string", "minLength": 1 },
+                  "verified_by": { "type": "string", "minLength": 1 }
+                }
+              },
+              "framework_safety": { "type": "string", "description": "Required for provisionally_proven: the framework certificate relied on" },
+              "property": {
+                "type": "object",
+                "required": ["generator", "shrinker", "cases_run", "failures"],
+                "properties": {
+                  "generator": { "type": "string", "minLength": 1 },
+                  "shrinker": { "const": true },
+                  "cases_run": { "type": "integer", "minimum": 1 },
+                  "failures": { "type": "integer", "minimum": 0 },
+                  "seed": { "type": "string" }
+                }
+              },
+              "proof": {
+                "type": "object",
+                "required": ["checked", "checker", "theorems"],
+                "properties": {
+                  "checked": { "const": true },
+                  "checker": {
+                    "type": "object",
+                    "required": ["name", "version"],
+                    "properties": { "name": { "type": "string", "minLength": 1 }, "version": { "type": "string", "minLength": 1 } }
+                  },
+                  "design_proof": {
+                    "type": "object",
+                    "properties": { "technique": { "type": "string" }, "limitations": { "type": "array", "items": { "type": "string" } } }
+                  },
+                  "theorems": {
+                    "type": "array",
+                    "minItems": 1,
+                    "description": "The witnessed ladder. Non-empty by construction, mirroring List1 Witnessed in ProvenTests.Types.",
+                    "items": {
+                      "type": "object",
+                      "required": ["name", "statement", "term_digest", "file", "line"],
+                      "properties": {
+                        "name": { "type": "string", "minLength": 1 },
+                        "statement": { "type": "string", "minLength": 1 },
+                        "term_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+                        "file": { "type": "string", "minLength": 1 },
+                        "line": { "type": "integer", "minimum": 1 }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "fixtures": {
+            "type": "object",
+            "description": "TEST-DOCTRINE §2: a silence+firing pair, a monotone cannot-fail-by-design reason, or a dated debt reference. No silent default.",
+            "properties": {
+              "silence": {
+                "type": "object",
+                "required": ["path", "description"],
+                "properties": { "path": { "type": "string" }, "description": { "type": "string", "minLength": 1 } }
+              },
+              "firing": {
+                "type": "object",
+                "required": ["path", "defect_class"],
+                "properties": { "path": { "type": "string" }, "defect_class": { "type": "string", "minLength": 1 } }
+              },
+              "cannot_fail_by_design": { "type": "string", "minLength": 1 },
+              "debt_ref": { "type": "string", "minLength": 1, "description": "Debt-marked tests are excluded from coverage and counts (R10, TEST-DOCTRINE B.4)" }
+            }
+          },
+          "anchor": {
+            "type": "object",
+            "description": "Optional traceability back to the captured log.",
+            "properties": { "log": { "type": "string" }, "line": { "type": "integer", "minimum": 1 } }
+          }
+        }
+      }
+    },
+    "coverage_claim": {
+      "type": "object",
+      "description": "Optional. If present it must equal the derivation (R4), so an overstated claim is refused rather than published.",
+      "properties": {
+        "cells_covered": { "type": "integer", "minimum": 0 },
+        "tests_passed": { "type": "integer", "minimum": 0 },
+        "coords": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["category", "aspect"],
+            "properties": { "category": { "type": "string" }, "aspect": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "description": "Optional. If present it must reconcile with the records (R9).",
+      "properties": {
+        "records": { "type": "integer", "minimum": 0 },
+        "executed": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "error": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "not_run": { "type": "integer", "minimum": 0 },
+        "excluded_debt": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

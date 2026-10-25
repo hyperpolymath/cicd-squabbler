@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: CC0-1.0
+# The reference consumer workflow of squabble-contract/1.0.0.
+#
+# Read-only: the permissions floor is six read scopes, the action is pinned to a
+# commit, the contract is pinned to a commit AND checked against its SHASUMS, and
+# the verdict comes from legitimate-green over a commit-bound envelope.
+name: gate
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+  checks: read
+  statuses: read
+  pull-requests: read
+  actions: read
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  legitimate-green:
+    name: gate / legitimate-green
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3f9a1c4b2d5e6f708192a3b4c5d6e7f809a1b2c3
+        with:
+          persist-credentials: false
+
+      - name: Install pinned squabble (sha256 + build attestation)
+        id: squabble
+        uses: hyperpolymath/cicd-squabbler/.github/actions/squabble@b854d17abc0dce296719a349ebe856ff945cf03e
+
+      - name: Pin the contract and verify its digest
+        env:
+          CONTRACT_SHA: b854d17abc0dce296719a349ebe856ff945cf03e
+        run: |
+          set -euo pipefail
+          git init -q .contract
+          git -C .contract fetch -q --depth 1 \
+            https://github.com/hyperpolymath/cicd-squabbler "$CONTRACT_SHA"
+          git -C .contract checkout -q FETCH_HEAD
+          bash .contract/contracts/bin/verify-pin.sh squabble 1.0.0 \
+            --repo-dir .contract/contracts >/dev/null
+          printf '%s\n' "$PWD/.contract/contracts/squabble/bin" >> "$GITHUB_PATH"
+
+      - name: Sample the gate at the PR head commit
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          squabble fetch "$GITHUB_REPOSITORY" "$PR_NUMBER" \
+            | bind-gate --repo "$GITHUB_REPOSITORY" --head-sha "$PR_HEAD_SHA" --pr "$PR_NUMBER" \
+            > bound-gate.json
+
+      - name: Decide
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          legitimate-green --expect-head-sha "$PR_HEAD_SHA" \
+            --expect-repo "$GITHUB_REPOSITORY" bound-gate.json | tee legitimate-green.json
+
+      - name: Upload the verdict
+        if: always()
+        uses: actions/upload-artifact@0d7fce4d1f6e5b8f0a4c3e2d1b0a9f8e7d6c5b4a
+        with:
+          name: legitimate-green
+          path: legitimate-green.json
+          if-no-files-found: error

@@ -1,0 +1,5 @@
+{
+  "contract": "squabble-contract/1.0.0",
+  "subject": { "repo": "hyperpolymath/example", "head_sha": "1111111111111111111111111111111111111111", "pr": 42 },
+  "gate": { "checks": [{"required_context":"ci / test","run":"passed"},{"required_context":"scan / gitleaks","run":"skipped"}] }
+}

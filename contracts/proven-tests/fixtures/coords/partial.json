@@ -1,0 +1,14 @@
+{
+  "contract": "proven-tests-evidence/1.0.0",
+  "tests": {
+    "ordering::is_total": {
+      "kind": "example",
+      "coord": { "category": "UnitTest", "aspect": "Functionality" },
+      "claim": "unproven",
+      "fixtures": {
+        "silence": { "path": "tests/fixtures/empty_slice.txt", "description": "an empty slice" },
+        "firing": { "path": "tests/fixtures/inverted_pair.txt", "defect_class": "a pair whose comparator reports both a<b and b<a" }
+      }
+    }
+  }
+}

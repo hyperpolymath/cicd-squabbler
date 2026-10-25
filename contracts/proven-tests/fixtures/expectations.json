@@ -1,0 +1,433 @@
+{
+  "contract": "proven-tests-evidence/1.0.0",
+  "note": "Each case is a claim the contract makes about evidence. tests/run-conformance.sh fails unless every planned case ran and matched. `proves` names the sentence in EVIDENCE-CONTRACT.adoc the case keeps honest.",
+  "verify": [
+    {
+      "name": "three executed example tests, unproven and provisionally-proven",
+      "file": "fixtures/valid/rust-example-pass.json",
+      "args": [],
+      "exit": 0,
+      "admissible": true,
+      "green": true,
+      "cells": 2,
+      "rules": [],
+      "proves": "The positive control: real executed evidence is admitted and covers the two distinct coordinates it names."
+    },
+    {
+      "name": "the same submission under --require-green",
+      "file": "fixtures/valid/rust-example-pass.json",
+      "args": [
+        "--require-green",
+        "--expect-commit",
+        "1111111111111111111111111111111111111111",
+        "--expect-repo",
+        "hyperpolymath/ordering-demo"
+      ],
+      "exit": 0,
+      "admissible": true,
+      "green": true,
+      "cells": 2,
+      "rules": [],
+      "proves": "A green claim is available \u2014 and only with the caller's own commit and repo pinned."
+    },
+    {
+      "name": "property sampling and a checked proof, told apart",
+      "file": "fixtures/valid/property-and-proof.json",
+      "args": [],
+      "exit": 0,
+      "admissible": true,
+      "green": true,
+      "cells": 3,
+      "rules": [],
+      "proves": "A property (256 cases, shrinker, no failures) is provisionally-proven; a proof with a checker that ran and one witnessed rung is actually-proven. Neither is allowed to borrow the other's tier."
+    },
+    {
+      "name": "a debt-marked test covers nothing",
+      "file": "fixtures/valid/debt-excluded.json",
+      "args": [],
+      "exit": 0,
+      "admissible": true,
+      "green": true,
+      "cells": 1,
+      "rules": [],
+      "proves": "TEST-DOCTRINE B.4: a FixtureDebt record is admissible but is excluded from coverage and from the test count. Two executed passes cover one cell."
+    },
+    {
+      "name": "a pass with no execution record",
+      "file": "fixtures/invalid/pass-without-execution.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 0,
+      "rules": [
+        "R1-executed-pass"
+      ],
+      "proves": "A `passed` record is not a run. Without execution.ran=true it is inadmissible and covers nothing."
+    },
+    {
+      "name": "a pass whose process exited non-zero",
+      "file": "fixtures/invalid/pass-nonzero-exit.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 0,
+      "rules": [
+        "R1-executed-pass"
+      ],
+      "proves": "exit_code is the process's own word; a pass at exit 1 is refused."
+    },
+    {
+      "name": "a pass with no captured output",
+      "file": "fixtures/invalid/pass-no-output-digest.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 0,
+      "rules": [
+        "R1-executed-pass"
+      ],
+      "proves": "An executed test leaves a log; without a digest of it, the claim cannot be audited."
+    },
+    {
+      "name": "a pass whose timestamps run backwards",
+      "file": "fixtures/invalid/timestamps-inverted.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 0,
+      "rules": [
+        "R1-executed-pass"
+      ],
+      "proves": "finished_at before started_at is a fabricated execution window."
+    },
+    {
+      "name": "a pass produced by a no-op command",
+      "file": "fixtures/invalid/noop-command.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 0,
+      "rules": [
+        "R1-executed-pass"
+      ],
+      "proves": "`true` cannot produce a passing test; the command is part of the evidence."
+    },
+    {
+      "name": "a skipped test claimed as provisionally-proven and counted",
+      "file": "fixtures/invalid/skip-counted-as-pass.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 0,
+      "rules": [
+        "R2-not-run-is-not-a-pass",
+        "R4-coverage-claim",
+        "R5-labelled-skips"
+      ],
+      "proves": "A skip is not a pass and establishes no warrant, and a coverage claim that counts it is refused against the derivation."
+    },
+    {
+      "name": "a skip with no reason",
+      "file": "fixtures/invalid/skip-unlabelled.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 0,
+      "rules": [
+        "R5-labelled-skips"
+      ],
+      "proves": "An unlabelled skip reads as a pass to everyone downstream, so it is refused here."
+    },
+    {
+      "name": "a property that ran zero cases",
+      "file": "fixtures/invalid/property-zero-cases.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 0,
+      "rules": [
+        "R3-kind-honesty"
+      ],
+      "proves": "Zero cases is a runner fault, not sampling evidence."
+    },
+    {
+      "name": "a property with no shrinker",
+      "file": "fixtures/invalid/property-no-shrinker.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 0,
+      "rules": [
+        "R3-kind-honesty"
+      ],
+      "proves": "A property whose failing case could not have been minimised is a weaker object than the taxonomy's property category."
+    },
+    {
+      "name": "a proof naming no witnessed rungs",
+      "file": "fixtures/invalid/proof-no-rungs.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 0,
+      "rules": [
+        "R3-kind-honesty"
+      ],
+      "proves": "Actually-Proven requires a non-empty ladder (List1 Witnessed); an empty ladder is a label without a term."
+    },
+    {
+      "name": "a proof whose checker did not run",
+      "file": "fixtures/invalid/proof-not-checked.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 0,
+      "rules": [
+        "R3-kind-honesty"
+      ],
+      "proves": "A citation that was not re-checked in this run evidences nothing about this tree."
+    },
+    {
+      "name": "an example claiming to be actually-proven",
+      "file": "fixtures/invalid/actually-proven-from-example.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 0,
+      "rules": [
+        "R3-kind-honesty",
+        "R3-tier-evidence"
+      ],
+      "proves": "Tiers cannot be borrowed: actually_proven needs kind=proof with a checker, not an example with a certificate bolted on."
+    },
+    {
+      "name": "a coverage claim larger than the derivation",
+      "file": "fixtures/invalid/coverage-inflated.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 1,
+      "rules": [
+        "R4-coverage-claim"
+      ],
+      "proves": "Coverage is derived from executed passes; a claim of 7 covered cells over 2 tests is refused, and the derivation still reports the true 1."
+    },
+    {
+      "name": "evidence for an older commit, with the commit pinned",
+      "file": "fixtures/invalid/stale-commit.json",
+      "args": [
+        "--expect-commit",
+        "1111111111111111111111111111111111111111"
+      ],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 1,
+      "rules": [
+        "R6-subject-binding"
+      ],
+      "proves": "Evidence from another commit is replayable garbage; with --expect-commit the replay fails."
+    },
+    {
+      "name": "the same stale evidence with nothing pinned",
+      "file": "fixtures/invalid/stale-commit.json",
+      "args": [],
+      "exit": 0,
+      "admissible": true,
+      "green": true,
+      "cells": 1,
+      "rules": [],
+      "proves": "The honest limitation: binding is the caller's job. Without --expect-commit the validator cannot know which commit was intended. This case exists so nobody reads R6 as automatic."
+    },
+    {
+      "name": "a contract major this revision cannot read",
+      "file": "fixtures/invalid/future-major.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 1,
+      "rules": [
+        "R7-contract-version"
+      ],
+      "proves": "A newer evidence format is refused, not reinterpreted in the old vocabulary."
+    },
+    {
+      "name": "the same test id twice",
+      "file": "fixtures/invalid/duplicate-ids.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 1,
+      "rules": [
+        "R8-duplicate-id"
+      ],
+      "proves": "Two records for one id make every count ambiguous."
+    },
+    {
+      "name": "counts that do not reconcile",
+      "file": "fixtures/invalid/counts-lie.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 1,
+      "rules": [
+        "R9-counts-reconcile"
+      ],
+      "proves": "A summary claiming 41 tests over one record is refused: the submitter's own arithmetic is checked."
+    },
+    {
+      "name": "a test that states no fixture position",
+      "file": "fixtures/invalid/no-fixtures.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 0,
+      "rules": [
+        "R10-fixtures"
+      ],
+      "proves": "TEST-DOCTRINE \u00a72: there is no silent default. A test without a fixture pair, a cannot-fail-by-design reason or a debt reference is inadmissible \u2014 and it covers nothing."
+    },
+    {
+      "name": "a coordinate this taxonomy does not have",
+      "file": "fixtures/invalid/unknown-coordinate.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 0,
+      "rules": [
+        "R4-coord-unknown"
+      ],
+      "proves": "\"Unit\" is a display name, not a taxonomy category; an unknown coordinate covers nothing."
+    },
+    {
+      "name": "a failing test in an otherwise green-looking submission",
+      "file": "fixtures/invalid/failing-test-claims-green.json",
+      "args": [
+        "--require-green"
+      ],
+      "exit": 3,
+      "admissible": true,
+      "green": false,
+      "cells": 1,
+      "rules": [],
+      "proves": "Failure evidence is honest and admissible \u2014 and it can never be green. The two questions are separate."
+    },
+    {
+      "name": "a run whose exit code disagrees with its records",
+      "file": "fixtures/invalid/run-consistency.json",
+      "args": [],
+      "exit": 3,
+      "admissible": false,
+      "green": false,
+      "cells": 2,
+      "rules": [
+        "R11-run-consistency"
+      ],
+      "proves": "run.exit_code 1 with no failing record means the harness failed outside the tests; the aggregate and the per-test records must agree (R11)."
+    }
+  ],
+  "collect": [
+    {
+      "name": "a clean cargo test run",
+      "log": "fixtures/libtest/clean.txt",
+      "coords": "fixtures/coords/ordering.json",
+      "exit_code": 0,
+      "expect_exit": 0,
+      "then": {
+        "args": [
+          "--require-green",
+          "--expect-commit",
+          "1111111111111111111111111111111111111111"
+        ],
+        "exit": 0,
+        "admissible": true,
+        "green": true,
+        "cells": 3
+      },
+      "proves": "The reference producer reads three ok lines and three coordinates into an admissible, green submission."
+    },
+    {
+      "name": "a run with one #[ignore]d test",
+      "log": "fixtures/libtest/with-ignored.txt",
+      "coords": "fixtures/coords/ordering.json",
+      "exit_code": 0,
+      "expect_exit": 0,
+      "then": {
+        "args": [
+          "--require-green"
+        ],
+        "exit": 3,
+        "admissible": true,
+        "green": false,
+        "cells": 2
+      },
+      "proves": "An ignored test is recorded as skipped with its reason, covers nothing, and stops a green claim. It is not quietly dropped."
+    },
+    {
+      "name": "a run with a genuine failure",
+      "log": "fixtures/libtest/with-failure.txt",
+      "coords": "fixtures/coords/ordering.json",
+      "exit_code": 1,
+      "expect_exit": 0,
+      "then": {
+        "args": [
+          "--require-green"
+        ],
+        "exit": 3,
+        "admissible": true,
+        "green": false,
+        "cells": 1
+      },
+      "proves": "A failure is recorded as a failure with its detail, is admissible, and is never green."
+    },
+    {
+      "name": "a run that executed nothing",
+      "log": "fixtures/libtest/empty.txt",
+      "coords": "fixtures/coords/ordering.json",
+      "exit_code": 0,
+      "expect_exit": 3,
+      "proves": "Zero tests is not evidence. The collector refuses rather than emitting an empty submission that would read as green-adjacent."
+    },
+    {
+      "name": "a log whose summary disagrees with its test lines",
+      "log": "fixtures/libtest/summary-mismatch.txt",
+      "coords": "fixtures/coords/ordering.json",
+      "exit_code": 0,
+      "expect_exit": 3,
+      "proves": "A log claiming 3 passed while naming 1 is tampered or truncated; the collector refuses."
+    },
+    {
+      "name": "an executed test with no coordinate",
+      "log": "fixtures/libtest/clean.txt",
+      "coords": "fixtures/coords/partial.json",
+      "exit_code": 0,
+      "expect_exit": 3,
+      "proves": "The collector will not invent a coordinate. An unmapped test is refused by name, so coverage cannot be padded."
+    },
+    {
+      "name": "an exit code that disagrees with the log",
+      "log": "fixtures/libtest/clean.txt",
+      "coords": "fixtures/coords/ordering.json",
+      "exit_code": 1,
+      "expect_exit": 3,
+      "proves": "A non-zero exit with no failing test means the harness failed outside the tests; that run evidences nothing about the suite."
+    }
+  ]
+}

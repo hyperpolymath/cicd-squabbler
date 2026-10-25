@@ -1,0 +1,5 @@
+     Running tests/ordering.rs (target/debug/deps/ordering-9f1b2c3d4e5f6a7b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
