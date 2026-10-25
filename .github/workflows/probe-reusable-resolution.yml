@@ -1,0 +1,12 @@
+# TEMPORARY PROBE — deleted before merge. Question it answers: does a
+# job-level reusable-workflow call still resolve from this repository when the
+# callee is owned by the SAME owner (hyperpolymath) rather than metadatastician?
+# Only used to decide where the estate-wide startup_failure actually lives.
+name: Probe reusable resolution
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  probe:
+    uses: hyperpolymath/cicd-suite/.github/workflows/main-estate-audit.yml@bf7dd95cf49733019343ff485c2f45c6b261839c
