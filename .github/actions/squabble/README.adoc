@@ -48,10 +48,73 @@ when squabble exits non-zero, and `run.sh` records the exit code as the
 | `exit-code` (output) | squabble's exit code in run mode; empty when `args` is empty.
 |===
 
-The download and the attestation check always use the workflow's own
-`github.token`, never `token`: an App token minted for the caller's
-repository need not reach this one. This repository is public, so
-`github.token` is enough for both.
+== Permissions and token model
+
+The action's install step and its run mode use different tokens, and the
+download/attestation checks never touch the caller's run-mode token:
+
+[cols="1,1,2"]
+|===
+| Capability | Token | Permission model
+
+| Install the pinned release binary + verify its build provenance
+| `github.token` (GITHUB_TOKEN)
+| `contents: read` suffices to download the release asset of this public
+| repo; `attestations: read` covers `gh attestation verify --format json`.
+| The installation step always uses `github.token`, never `inputs.token`,
+| so an App token minted for the caller's repo never reaches it.
+
+| `squabble diagnose <gate.json>` — read-only engine diagnostic
+| none (no network)
+| Purely local: reads a gate file and prints state plus proposed moves. No
+| GitHub API is called, so no token is needed at all.
+
+| `squabble fetch <owner/repo> <pr>` — read-only PR gate diagnostic
+| GITHUB_TOKEN, but the ruleset read is an Administration surface
+| `gh pr view` reads the PR metadata and check rollup (`contents: read`),
+| yet the base-branch gate read consults the branch rulesets and classic
+| protection (`repos/{slug}/rules/branches/{branch}`, then
+| `branches/{branch}/protection`). GitHub does not offer an
+| `administration` permission for `github.token` at all, and that ruleset
+| read is *Administration: read*: a 403 there is a hard error, never a
+| silently skipped "no gate".
+
+| `squabble verify-satisfied <owner/repo> <pr>` — read-only PR done-check
+| GitHub App installation token
+| Reads the PR through GraphQL (mergeability, reviews, threads, commits)
+| and, for open PRs, the base-branch gate through the REST rules and
+| protection endpoints. `verify-satisfied` reads branch rules, which need
+| *Administration: read*; pass an App installation token via the action's
+| `token` input (the `verify-satisfied` example in <<_usage>> does exactly
+| that). Do not fall back to `github.token`: the run would fail on the
+| ruleset read instead of returning a verdict.
+|===
+
+The `squabble-action.yml` workflow itself asks out only
+`contents: read` + `attestations: read`: it runs the contract suite
+(`tests/squabble_action_test.sh`, all 27 planned cases — a section that is
+skipped fails the run, so nothing can pass silently) and then exercises
+`install.sh`/`run.sh` on a real runner, checking PATH wiring and that exit
+codes come back as step outputs. The deliberate `continue-on-error` run-bad
+case asserts its own failure and non-zero output, so it cannot mask a real
+breakage.
+
+=== No floating refs, no silently skipped gate
+
+Consumers (e.g. `secret-types`) wire the action in by pinning it to a full
+commit SHA of a merged `main`:
+
+[source,yaml]
+----
+- uses: hyperpolymath/cicd-squabbler/.github/actions/squabble@14f853fde902ab2d7631070d87a9dc9122e01013
+----
+
+never `@main`, `@master` or a tag. The binary inside is pinned independently:
+`install.sh` pins the asset by sha256 (`6cbeb457...`) and refuses it unless
+`gh attestation verify` proves it was built by `.github/workflows/release.yml`
+at tag `v0.1.0` from source commit `b854d17...` on a GitHub-hosted runner.
+Nothing is executed until both checks pass, so there is no floating ref and
+no silently skipped gate anywhere in the chain.
 
 == What is checked, in order
 
