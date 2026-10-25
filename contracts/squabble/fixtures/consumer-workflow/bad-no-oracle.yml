@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: CC0-1.0
+# Planted defect: gates on verify-satisfied's exit 0, i.e. on `done`, which a
+# skipped required check satisfies. The workflow is read-only and pinned, and
+# still makes a weaker claim than its name implies.
+name: gate
+on: pull_request
+permissions:
+  contents: read
+  checks: read
+  statuses: read
+  pull-requests: read
+  actions: read
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hyperpolymath/cicd-squabbler/.github/actions/squabble@b854d17abc0dce296719a349ebe856ff945cf03e
+      - run: squabble verify-satisfied "$GITHUB_REPOSITORY" "$PR_NUMBER"

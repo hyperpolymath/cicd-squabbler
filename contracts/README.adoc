@@ -1,0 +1,101 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= Downstream integration contracts
+:toc: preamble
+
+Two contracts live here, one per repository that downstream CI may integrate
+against. Both are *published as immutable revisions*, not as branches: a
+downstream repository pins a revision id and the sha256 manifest that comes
+with it, and a change to any published byte is a new revision.
+
+[cols="1,2,2"]
+|===
+| Contract | Revision | What it pins
+| `squabble/` | `squabble-contract/1.0.0` | How a repository invokes cicd-squabbler read-only from CI, the GitHub permissions that invocation needs, the machine-readable output, the exit semantics, and when the tool may declare `legitimate_green`.
+| `proven-tests/` | `proven-tests-evidence/1.0.0` | How a Rust repository submits real, executed test evidence; how example, property and proof evidence are told apart; how coverage is derived without claiming untaken tests; the required Idris2 toolchain; and a minimal downstream fixture.
+|===
+
+== Layout
+
+[source]
+----
+contracts/
+├── bin/
+│   ├── make-shasums.sh        write or --check a contract's SHASUMS manifest
+│   └── verify-pin.sh          verify a downstream pin (revision + digest) end to end
+├── squabble/
+│   ├── CONTRACT.adoc          the contract itself (normative prose)
+│   ├── REVISION               the revision id (one line)
+│   ├── SHASUMS                sha256 of every file in this directory
+│   ├── schema/                machine-readable shapes: gate, verdict, envelope, output
+│   ├── bin/                   legitimate-green, bind-gate, audit-consumer-workflow
+│   ├── fixtures/              positive and negative fixtures, each with an expectation
+│   └── tests/run-conformance.sh
+└── proven-tests/
+    ├── EVIDENCE-CONTRACT.adoc the contract itself (normative prose)
+    ├── LANDING.adoc           how this package lands in proven-tests-and-benches
+    ├── REVISION, SHASUMS
+    ├── taxonomy-v1.json       the 17 categories × 14 aspects this revision knows
+    ├── schema/
+    ├── bin/                   verify-evidence, collect-evidence
+    ├── fixtures/              positive and negative evidence, libtest logs, expectations
+    ├── downstream-rust-fixture/  a minimal Rust repository that submits evidence
+    └── tests/run-conformance.sh
+----
+
+== Why a revision and not a branch
+
+A downstream CI job that does `uses: hyperpolymath/cicd-squabbler@main` or
+`git clone --branch main` is trusting whatever landed last. Two consequences,
+both measured in this estate:
+
+* A required check silently changes meaning between the run that was reviewed
+  and the run that gates the merge.
+* A green claim becomes unreproducible: nobody can say which rule produced it.
+
+So every pin in these contracts is a content pin:
+
+[cols="1,2"]
+|===
+| Pin | How
+| The contract itself | revision id + `SHASUMS` digest of that revision, recorded by the consumer
+| The squabble action | `uses: hyperpolymath/cicd-squabbler/.github/actions/squabble@<40-hex sha>`
+| The squabble binary | release tag + asset sha256 + build-provenance attestation (checked by `.github/actions/squabble/install.sh`)
+| Proven-Tests evidence tooling | commit sha + `SHASUMS` digest of `contracts/proven-tests`
+|===
+
+`contracts/bin/verify-pin.sh` checks a pin as a consumer would:
+
+[source,sh]
+----
+bash contracts/bin/verify-pin.sh squabble  1.0.0
+bash contracts/bin/verify-pin.sh proven-tests 1.0.0
+----
+
+It fails if the `REVISION` file names a different revision, if any listed file
+changed, if a listed file is missing, or if a file exists that the manifest
+does not list. An unlisted file is a change: the manifest is the closed set.
+
+== What these contracts deliberately do not do
+
+* *They do not move.* A revision is frozen. Fixes ship as `1.0.1`; anything
+  that changes meaning ships as `2.0.0` and consumers opt in.
+* *They do not write.* Neither contract's tooling merges, re-runs, edits,
+  dismisses, or overrides anything. `squabble`'s write-capable subcommands
+  (`fight --apply`, `board`, `inbox-sweep`) are out of contract, and the
+  consumer audit refuses a workflow that calls them.
+* *They do not claim more than they can see.* Where a check cannot be made —
+  a verdict that carries no per-requirement run states, a coordinate a human
+  must review — the tooling says so and refuses, rather than inferring a pass.
+
+== Running the conformance suites
+
+[source,sh]
+----
+just contract-test
+----
+
+which runs both suites. Each suite prints one line per fixture and fails unless
+every planned case ran, so a fixture that stops being exercised cannot quietly
+become a pass. They need `bash`, coreutils and `jq` (v1.6 or later); they do not
+need a Rust or Idris2 toolchain.

@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= Landing the Proven-Tests evidence contract in its own repository
+:toc: preamble
+
+This package is authored and conformance-tested here, in
+`hyperpolymath/cicd-squabbler`, because that is where the downstream-integration
+work lives. It belongs in `hyperpolymath/proven-tests-and-benches`: the format is
+that repository's, and a contract published by the wrong repository is a contract
+nobody pins. This file is the landing checklist, and it is deliberately explicit
+about what must not be done.
+
+== What to copy, where
+
+[cols="2,2,3"]
+|===
+| Here | There | Note
+| `contracts/proven-tests/` | `contracts/proven-tests/` | Whole directory, including `SHASUMS` and `REVISION`. Do not edit a byte: the manifest is what downstream pins.
+| `contracts/bin/make-shasums.sh` | `contracts/bin/make-shasums.sh` | Needed to maintain the manifest and by `verify-pin`.
+| `contracts/bin/verify-pin.sh` | `contracts/bin/verify-pin.sh` | Needed by every consumer, and by the contract's own conformance suite (it is invoked from the docs).
+| `contracts/README.adoc` | `contracts/README.adoc` | Edit the table down to the Proven-Tests row, and drop the squabble row: that contract stays here.
+| `contracts/squabble/` | _not copied_ | Relevant to Proven-Tests only as a consumer (§4 below).
+|===
+
+Suggested commit message:
+
+----
+contracts: publish the Proven-Tests evidence contract, revision 1.0.0
+
+Downstream Rust repositories submit real, executed test evidence as one JSON
+document; verify-evidence derives coverage from executed passes only, refuses a
+skip counted as a pass, and tells example, property and proof evidence apart.
+The package carries its own conformance suite (35 cases) and a minimal
+downstream fixture. Pinned by revision + SHASUMS; not by a branch.
+----
+
+== 1. Add the recipes to the Justfile
+
+The suite needs `bash`, `awk`, coreutils and `jq` — no Rust, no Idris2 — so it
+can run as its own CI job as well as inside the existing gate.
+
+[source,make]
+----
+# Contract conformance: the evidence format downstream repositories submit to.
+contract-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bash contracts/proven-tests/tests/run-conformance.sh
+
+# Verify the published contract as a consumer does: `just contract-pin 1.0.0`
+contract-pin revision:
+    bash contracts/bin/verify-pin.sh proven-tests {{revision}}
+
+# After an intended change: regenerate the manifest, then re-run contract-test.
+contract-manifest:
+    bash contracts/bin/make-shasums.sh contracts/proven-tests
+----
+
+=== 2. Decide where it gates
+
+Two honest options:
+
+* *Its own job* in `.github/workflows/ci.yml` (or `.gitlab-ci.yml`): one step,
+  `just contract-test`. Requires `jq` on the runner, which `ubuntu-latest` has.
+* *Inside the existing gate*: append `contract-test` to the `ci:` recipe's
+  dependencies. Cheaper, but a contract failure then reads as a framework
+  failure in the badge. A separate job is easier to attribute.
+
+Whichever is chosen, the job must not depend on a branch:
+`bash contracts/bin/verify-pin.sh proven-tests 1.0.0` fails if `REVISION` or any
+published byte moved, so a passing job names the exact revision it validated.
+
+== 3. Point the documentation at it
+
+* `README.adoc`: one paragraph under "Using in Your Project", linking
+  `contracts/proven-tests/EVIDENCE-CONTRACT.adoc` and the fixture.
+* `docs/`: add the contract to whichever index lists `docs/`; the contract's
+  §1 is the only part a Rust submitter needs to read.
+* `TEST-NEEDS.adoc`: the "why this file is load-bearing" section is the same
+  argument this contract mechanises — link it, and say so.
+* `DEBT.md`: record that revision 1.0.0 cannot re-elaborate a proof term (§8 of
+  the contract). `ProvenTests.Types` can; the validator cannot, and the
+  difference should be visible to someone reading the debt register.
+
+== 4. Where the two contracts meet
+
+They are independent revisions and must be pinned separately.
+
+[cols="1,2"]
+|===
+| Proven-Tests evidence contract (this package)
+| What a *Rust* subject submits: executed tests, tiers, derived coverage.
+| squabble downstream contract (this repository, `contracts/squabble`)
+| How *any* repository gates a PR on required checks and decides
+  `legitimate_green`. Proven-Tests' own CI can consume it, and if it does, it
+  must not use Proven-Tests' evidence as a substitute for a required check:
+  evidence is not a check run, and a green evidence document does not satisfy a
+  ruleset.
+|===
+
+That last sentence is the one integration mistake worth naming in both
+repositories: *evidence before a check is not a passed check.* `squabble
+fetch` reports what the ruleset required and what ran; a Proven-Tests submission
+reports what a suite established. Neither substitutes for the other.
+
+== 5. Landing checklist
+
+. `git checkout -b contracts/evidence-1.0.0` in the Proven-Tests repository.
+. Copy the files per the table above; copy nothing else.
+. `bash contracts/bin/verify-pin.sh proven-tests 1.0.0` → must print the
+  revision and the `SHASUMS` digest. If it fails, the copy is incomplete — not
+  the manifest.
+. `bash contracts/proven-tests/tests/run-conformance.sh` → `35 passed, 0 failed,
+  35/35 planned cases ran`. A number below 35 planned is a refusal, not a pass.
+. Add the `contract-test` recipe and the CI job; run it on the branch.
+. Record the published pin in the PR body:
++
+[source]
+----
+contract: proven-tests-evidence/1.0.0
+shasums:  sha256:<as printed by verify-pin.sh>
+----
+. After merge, tag `v0.3.0` (the next tag, not a re-tag), and make that tag's
+   commit the pinned one for downstream repositories. Never move an existing tag:
+   the manifest protects the bytes, but a moved tag still wastes a reviewer's
+   afternoon.
+
+== 6. What must not be done
+
+* *Do not edit a published revision in place.* A fixed typo that changes no byte
+  of behaviour is `1.0.1` with a regenerated manifest; anything else is a new
+  major.
+* *Do not regenerate `SHASUMS` to "make the check pass".* The check exists to
+  fail when the bytes moved. If they moved by accident, restore them.
+* *Do not let a downstream CI call `main`.* Every document in this package pins
+  by commit or by digest; a branch is a moving pin.
+* *Do not add a rule without a fixture.* The conformance suite counts planned
+  cases, so a fixture that stops being exercised fails the run rather than
+  quietly becoming a pass.
+* *Do not present the fixture crate as executed evidence.* No `cargo test` ran in
+  the environment where this package was written; the fixture's own workflow is
+  the first place it compiles. Any claim to the contrary would be the exact
+  defect the contract refuses.

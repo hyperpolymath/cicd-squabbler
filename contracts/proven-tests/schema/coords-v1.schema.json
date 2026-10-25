@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hyperpolymath/proven-tests-and-benches/contracts/proven-tests/schema/coords-v1.schema.json",
+  "title": "coordinate map for collect-evidence.sh",
+  "description": "The repository's declaration of what each test is and where it sits: kind, typed coordinate, claim tier, tier evidence and fixture position, keyed by the test id libtest prints. README of the downstream fixture explains why this is a declaration a human reviews: a coordinate cannot be derived from a test name.",
+  "type": "object",
+  "required": ["tests"],
+  "properties": {
+    "contract": { "type": "string" },
+    "tests": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["kind", "coord", "claim", "fixtures"],
+        "properties": {
+          "kind": { "enum": ["example", "property", "proof"] },
+          "coord": {
+            "type": "object",
+            "required": ["category", "aspect"],
+            "properties": { "category": { "type": "string" }, "aspect": { "type": "string" } }
+          },
+          "claim": { "enum": ["unproven", "provisionally_proven", "actually_proven"] },
+          "evidence": { "type": "object" },
+          "fixtures": { "type": "object" }
+        }
+      }
+    }
+  }
+}

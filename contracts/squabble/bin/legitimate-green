@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# legitimate-green — the normative decision procedure of
+# squabble-contract/1.0.0, applied to a document on disk.
+#
+#   legitimate-green bound-gate.json
+#   legitimate-green --expect-head-sha "$PR_HEAD_SHA" bound-gate.json
+#   squabble fetch owner/repo 42 \
+#     | bind-gate --repo owner/repo --head-sha "$PR_HEAD_SHA" --pr 42 \
+#     | legitimate-green --expect-head-sha "$PR_HEAD_SHA"
+#
+# Reads JSON from FILE, or from stdin when FILE is `-`. Writes ONE JSON document
+# to stdout and nothing else; diagnostics go to stderr.
+#
+#   exit 0  legitimate_green — a bound envelope whose every required check has
+#           the run `passed`.
+#   exit 3  anything else: not_green, or not_certifiable (an unbound gate, a
+#           verify-satisfied verdict document, an unknown document). A finding,
+#           not a tool failure, matching squabble's own 3/4/5 convention.
+#   exit 2  the tool could not do its job: bad usage, unreadable file, invalid
+#           JSON, more than one JSON document, jq missing.
+#
+# Contract revision: squabble-contract/1.0.0. See ../CONTRACT.adoc §5.
+#
+# This script writes nothing anywhere. It holds no token and makes no network
+# call: it cannot merge, re-run, edit, dismiss or override, so no input to it can
+# turn a non-green gate into a green one.
+
+set -euo pipefail
+
+readonly CONTRACT_REVISION="squabble-contract/1.0.0"
+readonly EXIT_GREEN=0
+readonly EXIT_REFUSED=3
+readonly EXIT_USAGE=2
+
+usage() {
+  printf 'usage: legitimate-green [--expect-head-sha SHA] [--expect-repo OWNER/NAME]\n' >&2
+  printf '                        [--allow-unbound] FILE|-\n' >&2
+  printf '  --allow-unbound  evaluate a bare gate document for triage; it still exits 3,\n' >&2
+  printf '                   because an unbound gate names no commit and cannot certify.\n' >&2
+}
+
+die() {
+  printf 'legitimate-green: %s\n' "$*" >&2
+  exit "$EXIT_USAGE"
+}
+
+# The decision procedure. `$expect_head` and `$expect_repo` are empty when
+# unset; `$allow_unbound` is a boolean. Everything unknown fails closed: an
+# unrecognised run value blocks, an unrecognised document shape is not
+# certifiable.
+read -r -d '' JQ_PROGRAM <<'JQ' || true
+def reason_for:
+  if . == "missing" then "required check has no run bound on the head commit (nothing reported)"
+  elif . == "pending" then "required check has not completed"
+  elif . == "failed" then "required check ran and did not pass (failure, error, timeout, cancelled, startup_failure, or an unrecognised conclusion)"
+  elif . == "skipped" then "required check concluded skipped/neutral: GitHub accepts it for merge, but it carries no evidence"
+  else "unrecognised run state: fail closed" end;
+
+def hex40: type == "string" and test("^[0-9a-f]{40}$");
+def slug: type == "string" and test("^[^/[:space:]]+/[^/[:space:]]+$");
+
+def analyse($gate):
+  if (($gate | type) != "object") or (($gate.checks | type) != "array") then
+    { shape_ok: false, requirement_count: 0, passed_evidence_count: 0,
+      evidence_free: [], blocking: [] }
+  else
+    [ $gate.checks[]
+      | { context: (if (.required_context | type) == "string" then .required_context else "" end),
+          run: (if (.run | type) == "string" then .run else "invalid" end) } ] as $c
+    | ($c | map(select(.run == "passed"))) as $ok
+    | ($c | map(select(.run != "passed"))) as $bad
+    | { shape_ok: true,
+        requirement_count: ($c | length),
+        passed_evidence_count: ($ok | length),
+        evidence_free: [ $bad[] | select(.run == "skipped") | .context ],
+        blocking: [ $bad[] | { context: .context, run: .run, reason: (.run | reason_for) } ] }
+  end;
+
+def subject_of($kind; $doc):
+  if $kind == "envelope" then ($doc.subject // {})
+  elif $kind == "verdict" then
+    { repo: ($doc.repo // null), head_sha: ($doc.head_oid // null), pr: ($doc.pr // null) }
+  else null end;
+
+def subject_problems($kind; $s; $expect_head; $expect_repo):
+  if $kind != "envelope" then []
+  else
+    [ if ($s | type) != "object" then "subject-invalid" else empty end,
+      if (($s.repo // "") | slug) | not then "subject-repo-invalid" else empty end,
+      if (($s.head_sha // "") | hex40) | not then "subject-head-sha-not-a-commit" else empty end,
+      if ((($s.pr // null) | type) == "null")
+           or (((($s.pr // null) | type) == "number") and (($s.pr // 0) > 0))
+        then empty else "subject-pr-invalid" end,
+      if $expect_head != "" and (($s.head_sha // "") != $expect_head) then "head-sha-mismatch" else empty end,
+      if $expect_repo != "" and (($s.repo // "") != $expect_repo) then "repo-mismatch" else empty end
+    ]
+  end;
+
+def analyse_verdict($doc):
+  { shape_ok: true, requirement_count: null, passed_evidence_count: null,
+    evidence_free: (if ($doc.evidence_free | type) == "array" then $doc.evidence_free else [] end),
+    blocking: [] };
+
+def kind_of($doc):
+  if ($doc | type) != "object" then "unknown"
+  elif ($doc | has("checks")) then "gate"
+  elif ($doc | has("gate")) and ($doc | has("subject")) then "envelope"
+  elif ($doc | has("done")) and ($doc | has("evidence_free")) then "verdict"
+  else "unknown" end;
+
+(if length != 1 then error("expected exactly one JSON document") else .[0] end) as $doc
+| kind_of($doc) as $kind
+| subject_of($kind; $doc) as $subject
+| analyse(if $kind == "envelope" then $doc.gate
+            elif $kind == "gate" then $doc
+            elif $kind == "verdict" then $doc
+            else null end) as $a_raw
+| (if $kind == "verdict" then analyse_verdict($doc) else $a_raw end) as $a
+| subject_problems($kind; $subject; $expect_head; $expect_repo) as $sub
+| ( [ if $kind == "unknown" then "unknown-document" else empty end,
+      if $kind == "verdict" then "verdict-input-cannot-certify" else empty end,
+      if $kind == "gate" then "unbound-gate" else empty end,
+      if ($kind == "gate" or $kind == "envelope") and ($a.shape_ok | not) then "gate-shape-invalid" else empty end,
+      if ($kind == "gate" or $kind == "envelope") and $a.requirement_count == 0 then "no-required-checks" else empty end,
+      $sub[]
+    ] | unique ) as $reasons
+| ( if $kind == "verdict" or $kind == "unknown" or ($a.shape_ok | not) then "not_certifiable"
+    elif $kind == "gate" then "not_certifiable"
+    elif ($sub | length) > 0 then "not_green"
+    elif $a.requirement_count == 0 then "not_green"
+    elif ($a.blocking | length) == 0 then "legitimate_green"
+    else "not_green" end ) as $verdict
+| { contract: "squabble-contract/1.0.0",
+    input: $kind,
+    verdict: $verdict,
+    legitimate_green: ($verdict == "legitimate_green"),
+    subject: $subject,
+    subject_bound: (($kind == "envelope") and (($sub | length) == 0)),
+    requirement_count: $a.requirement_count,
+    passed_evidence_count: $a.passed_evidence_count,
+    evidence_free: $a.evidence_free,
+    blocking: $a.blocking,
+    reasons: $reasons }
+JQ
+
+main() {
+  local expect_head="" expect_repo="" allow_unbound="false" file="" arg
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    case "$arg" in
+      --expect-head-sha) [[ $# -ge 2 ]] || die "--expect-head-sha needs a value"; expect_head="$2"; shift 2 ;;
+      --expect-repo)     [[ $# -ge 2 ]] || die "--expect-repo needs a value"; expect_repo="$2"; shift 2 ;;
+      --allow-unbound)   allow_unbound="true"; shift ;;
+      -h|--help)         usage; exit 0 ;;
+      --)                shift; [[ $# -eq 1 ]] || { usage; die "one FILE only"; }; file="$1"; shift ;;
+      -)                 [[ -z "$file" ]] || { usage; die "one FILE only"; }; file="-"; shift ;;
+      -*)                usage; die "unknown option: $arg" ;;
+      *)                 [[ -z "$file" ]] || { usage; die "one FILE only"; }; file="$arg"; shift ;;
+    esac
+  done
+  [[ -n "$file" ]] || { usage; die "missing FILE"; }
+  command -v jq >/dev/null 2>&1 || die "jq (1.6 or later) is required"
+  if [[ "$file" != "-" && ! -r "$file" ]]; then
+    die "cannot read $file"
+  fi
+
+  local out rc=0
+  # --slurp so that a file holding two JSON documents is refused rather than
+  # silently evaluated twice; the program itself requires exactly one document.
+  out="$(jq --slurp \
+        --arg expect_head "$expect_head" \
+        --arg expect_repo "$expect_repo" \
+        --argjson allow_unbound "$allow_unbound" \
+        "$JQ_PROGRAM" -- "$file" 2>/dev/null)" || rc=$?
+  if (( rc != 0 )); then
+    printf 'legitimate-green: %s is not a single valid JSON document\n' "$file" >&2
+    exit "$EXIT_USAGE"
+  fi
+
+  printf '%s\n' "$out"
+  if printf '%s\n' "$out" | jq -e '.legitimate_green == true' >/dev/null 2>&1; then
+    exit "$EXIT_GREEN"
+  fi
+  exit "$EXIT_REFUSED"
+}
+
+main "$@"

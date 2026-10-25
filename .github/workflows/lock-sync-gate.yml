@@ -8,7 +8,7 @@ name: Lock Sync Gate
 # of a repository's CI that way, because Dependabot rewrites `uses:` refs in the
 # YAML and cannot touch the lockfile. Measured across 200 repositories on
 # 2026-09-22: 39 had silently dead CI from exactly this cause.
-# See hyperpolymath/standards#968.
+# See metadatastician/standards#968.
 #
 # This workflow deliberately carries NO `uses:` of its own. It checks out by
 # calling git in a `run:` step instead of using actions/checkout, so it has no

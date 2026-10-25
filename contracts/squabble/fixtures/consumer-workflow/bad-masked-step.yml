@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: CC0-1.0
+# Planted defect: the gate's failure cannot fail the job.
+name: gate
+on: pull_request
+permissions:
+  contents: read
+  checks: read
+  statuses: read
+  pull-requests: read
+  actions: read
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hyperpolymath/cicd-squabbler/.github/actions/squabble@b854d17abc0dce296719a349ebe856ff945cf03e
+      - name: Decide
+        continue-on-error: true
+        run: |
+          legitimate-green bound-gate.json

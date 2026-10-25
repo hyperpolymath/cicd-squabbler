@@ -1,0 +1,16 @@
+{
+  "contract": "proven-tests/taxonomy/1",
+  "source": "hyperpolymath/proven-tests-and-benches src/ProvenTests/Types.idr (TestCategory, TestAspect); the estate standard defines 16 categories, Typesafe is a local 17th extension (DEBT S-4 in that repository).",
+  "cells": 238,
+  "categories": [
+    "UnitTest", "PointToPoint", "EndToEnd", "BuildTest", "ExecutionRuntime",
+    "ReflexiveTest", "LifecycleTest", "SmokeTest", "PropertyBasedTest",
+    "MutationTest", "FuzzTest", "ContractInvariantTest", "RegressionTest",
+    "ChaosResilienceTest", "CompatibilityTest", "ProofRegressionTest", "TypeSafeTest"
+  ],
+  "aspects": [
+    "Dependability", "Security", "Usability", "Interoperability", "Safety",
+    "Performance", "Functionality", "Versability", "Accessibility",
+    "Maintainability", "Privacy", "Observability", "Reproducibility", "Portability"
+  ]
+}

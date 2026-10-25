@@ -1,0 +1,3 @@
+silence fixture — a pair that is already in order.
+
+The sort must return it unchanged and must not report instability.

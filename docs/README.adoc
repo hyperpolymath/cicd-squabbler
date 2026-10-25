@@ -10,6 +10,11 @@ Primary tracks:
 * `whitepapers/academic/` for research-facing whitepapers
 * `whitepapers/industry/` for industry/outreach whitepapers
 
+Downstream integration contracts (published revisions, not branches):
+
+* `../contracts/squabble/CONTRACT.adoc` — `squabble-contract/1.0.0`
+* `../contracts/proven-tests/EVIDENCE-CONTRACT.adoc` — `proven-tests-evidence/1.0.0`
+
 Core docs:
 
 * `maintenance/MAINTENANCE-CHECKLIST.md`

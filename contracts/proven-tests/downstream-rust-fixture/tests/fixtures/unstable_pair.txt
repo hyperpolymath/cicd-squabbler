@@ -1,0 +1,4 @@
+firing fixture — equal keys whose relative order flips between runs.
+
+Specimen of the declared defect class for the stability property: keys 1,1 with
+seq 0,1 must stay in seq order after sorting.

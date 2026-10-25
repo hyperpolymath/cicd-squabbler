@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MPL-2.0
+#
+# A minimal subject for proven-tests-evidence/1.0.0: one crate, one integration
+# test file, three tests, a coordinate map, and a workflow that submits evidence.
+[package]
+name = "ordering-demo"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Minimal downstream fixture for the Proven-Tests evidence contract"
+license = "MPL-2.0"
+publish = false
+
+[dependencies]

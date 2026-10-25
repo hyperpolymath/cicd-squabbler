@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hyperpolymath/cicd-squabbler/contracts/squabble/schema/verdict.schema.json",
+  "title": "squabble verify-satisfied report (squabble-contract/1.0.0)",
+  "description": "The JSON `squabble verify-satisfied` writes to stdout. It answers 'is there agent work left', NOT 'is this a legitimate green': it carries no per-requirement run states, and a pending required check is not an agent item. This document can never certify green.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repo", "pr", "head_oid", "base_ref", "done", "agent_items", "held_by_human", "evidence_free", "notes"],
+  "properties": {
+    "repo": { "type": "string", "pattern": "^[^/[[:space:]]+/[^/[:space:]]+$" },
+    "pr": { "type": "integer", "minimum": 1 },
+    "head_oid": { "type": "string", "minLength": 1 },
+    "base_ref": { "type": "string", "minLength": 1 },
+    "done": { "type": "boolean" },
+    "agent_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+          "kind": {
+            "enum": ["conflicting", "mergeability_unknown", "draft", "required_not_satisfied", "check_failed", "unresolved_thread", "changes_requested", "review_bot_pending", "auto_merge_not_armed", "wrong_merge_method", "branch_behind", "merge_queue", "unverified_commits", "awaiting_approval", "awaiting_deployment", "awaiting_human_merge"]
+          }
+        }
+      }
+    },
+    "held_by_human": { "type": "array", "items": { "type": "object", "required": ["kind"] } },
+    "evidence_free": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Required contexts satisfied by a skipped/neutral run. Non-empty means the merge would be ruleset-legitimate and evidence-free."
+    },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  }
+}

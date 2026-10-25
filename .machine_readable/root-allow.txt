@@ -102,3 +102,13 @@ CHANGELOG.adoc              # Project documentation (AsciiDoc-by-default).
 CODE_OF_CONDUCT.adoc        # Project documentation (AsciiDoc-by-default).
 SECURITY.adoc               # Project documentation (AsciiDoc-by-default).
 .mise.toml                  # Repo-specific mise config; must sit at the root to be found.
+
+# ─── Declared 2026-10-25: downstream integration contracts.
+#     Two published, immutable-revision contracts that OTHER repositories
+#     integrate against: the read-only squabble CI invocation, and the
+#     Proven-Tests evidence format a Rust repository submits to. They are a
+#     top-level component rather than documentation: a consumer clones this
+#     tree at a pinned commit and runs contracts/bin/ from it, so the path is
+#     part of the contract's published surface and cannot be moved without
+#     breaking every pin. See contracts/README.adoc.
+contracts/

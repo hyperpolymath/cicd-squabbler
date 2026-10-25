@@ -1,0 +1,433 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# verify-evidence — admit, refuse and derive coverage for a Proven-Tests evidence
+# submission. This is the normative implementation of
+# proven-tests-evidence/1.0.0 (see ../EVIDENCE-CONTRACT.adoc).
+#
+#   verify-evidence evidence.json
+#   verify-evidence --expect-commit "$GITHUB_SHA" --expect-repo "$GITHUB_REPOSITORY" \
+#                   --require-green evidence.json
+#
+# Writes ONE JSON document to stdout; the optional coverage grid goes to stderr.
+#
+#   exit 0  admissible. With --require-green, also green: nothing failed, nothing
+#           was skipped or not run, and at least one test actually executed and
+#           passed.
+#   exit 3  refused: at least one rule failed, or --require-green was asked for
+#           and the evidence is not green. A finding, never a pass.
+#   exit 2  the tool could not do its job (usage, unreadable file, invalid JSON,
+#           missing jq).
+#
+# What it will not do: infer that a test ran. A `passed` record without an
+# execution record, timestamps, an exit code and a captured-output digest is a
+# finding (R1), and coverage counts only records that pass R1. A skipped record
+# is never a pass (R2). A proof claim needs a checker that ran and at least one
+# witnessed rung (R3). A coverage claim that outruns the derivation is refused
+# (R4). Debt-marked records are excluded from coverage entirely, as the
+# doctrine's B.4 requires (R10).
+
+set -euo pipefail
+
+readonly CONTRACT="proven-tests-evidence/1.0.0"
+readonly CONTRACT_NAME="hyperpolymath/proven-tests/evidence"
+readonly CONTRACT_MAJOR=1
+readonly EXIT_ADMISSIBLE=0
+readonly EXIT_REFUSED=3
+readonly EXIT_USAGE=2
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SELF_DIR
+readonly TAXONOMY="${SELF_DIR}/../taxonomy-v1.json"
+
+usage() {
+  printf 'usage: verify-evidence [--expect-commit SHA] [--expect-repo OWNER/NAME]\n' >&2
+  printf '                       [--require-green] [--grid] FILE|-\n' >&2
+}
+
+die() {
+  printf 'verify-evidence: %s\n' "$*" >&2
+  exit "$EXIT_USAGE"
+}
+
+read -r -d '' JQ_PROGRAM <<'JQ' || true
+def nonempty: type == "string" and (length > 0);
+def hex40: type == "string" and test("^[0-9a-f]{40}$");
+def slug: type == "string" and test("^[^/[:space:]]+/[^/[:space:]]+$");
+def iso: type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+def sha256: type == "string" and test("^sha256:[0-9a-f]{64}$");
+def int: type == "number" and . == floor;
+
+def noop_argv0: ["true", "false", ":", "echo", "printf", "sleep", "cat", "head", "tail", "yes"];
+
+def finding($rule; $id; $msg): { rule: $rule, test: $id, message: $msg };
+
+# is_debt: the record declares a fixture debt. Debt-marked tests are not counted
+# in any ledger (TEST-DOCTRINE B.4), so they cover nothing.
+def is_debt: ((.fixtures.debt_ref? // null) | nonempty);
+
+# pass_ok: a PASS that is actually backed by an execution. Coverage is derived
+# from this predicate only, so a forged pass is inadmissible AND covers nothing.
+def pass_ok:
+  [ (.result == "passed"),
+    ((.execution.ran? // false) == true),
+    ((.execution.exit_code? // null) == 0),
+    (((.execution.command? // []) | type) == "array"),
+    (((.execution.command? // []) | length) > 0),
+    (((.execution.command? // [])[0] // "") as $c0 | (noop_argv0 | index($c0)) == null),
+    ((.execution.started_at? // "") | iso),
+    ((.execution.finished_at? // "") | iso),
+    ((.execution.started_at? // "") <= (.execution.finished_at? // "")),
+    (((.execution.duration_ms? // -1) | int) and ((.execution.duration_ms? // -1) >= 0)),
+    ((.execution.observed_output_digest? // "") | sha256)
+  ] | all;
+
+def coord_known($tax): (.coord? // null) as $c
+  | ($c | type) == "object"
+    and (($tax.categories | index($c.category)) != null)
+    and (($tax.aspects | index($c.aspect)) != null);
+
+def coord_key: (.category | tostring) + "/" + (.aspect | tostring);
+
+def check_test($tax):
+  . as $t
+  | ($t.id? // "") as $id
+  | ($t.result? // "") as $res
+  | ($t.kind? // "") as $kind
+  | ($t.claim? // "") as $claim
+  | ($t.evidence? // {}) as $ev
+  | ($t.fixtures? // null) as $fx
+  | [
+      if (($t | type) != "object") then finding("R0-shape"; "-"; "a test record is not an object")
+      elif ($id | nonempty | not) then finding("R0-shape"; "-"; "a test record has no id")
+      else empty end,
+      if ($id | nonempty) then
+        (if (["example", "property", "proof"] | index($kind)) == null
+           then finding("R3-kind-honesty"; $id; "kind is \"" + ($kind | tostring) + "\", not example|property|proof") else empty end),
+        (if ($tax.categories | index($t.coord.category)) == null
+           then finding("R4-coord-unknown"; $id; "category \"" + (($t.coord.category // "") | tostring) + "\" is not in taxonomy " + $tax.contract) else empty end),
+        (if ($tax.aspects | index($t.coord.aspect)) == null
+           then finding("R4-coord-unknown"; $id; "aspect \"" + (($t.coord.aspect // "") | tostring) + "\" is not in taxonomy " + $tax.contract) else empty end),
+        (if (["passed", "failed", "error", "skipped", "not_run"] | index($res)) == null
+           then finding("R2-result-unknown"; $id; "result is \"" + ($res | tostring) + "\", not passed|failed|error|skipped|not_run") else empty end),
+        (if (["unproven", "provisionally_proven", "actually_proven"] | index($claim)) == null
+           then finding("R3-tier-evidence"; $id; "claim is \"" + ($claim | tostring) + "\", not unproven|provisionally_proven|actually_proven") else empty end)
+      else empty end,
+
+      # ── R1: a pass is a run ─────────────────────────────────────────────
+      if ($res == "passed") then
+        (if ((.execution.ran? // false) != true)
+           then finding("R1-executed-pass"; $id; "claimed passed with execution.ran != true: a claim is not a run") else empty end),
+        (if ((.execution.exit_code? // null) != 0)
+           then finding("R1-executed-pass"; $id; "claimed passed with execution.exit_code " + ((.execution.exit_code? // "absent") | tostring)) else empty end),
+        (if (((.execution.command? // []) | length) == 0)
+           then finding("R1-executed-pass"; $id; "claimed passed with no command recorded") else empty end),
+        (if (((.execution.command? // [])[0] // "") as $c0 | (noop_argv0 | index($c0)) != null)
+           then finding("R1-executed-pass"; $id; "command[0] is \"" + (.execution.command[0]) + "\", a no-op: it cannot produce a passing test") else empty end),
+        (if (((.execution.started_at? // "") | iso) | not)
+           then finding("R1-executed-pass"; $id; "claimed passed without a valid UTC started_at (YYYY-MM-DDTHH:MM:SSZ)") else empty end),
+        (if (((.execution.finished_at? // "") | iso) | not)
+           then finding("R1-executed-pass"; $id; "claimed passed without a valid UTC finished_at (YYYY-MM-DDTHH:MM:SSZ)") else empty end),
+        (if (((.execution.started_at? // "") | iso) and ((.execution.finished_at? // "") | iso)) then
+           (if ((.execution.finished_at? // "") < (.execution.started_at? // ""))
+              then finding("R1-executed-pass"; $id; "finished_at precedes started_at") else empty end)
+         else empty end),
+        (if ((((.execution.duration_ms? // -1) | int) | not))
+           then finding("R1-executed-pass"; $id; "claimed passed without an integer duration_ms") else empty end),
+        (if (((.execution.observed_output_digest? // "") | sha256) | not)
+           then finding("R1-executed-pass"; $id; "claimed passed with no sha256 digest of the output it produced; an executed test leaves a log") else empty end)
+      else empty end,
+
+      # ── R2: not-run is not a pass, and a non-pass establishes no warrant ─
+      if ($id | nonempty) and ($res != "passed") and ($claim != "unproven")
+        then finding("R2-not-run-is-not-a-pass"; $id; "claim is " + ($claim | tostring) + " but result is " + ($res | tostring) + "; a record that did not pass in this submission establishes no warrant") else empty end,
+      if (($res == "skipped") or ($res == "not_run")) and (($t.skip_reason? // "") | nonempty | not)
+        then finding("R5-labelled-skips"; $id; "result " + $res + " without a skip_reason: an unlabelled skip reads as a pass") else empty end,
+      if (($res == "failed") or ($res == "error")) and (($t.detail? // "") | nonempty | not)
+        then finding("R5-labelled-skips"; $id; "result " + $res + " without a detail saying what went wrong") else empty end,
+
+      # ── R3: the kind must match the evidence, and the tier its evidence ─
+      if ($id | nonempty) then
+        (if ($kind == "example" and (($ev.proof? // null) != null or ($ev.property? // null) != null))
+           then finding("R3-kind-honesty"; $id; "an example carries a property or proof block") else empty end),
+        (if ($kind == "property") then
+           (if (($ev.property? | type) != "object")
+              then finding("R3-kind-honesty"; $id; "kind=property with no property block") else
+              (if (($ev.property.generator? // "") | nonempty | not)
+                 then finding("R3-kind-honesty"; $id; "property has no generator") else empty end),
+              (if (((($ev.property.cases_run? // 0) | int) | not) or (($ev.property.cases_run? // 0) < 1))
+                 then finding("R3-kind-honesty"; $id; "property ran " + (($ev.property.cases_run? // 0) | tostring) + " cases; zero cases is a runner fault, not evidence") else empty end),
+              (if (($ev.property.shrinker? // false) != true)
+                 then finding("R3-kind-honesty"; $id; "property declares no shrinker: a failing case could not have been minimised") else empty end),
+              (if ($res == "passed" and (($ev.property.failures? // -1) != 0))
+                 then finding("R3-kind-honesty"; $id; "property passed with failures=" + (($ev.property.failures? // -1) | tostring)) else empty end)
+           end) else empty end),
+        (if ($kind == "proof") then
+           (if (($ev.proof? | type) != "object")
+              then finding("R3-kind-honesty"; $id; "kind=proof with no proof block") else
+              (if (($ev.proof.checked? // false) != true)
+                 then finding("R3-kind-honesty"; $id; "the proof was not checked in this run (proof.checked != true)") else empty end),
+              (if ((($ev.proof.checker.name? // "") | nonempty | not) or (($ev.proof.checker.version? // "") | nonempty | not))
+                 then finding("R3-kind-honesty"; $id; "proof names no checker and version; an unchecked citation is a label") else empty end),
+              (if ((($ev.proof.theorems? // []) | length) < 1)
+                 then finding("R3-kind-honesty"; $id; "actually_proven needs a non-empty ladder of witnessed rungs (List1 Witnessed); this proof names none") else empty end),
+              (if (([ ($ev.proof.theorems? // [])[]
+                       | select(((.name? // "") | nonempty | not)
+                                or ((.statement? // "") | nonempty | not)
+                                or ((.term_digest? // "") | sha256 | not)
+                                or ((.file? // "") | nonempty | not)
+                                or (((.line? // 0) | int | not))
+                                or ((.line? // 0) < 1)) ] | length) > 0)
+                 then finding("R3-kind-honesty"; $id; "a theorem rung is missing name, statement, term_digest (sha256), file or line") else empty end),
+              (if ($claim != "actually_proven")
+                 then finding("R3-kind-honesty"; $id; "a checked proof must be claimed actually_proven, not " + ($claim | tostring)) else empty end)
+           end) else empty end),
+        (if ($kind != "proof" and $claim == "actually_proven")
+           then finding("R3-kind-honesty"; $id; "actually_proven requires kind=proof; " + $kind + " is sampling or example evidence") else empty end),
+        (if (($claim == "provisionally_proven") or ($claim == "actually_proven")) and (($ev.type_safety? | type) != "object")
+           then finding("R3-tier-evidence"; $id; "claim " + $claim + " requires a type_safety certificate (kategoria_level, type_system, verified_by)") else empty end),
+        (if (($ev.type_safety? | type) == "object" and (((($ev.type_safety.kategoria_level? // 0) | int) | not) or (($ev.type_safety.kategoria_level? // 0) < 1) or (($ev.type_safety.kategoria_level? // 0) > 12)))
+           then finding("R3-tier-evidence"; $id; "type_safety.kategoria_level must be 1..12") else empty end),
+        (if ($claim == "provisionally_proven" and (($ev.framework_safety? // "") | nonempty | not))
+           then finding("R3-tier-evidence"; $id; "provisionally_proven requires framework_safety naming the certificate relied on") else empty end),
+        (if ($claim == "actually_proven" and (($ev.proof.design_proof.technique? // "") | nonempty | not))
+           then finding("R3-tier-evidence"; $id; "actually_proven requires a design_proof (technique, limitations)") else empty end),
+
+        # ── R10: the fixture obligation ────────────────────────────────────
+        (if ($fx | type) != "object"
+           then finding("R10-fixtures"; $id; "no fixtures block: every test must state its fixture position (silence+firing, cannot_fail_by_design, or debt_ref)") else
+           (if (($fx.silence? | type) == "object" and ($fx.firing? | type) == "object") then
+              (if (($fx.silence.description? // "") | nonempty | not)
+                 then finding("R10-fixtures"; $id; "the silence fixture does not say why it is clean") else empty end),
+              (if (($fx.firing.defect_class? // "") | nonempty | not)
+                 then finding("R10-fixtures"; $id; "the firing fixture names no defect class") else empty end)
+            elif (($fx.cannot_fail_by_design? // "") | nonempty) then empty
+            elif (($fx.debt_ref? // "") | nonempty) then empty
+            else finding("R10-fixtures"; $id; "fixture position is neither a silence+firing pair, cannot_fail_by_design, nor a debt_ref") end)
+         end)
+      else empty end
+    ];
+
+def run_findings($run; $tests):
+  if ($run | type) != "object" then []
+     else
+       [ (if (((($run.command? // []) | length) == 0) or ((($run.command? // []) | type) != "array"))
+            then finding("R11-run-consistency"; "-"; "run.command is not a non-empty argv array") else empty end),
+         (if ((($run.exit_code? // null) | int) | not)
+            then finding("R11-run-consistency"; "-"; "run.exit_code is not an integer") else empty end),
+         (if ((($run.observed_output_digest? // "") | sha256) | not)
+            then finding("R11-run-consistency"; "-"; "run has no sha256 digest of the output the whole invocation produced") else empty end),
+         (if ((($run.exit_code? // null) | int) and (([ $tests[] | select(.result? == "failed" or .result? == "error") ] | length) == 0) and $run.exit_code != 0)
+            then finding("R11-run-consistency"; "-"; "run.exit_code is " + ($run.exit_code | tostring) + " with no failing or errored record: the harness failed outside the tests, so this run evidences nothing about the suite") else empty end),
+         (if ((($run.exit_code? // null) | int) and $run.exit_code == 0 and (([ $tests[] | select(.result? == "failed" or .result? == "error") ] | length) > 0))
+            then finding("R11-run-consistency"; "-"; "run.exit_code is 0 but a record failed or errored: the log and the exit code disagree") else empty end),
+         ( $tests[] | select((.execution.observed_output_digest? // "") != ($run.observed_output_digest? // ""))
+             | finding("R11-run-consistency"; (.id? // "-"); "this record cites a different captured-output digest than the run it is part of") )
+       ]
+     end;
+
+(if length != 1 then error("expected exactly one JSON document") else .[0] end) as $doc
+| (if ($doc | type) != "object" then [] else ($doc.tests? // []) end) as $tests
+| ($taxonomy) as $tax
+
+# ── R7: the contract itself ────────────────────────────────────────────────
+| (if ($doc | type) != "object"
+   then [finding("R0-shape"; "-"; "the submission is not a JSON object")]
+   elif (($doc.contract? | type) != "object"
+         or $doc.contract.name != "hyperpolymath/proven-tests/evidence"
+         or (($doc.contract.major? // null) != 1)
+         or (($doc.contract.revision? // "") | nonempty | not))
+   then [finding("R7-contract-version"; "-"; "contract is not " + $name + " major " + ($major | tostring) + "; this revision cannot read it")]
+   else [] end) as $contract_findings
+
+# ── R6: the subject is a commit, and it is the one asked for ──────────────
+| (if ($doc | type) != "object" then [] else
+    (if (($doc.subject.commit? // "") | hex40 | not)
+       then [finding("R6-subject-binding"; "-"; "subject.commit is not a 40-hex commit; evidence that names no commit can be replayed")]
+     elif (($doc.subject.repo? // "") | slug | not)
+       then [finding("R6-subject-binding"; "-"; "subject.repo is not OWNER/NAME")]
+     elif ($expect_commit != "" and $doc.subject.commit != $expect_commit)
+       then [finding("R6-subject-binding"; "-"; "subject.commit is " + $doc.subject.commit + ", expected " + $expect_commit)]
+     elif ($expect_repo != "" and $doc.subject.repo != $expect_repo)
+       then [finding("R6-subject-binding"; "-"; "subject.repo is " + $doc.subject.repo + ", expected " + $expect_repo)]
+     else [] end) end) as $subject_findings
+
+# ── R8: ids are unique ─────────────────────────────────────────────────────
+| ([ $tests[] | .id? // "" ] | group_by(.) | map(select(length > 1) | .[0])) as $dupes
+| (if ($dupes | length) > 0
+   then [ $dupes[] | finding("R8-duplicate-id"; .; "the same test id appears more than once") ]
+   else [] end) as $dupe_findings
+
+| ($doc.run? // null) as $run
+| run_findings($run; $tests) as $run_findings
+| ( [ $tests[] | { record: ., findings: ([ . | check_test($tax) ] | add // []) } ] ) as $analysed
+| ( [ $tests[] | select(.result? == "failed") | select(((.execution.exit_code? // 0) == 0))
+     | finding("R1-executed-pass"; (.id? // "-"); "recorded as failed but its execution exited 0: per-test status and outcome disagree") ] ) as $failed_status_findings
+| ( [ $analysed[] | .findings[] ] ) as $test_findings
+
+# ── R4: coverage is derived, never accepted ───────────────────────────────
+# A cell is covered only by a record that is itself free of findings: a record
+# whose claim is bogus must not cover its coordinate, or an inadmissible
+# submission would still paint the map.
+| ([ $analysed[] | select((.findings | length) == 0) | .record
+     | select(pass_ok) | select(is_debt | not) | select(coord_known($tax)) | .coord ]
+   | unique_by(coord_key)) as $derived
+| ([ $analysed[] | select((.findings | length) == 0) | .record | select(pass_ok) ] | length) as $passed_backed
+| (($doc.coverage_claim? // null)) as $claim
+| (if ($claim | type) != "object" then []
+   else
+     [ (if ((($claim.cells_covered? // -1) | int | not) or (($claim.cells_covered? // -1) != ($derived | length)))
+          then finding("R4-coverage-claim"; "-"; "claims " + (($claim.cells_covered? // "absent") | tostring) + " covered cells; the derivation gives " + ($derived | length | tostring) + " from executed, passing, non-debt records") else empty end),
+       (if ((($claim.tests_passed? // -1) | int | not) or (($claim.tests_passed? // -1) != $passed_backed))
+          then finding("R4-coverage-claim"; "-"; "claims " + (($claim.tests_passed? // "absent") | tostring) + " passing tests; " + ($passed_backed | tostring) + " record(s) are backed by an execution") else empty end),
+       ( [ (($claim.coords? // []) | map(if type == "object" then coord_key else tostring end) | unique) - [ $derived[] | coord_key ] ][]
+         | finding("R4-coverage-claim"; "-"; "coverage is claimed for " + tostring + ", which the derivation does not support") ),
+       ( [ [ $derived[] | coord_key ] - (($claim.coords? // []) | map(if type == "object" then coord_key else tostring end) | unique) ][]
+         | finding("R4-coverage-claim"; "-"; "coverage omits " + tostring + ", which the derivation supports") )
+     ] end) as $claim_findings
+
+# ── R9: the submitter's counts must reconcile ────────────────────────────
+| (def count_of($r): [ $tests[] | select(.result? == $r) ] | length;
+   {
+     records: ($tests | length),
+     executed: [ $tests[] | select((.execution.ran? // false) == true) ] | length,
+     passed: count_of("passed"),
+     failed: count_of("failed"),
+     error: count_of("error"),
+     skipped: count_of("skipped"),
+     not_run: count_of("not_run"),
+     excluded_debt: [ $tests[] | select(is_debt) ] | length
+   }) as $counts
+| (if (($doc.counts? // null) | type) != "object" then []
+   else [ $counts | to_entries[]
+          | select(($doc.counts[.key]? // null) != .value)
+          | finding("R9-counts-reconcile"; "-"; "counts." + .key + " is " + (($doc.counts[.key]? // "absent") | tostring) + ", derived " + (.value | tostring)) ]
+   end) as $count_findings
+
+| ( [ $tests[] | select((.execution.ran? // false) == true and .result == "passed") ] | length ) as $executed_passed
+| ( $contract_findings + $subject_findings + $dupe_findings + $test_findings + $run_findings
+    + $failed_status_findings + $claim_findings + $count_findings
+    | unique_by(.rule + "|" + .test + "|" + .message) ) as $findings
+| (($findings | length) == 0) as $admissible
+| ( $admissible
+    and $counts.failed == 0
+    and $counts.error == 0
+    and $counts.skipped == 0
+    and $counts.not_run == 0
+    and $executed_passed > 0 ) as $green
+
+# ── the report ────────────────────────────────────────────────────────────
+| { contract: "proven-tests-evidence/1.0.0",
+    subject: (if ($doc | type) == "object" then ($doc.subject // null) else null end),
+    admissible: $admissible,
+    green: $green,
+    counts: $counts,
+    tiers: {
+      unproven: ([ $tests[] | select(.claim? == "unproven") ] | length),
+      provisionally_proven: ([ $tests[] | select(.claim? == "provisionally_proven") ] | length),
+      actually_proven: ([ $tests[] | select(.claim? == "actually_proven") ] | length)
+    },
+    kinds: {
+      example: ([ $tests[] | select(.kind? == "example") ] | length),
+      property: ([ $tests[] | select(.kind? == "property") ] | length),
+      proof: ([ $tests[] | select(.kind? == "proof") ] | length)
+    },
+    coverage: {
+      cells_covered: ($derived | length),
+      cells_total: $tax.cells,
+      coords: $derived,
+      by_category: ([ $derived[] | .category ] | group_by(.) | map({ key: .[0], value: length }) | from_entries)
+    },
+    findings: $findings,
+    notes: (
+      [ "coverage counts executed, passing, non-debt records at typed coordinates; it is never inferred from a missing record",
+        "coordinates and claims are declarations. This validator checks that a claim is backed by the evidence its tier requires, and that coverage is derived only from executed passes. It cannot check that a declared coordinate is the right one — that is review, and the silence/firing fixture pair is how a coordinate is audited."
+      ]
+      + (if $counts.excluded_debt > 0
+          then [ ($counts.excluded_debt | tostring) + " record(s) are marked FixtureDebt and are excluded from coverage and from the test count (TEST-DOCTRINE B.4): debt-marked tests are not evidence" ]
+          else [] end)
+      + (if ($counts.skipped + $counts.not_run) > 0
+          then [ ($counts.skipped + $counts.not_run | tostring) + " record(s) did not run; they contribute no coverage and no green, whatever their declared claim" ]
+          else [] end)
+      + (if ($counts.error > 0
+            or $counts.failed > 0)
+          then [ "a failing or errored record is admissible evidence of failure — and it can never be part of a green submission" ]
+          else [] end)
+      + (if $counts.executed == 0
+          then [ "no test executed; an empty run is not evidence, and it is never green" ]
+          else [] end)
+    ) }
+JQ
+
+main() {
+  local expect_commit="" expect_repo="" require_green="false" grid="false" file=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --expect-commit) [[ $# -ge 2 ]] || { usage; die "--expect-commit needs a value"; }; expect_commit="$2"; shift 2 ;;
+      --expect-repo)   [[ $# -ge 2 ]] || { usage; die "--expect-repo needs a value"; }; expect_repo="$2"; shift 2 ;;
+      --require-green) require_green="true"; shift ;;
+      --grid)          grid="true"; shift ;;
+      -h|--help)       usage; exit 0 ;;
+      --)              shift; [[ $# -eq 1 ]] || { usage; die "one FILE only"; }; file="$1"; shift ;;
+      -)               [[ -z "$file" ]] || { usage; die "one FILE only"; }; file="-"; shift ;;
+      -*)              usage; die "unknown option: $1" ;;
+      *)               [[ -z "$file" ]] || { usage; die "one FILE only"; }; file="$1"; shift ;;
+    esac
+  done
+  [[ -n "$file" ]] || { usage; die "missing FILE"; }
+  command -v jq >/dev/null 2>&1 || die "jq (1.6 or later) is required"
+  [[ -r "$TAXONOMY" ]] || die "cannot read $TAXONOMY"
+  if [[ "$file" != "-" && ! -r "$file" ]]; then
+    die "cannot read $file"
+  fi
+  local label="$file"
+  [[ "$file" == "-" ]] && label="stdin"
+
+  local tax_json
+  tax_json="$(jq -c . "$TAXONOMY")" || die "taxonomy is not valid JSON"
+
+  local out rc=0
+  out="$(jq --slurp \
+        --argjson taxonomy "$tax_json" \
+        --arg name "$CONTRACT_NAME" \
+        --argjson major "$CONTRACT_MAJOR" \
+        --arg expect_commit "$expect_commit" \
+        --arg expect_repo "$expect_repo" \
+        "$JQ_PROGRAM" -- "$file" 2>/dev/null)" || rc=$?
+  if (( rc != 0 )); then
+    printf 'verify-evidence: %s is not a single valid JSON document\n' "$label" >&2
+    exit "$EXIT_USAGE"
+  fi
+
+  printf '%s\n' "$out"
+
+  if [[ "$grid" == "true" ]]; then
+    printf '%s\n' "$out" | jq -r --argjson tax "$tax_json" '
+      ($tax.categories) as $cats | ($tax.aspects) as $asp
+      | ([ .coverage.coords[] | .category + "/" + .aspect ]) as $cov
+      | "coverage grid  (# = covered by an executed pass, . = no evidence)",
+        (" " * 19) + ([ $asp[] | .[0:2] ] | join(" ")),
+        ( $cats[] as $c
+          | (($c + (" " * 19))[0:18])
+            + ([ $asp[] | if ($cov | index($c + "/" + .)) then "# " else ". " end ] | join(""))
+        )
+    ' >&2
+  fi
+
+  local verdict
+  verdict="$(printf '%s\n' "$out" | jq -r '.admissible')"
+  local is_green
+  is_green="$(printf '%s\n' "$out" | jq -r '.green')"
+
+  if [[ "$require_green" == "true" ]]; then
+    if [[ "$is_green" == "true" ]]; then exit "$EXIT_ADMISSIBLE"; fi
+    printf 'verify-evidence: refused — --require-green and the evidence is not green\n' >&2
+    exit "$EXIT_REFUSED"
+  fi
+  if [[ "$verdict" == "true" ]]; then exit "$EXIT_ADMISSIBLE"; fi
+  printf 'verify-evidence: refused — the submission is inadmissible\n' >&2
+  exit "$EXIT_REFUSED"
+}
+
+main "$@"

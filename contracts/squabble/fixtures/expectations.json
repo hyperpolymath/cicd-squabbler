@@ -1,0 +1,261 @@
+{
+  "contract": "squabble-contract/1.0.0",
+  "note": "Every case here is a claim about what the contract REFUSES. `proves` says which sentence of CONTRACT.adoc the fixture keeps honest. tests/run-conformance.sh fails unless every case ran and matched.",
+  "oracle": [
+    {
+      "name": "bound envelope, every required check passed",
+      "file": "fixtures/gate/all-passed.bound.json",
+      "args": ["--expect-head-sha", "1111111111111111111111111111111111111111", "--expect-repo", "hyperpolymath/example"],
+      "exit": 0,
+      "verdict": "legitimate_green",
+      "legitimate_green": true,
+      "evidence_free": [],
+      "reasons": [],
+      "blocking_runs": [],
+      "proves": "The positive control: the procedure can say yes, so its refusals below mean something."
+    },
+    {
+      "name": "one requirement is enough",
+      "file": "fixtures/gate/single-passed.bound.json",
+      "args": [],
+      "exit": 0,
+      "verdict": "legitimate_green",
+      "legitimate_green": true,
+      "evidence_free": [],
+      "reasons": [],
+      "blocking_runs": [],
+      "proves": "legitimate_green is 'all required passed', not 'at least two passed'."
+    },
+    {
+      "name": "a required check never reported",
+      "file": "fixtures/gate/required-missing.bound.json",
+      "args": [],
+      "exit": 3,
+      "verdict": "not_green",
+      "legitimate_green": false,
+      "evidence_free": [],
+      "reasons": [],
+      "blocking_runs": ["missing"],
+      "proves": "CONTRACT.adoc §7: the Missing deadlock — no run bound on the head commit — cannot be green."
+    },
+    {
+      "name": "a required check that was skipped",
+      "file": "fixtures/gate/required-skipped.bound.json",
+      "args": [],
+      "exit": 3,
+      "verdict": "not_green",
+      "legitimate_green": false,
+      "evidence_free": ["scan / gitleaks"],
+      "reasons": [],
+      "blocking_runs": ["skipped"],
+      "proves": "GitHub's ruleset accepts a skipped required check; the contract does not call that a legitimate green, and names the context in evidence_free."
+    },
+    {
+      "name": "a required check that was cancelled",
+      "file": "fixtures/gate/required-cancelled.bound.json",
+      "args": [],
+      "exit": 3,
+      "verdict": "not_green",
+      "legitimate_green": false,
+      "evidence_free": [],
+      "reasons": [],
+      "blocking_runs": ["failed"],
+      "proves": "CANCELLED maps to failed in the gate model, so cancelling a required check cannot read as pass or skip."
+    },
+    {
+      "name": "a required check that failed",
+      "file": "fixtures/gate/required-failed.bound.json",
+      "args": [],
+      "exit": 3,
+      "verdict": "not_green",
+      "legitimate_green": false,
+      "evidence_free": [],
+      "reasons": [],
+      "blocking_runs": ["failed"],
+      "proves": "An ordinary failure blocks."
+    },
+    {
+      "name": "a required check still running",
+      "file": "fixtures/gate/required-pending.bound.json",
+      "args": [],
+      "exit": 3,
+      "verdict": "not_green",
+      "legitimate_green": false,
+      "evidence_free": [],
+      "reasons": [],
+      "blocking_runs": ["pending"],
+      "proves": "An incomplete required check blocks — and note verify-satisfied would still call this PR `done`, which is why a verdict cannot certify green."
+    },
+    {
+      "name": "a passing sibling does not launder a skip",
+      "file": "fixtures/gate/passed-and-skipped.bound.json",
+      "args": [],
+      "exit": 3,
+      "verdict": "not_green",
+      "legitimate_green": false,
+      "evidence_free": ["scan / gitleaks"],
+      "reasons": [],
+      "blocking_runs": ["skipped"],
+      "proves": "Two passes and one skip is not green; evidence_free names exactly the skipped context."
+    },
+    {
+      "name": "a gate with no required checks",
+      "file": "fixtures/gate/no-required-checks.bound.json",
+      "args": [],
+      "exit": 3,
+      "verdict": "not_green",
+      "legitimate_green": false,
+      "evidence_free": [],
+      "reasons": ["no-required-checks"],
+      "blocking_runs": [],
+      "proves": "Dropping the required set is a bypass, not a win: an unprotected gate is never green."
+    },
+    {
+      "name": "a run state this revision does not know",
+      "file": "fixtures/gate/unknown-run-state.bound.json",
+      "args": [],
+      "exit": 3,
+      "verdict": "not_green",
+      "legitimate_green": false,
+      "evidence_free": [],
+      "reasons": [],
+      "blocking_runs": ["neutral"],
+      "proves": "Vocabulary drift (e.g. NEUTRAL leaking into the gate instead of mapping to skipped) fails closed rather than defaulting to passed."
+    },
+    {
+      "name": "an unbound gate cannot certify (with --allow-unbound)",
+      "file": "fixtures/gate/all-passed.unbound.json",
+      "args": ["--allow-unbound"],
+      "exit": 3,
+      "verdict": "not_certifiable",
+      "legitimate_green": false,
+      "evidence_free": [],
+      "reasons": ["unbound-gate"],
+      "blocking_runs": [],
+      "proves": "Correct-looking evidence with no commit binding can be replayed, so it never certifies — the flag permits evaluation, not a green."
+    },
+    {
+      "name": "an unbound gate cannot certify (without the flag)",
+      "file": "fixtures/gate/all-passed.unbound.json",
+      "args": [],
+      "exit": 3,
+      "verdict": "not_certifiable",
+      "legitimate_green": false,
+      "evidence_free": [],
+      "reasons": ["unbound-gate"],
+      "blocking_runs": [],
+      "proves": "The same document is refused identically with and without the flag: no flag path reaches green."
+    },
+    {
+      "name": "evidence for a different head commit",
+      "file": "fixtures/envelope/all-passed.wrong-head.bound.json",
+      "args": ["--expect-head-sha", "2222222222222222222222222222222222222222"],
+      "exit": 3,
+      "verdict": "not_green",
+      "legitimate_green": false,
+      "evidence_free": [],
+      "reasons": ["head-sha-mismatch"],
+      "blocking_runs": [],
+      "proves": "A replayed envelope from another commit is refused by --expect-head-sha."
+    },
+    {
+      "name": "a branch name instead of a commit",
+      "file": "fixtures/envelope/all-passed.bad-subject.bound.json",
+      "args": [],
+      "exit": 3,
+      "verdict": "not_green",
+      "legitimate_green": false,
+      "evidence_free": [],
+      "reasons": ["subject-head-sha-not-a-commit"],
+      "blocking_runs": [],
+      "proves": "head_sha: \"main\" is a moving pin and is refused; the envelope must name a commit."
+    },
+    {
+      "name": "a verdict with an evidence-free required check",
+      "file": "fixtures/verdict/done-with-skipped.json",
+      "args": [],
+      "exit": 3,
+      "verdict": "not_certifiable",
+      "legitimate_green": false,
+      "evidence_free": ["scan / gitleaks"],
+      "reasons": ["verdict-input-cannot-certify"],
+      "blocking_runs": [],
+      "proves": "done: true with a skipped required check is the mergeable-but-evidence-free case, and is refused."
+    },
+    {
+      "name": "a clean verdict is still not a green claim",
+      "file": "fixtures/verdict/done-clean.json",
+      "args": [],
+      "exit": 3,
+      "verdict": "not_certifiable",
+      "legitimate_green": false,
+      "evidence_free": [],
+      "reasons": ["verdict-input-cannot-certify"],
+      "blocking_runs": [],
+      "proves": "Even done: true with no evidence-free context cannot certify: the document carries no per-requirement run states."
+    },
+    {
+      "name": "a verdict that is not done",
+      "file": "fixtures/verdict/not-done.json",
+      "args": [],
+      "exit": 3,
+      "verdict": "not_certifiable",
+      "legitimate_green": false,
+      "evidence_free": [],
+      "reasons": ["verdict-input-cannot-certify"],
+      "blocking_runs": [],
+      "proves": "The negative control for the previous case: refusal is not merely 'done is true'."
+    }
+  ],
+  "audit": [
+    {
+      "name": "the reference read-only consumer",
+      "file": "fixtures/consumer-workflow/good-readonly.yml",
+      "exit": 0,
+      "codes": [],
+      "proves": "The audit can pass a workflow that does the contract's thing, so its refusals below mean something."
+    },
+    {
+      "name": "the action on a moving branch",
+      "file": "fixtures/consumer-workflow/bad-unpinned-action.yml",
+      "exit": 3,
+      "codes": ["E-UNPINNED-ACTION"],
+      "proves": "A branch ref means the reviewed rules are not the merged rules."
+    },
+    {
+      "name": "a helper action on a moving ref",
+      "file": "fixtures/consumer-workflow/bad-moving-ref.yml",
+      "exit": 3,
+      "codes": ["E-MOVING-REF"],
+      "proves": "One moving pin anywhere is a moving pin, even beside a correctly pinned action."
+    },
+    {
+      "name": "a job that may write",
+      "file": "fixtures/consumer-workflow/bad-write-permission.yml",
+      "exit": 3,
+      "codes": ["E-WRITE-PERMISSION"],
+      "proves": "No write scope is needed by the read-only surface; an unused capability is a bypass waiting to be armed."
+    },
+    {
+      "name": "a step whose failure cannot fail the job",
+      "file": "fixtures/consumer-workflow/bad-masked-step.yml",
+      "exit": 3,
+      "codes": ["E-MASKED-STEP"],
+      "proves": "continue-on-error on the deciding step turns the gate into decoration."
+    },
+    {
+      "name": "the workflow edits the gate and merges past it",
+      "file": "fixtures/consumer-workflow/bad-bypass.yml",
+      "exit": 3,
+      "codes": ["E-BYPASS-COMMAND", "E-OUT-OF-CONTRACT-SUBCOMMAND"],
+      "proves": "squabble ≠ bypass: fight --apply, an enforce_admins write and gh pr merge --admin are all refused."
+    },
+    {
+      "name": "gating on done instead of on evidence",
+      "file": "fixtures/consumer-workflow/bad-no-oracle.yml",
+      "exit": 3,
+      "codes": ["E-NO-ORACLE"],
+      "proves": "A pinned, read-only workflow that gates on verify-satisfied's exit 0 is still making a weaker claim than its name implies."
+    }
+  ]
+}

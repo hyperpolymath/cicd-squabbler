@@ -1,0 +1,14 @@
+{
+  "repo": "hyperpolymath/example",
+  "pr": 42,
+  "head_oid": "1111111111111111111111111111111111111111",
+  "base_ref": "main",
+  "done": false,
+  "agent_items": [
+    { "kind": "required_not_satisfied", "context": "ci / test", "run": "failed" },
+    { "kind": "unresolved_thread", "id": "PRRT_1", "author": "reviewer", "path": "src/lib.rs", "outdated": false, "url": "https://example.invalid/1" }
+  ],
+  "held_by_human": [],
+  "evidence_free": [],
+  "notes": []
+}

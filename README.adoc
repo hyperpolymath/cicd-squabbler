@@ -54,6 +54,40 @@ healthy. See `docs/proposals/squabble-modes-and-app-layer.adoc` for where
 this is heading: upstream conformance, custodian rulesets, and the app-aware
 layer.
 
+== Downstream integration contracts (pinned, immutable revisions)
+
+`contracts/` publishes two contracts that other repositories integrate against.
+Both are consumed by *revision id plus a sha256 manifest*, never by a branch:
+
+[cols="1,2"]
+|===
+| `contracts/squabble` — `squabble-contract/1.0.0`
+| The read-only CI invocation: which subcommands are in contract, the six read
+  permissions the gate needs (and the `administration: read` an App token must
+  supply), the machine-readable gate/verdict documents, the exit semantics, and
+  the decision procedure for `legitimate_green` — a commit-bound envelope whose
+  *every* required check ran and passed. Missing, skipped, cancelled, pending and
+  failing required checks each have a negative fixture proving they cannot reach
+  it.
+
+| `contracts/proven-tests` — `proven-tests-evidence/1.0.0`
+| The evidence format a Rust repository submits to Proven-Tests: real executed
+  tests with a log digest, example/property/proof told apart, coverage derived
+  only from executed non-debt passes, the required Idris2 toolchain for the
+  framework itself (not for submitting), and a minimal downstream Rust fixture.
+|===
+
+[source,sh]
+----
+just contract-test                                    # both conformance suites
+just contract-pin squabble 1.0.0                      # verify a pin as a consumer does
+bash contracts/bin/verify-pin.sh proven-tests 1.0.0
+----
+
+Nothing in either contract writes: no merges, no re-runs, no edits, no admin
+overrides. The consumer audit refuses a workflow that grants a write scope, pins
+to a moving ref, masks a gate step, or calls `fight --apply`.
+
 == Core principle: squabble ≠ bypass
 
 Every "green" the squabbler declares is backed by the gate's *own* required

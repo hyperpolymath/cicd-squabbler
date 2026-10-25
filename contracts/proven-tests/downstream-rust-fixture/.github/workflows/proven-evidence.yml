@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: CC0-1.0
+#
+# The reference consumer workflow for proven-tests-evidence/1.0.0.
+#
+# Three properties are the point of this file:
+#
+#   1. The contract is pinned by commit AND verified against its SHASUMS, so the
+#      rules that admit this run are the rules that were reviewed.
+#   2. `cargo test` is allowed to fail without failing the step. The ONLY thing
+#      that can pass or fail the build is the evidence gate, so a failing suite
+#      cannot be silently dropped (the gate sees it) and cannot be counted twice
+#      (the step does not also fail).
+#   3. The submission is bound to the commit being built via --expect-commit, so
+#      evidence from another revision cannot be replayed into this one.
+name: proven-evidence
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: proven-evidence-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  evidence:
+    name: evidence / proven-tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3f9a1c4b2d5e6f708192a3b4c5d6e7f809a1b2c3
+        with:
+          persist-credentials: false
+
+      - name: Pin the evidence contract by content
+        env:
+          CONTRACT_SHA: ffb26772e9e3bbb99f0c7f6cd3796e7d99eb64c1
+        run: |
+          set -euo pipefail
+          git init -q .contract
+          git -C .contract fetch -q --depth 1 \
+            https://github.com/hyperpolymath/proven-tests-and-benches "$CONTRACT_SHA"
+          git -C .contract checkout -q FETCH_HEAD
+          bash .contract/contracts/bin/verify-pin.sh proven-tests 1.0.0 \
+            --repo-dir .contract/contracts
+          printf '%s\n' "$PWD/.contract/contracts/proven-tests/bin" >> "$GITHUB_PATH"
+
+      - name: Run the suite, keeping the log and the exit code
+        id: test
+        run: |
+          set -uo pipefail
+          started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cargo test -- --test-threads=1 2>&1 | tee test.log
+          rc="${PIPESTATUS[0]}"
+          finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          {
+            printf 'rc=%s\n' "$rc"
+            printf 'started=%s\n' "$started"
+            printf 'finished=%s\n' "$finished"
+          } >> "$GITHUB_OUTPUT"
+          # A failing suite is EVIDENCE of failure, not a workflow error. The
+          # gate step below decides, and it sees the failure in the records.
+          exit 0
+
+      - name: Collect evidence from that one run
+        env:
+          TEST_RC: ${{ steps.test.outputs.rc }}
+          TEST_STARTED: ${{ steps.test.outputs.started }}
+          TEST_FINISHED: ${{ steps.test.outputs.finished }}
+        run: |
+          set -euo pipefail
+          collect-evidence.sh \
+            --repo "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" \
+            --log test.log --exit-code "$TEST_RC" \
+            --coords .proven/coords.json \
+            --command-argv '["cargo","test","--","--test-threads=1"]' \
+            --started-at "$TEST_STARTED" --finished-at "$TEST_FINISHED" \
+            --runner "${ImageOS:-unknown}" \
+            --rust "$(rustc --version | cut -d' ' -f2)" \
+            --out evidence.json
+
+      - name: Admit the evidence, or be refused
+        run: |
+          set -euo pipefail
+          verify-evidence \
+            --expect-commit "$GITHUB_SHA" \
+            --expect-repo "$GITHUB_REPOSITORY" \
+            --require-green --grid evidence.json > verdict.json
+          jq -r '"covered \(.coverage.cells_covered)/\(.coverage.cells_total) cells; \(.counts.passed) passed, \(.counts.skipped) skipped, \(.counts.failed) failed"' verdict.json
+
+      - name: Upload the evidence, the verdict and the log
+        if: always()
+        uses: actions/upload-artifact@0d7fce4d1f6e5b8f0a4c3e2d1b0a9f8e7d6c5b4a
+        with:
+          name: proven-evidence
+          path: |
+            evidence.json
+            verdict.json
+            test.log
+          if-no-files-found: error

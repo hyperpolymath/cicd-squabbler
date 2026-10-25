@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hyperpolymath/cicd-squabbler/contracts/squabble/schema/gate.schema.json",
+  "title": "squabble gate document (squabble-contract/1.0.0)",
+  "description": "The document `squabble fetch <owner>/<repo> <pr>` writes to stdout. One entry per required context, with the run bound to it on the head commit. A context whose run is `passed` is the only evidence-bearing satisfied state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["checks"],
+  "properties": {
+    "checks": {
+      "type": "array",
+      "description": "The required-context set. An empty array is a valid document and is NEVER green: an unprotected gate is Blocked, not won.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["required_context", "run"],
+        "properties": {
+          "required_context": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The exact, case-sensitive context name the branch ruleset requires."
+          },
+          "run": {
+            "type": "string",
+            "enum": ["missing", "pending", "failed", "skipped", "passed"],
+            "description": "The realised run. CANCELLED/TIMED_OUT/STARTUP_FAILURE/ERROR/ACTION_REQUIRED/STALE and unrecognised conclusions map to `failed`. SKIPPED/NEUTRAL map to `skipped`: the ruleset accepts it, no evidence is carried."
+          },
+          "missing_cause": {
+            "type": ["string", "null"],
+            "enum": ["no_such_job", "dead_action_pin", "actions_policy_refusal", "empty_jobs_map", "not_triggered_on_pull_request", "unknown", null],
+            "description": "Why a context is `missing`. Diagnosis only: it never changes `run` and never moves the gate state."
+          }
+        }
+      }
+    }
+  }
+}

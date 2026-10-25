@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: CC0-1.0
+# Planted defect: instead of winning the gate, the workflow edits it and merges
+# past it. This is the exact behaviour the contract exists to keep out of CI.
+name: gate
+on: pull_request
+permissions:
+  contents: read
+  checks: read
+  statuses: read
+  pull-requests: read
+  actions: read
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hyperpolymath/cicd-squabbler/.github/actions/squabble@b854d17abc0dce296719a349ebe856ff945cf03e
+      - name: Apply the fix and land it
+        run: |
+          squabble fight --apply
+          gh api -X PUT repos/"$GITHUB_REPOSITORY"/branches/main/protection -f enforce_admins=false
+          gh pr merge --admin --squash "$PR_NUMBER"

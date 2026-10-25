@@ -1,0 +1,11 @@
+{
+  "repo": "hyperpolymath/example",
+  "pr": 42,
+  "head_oid": "1111111111111111111111111111111111111111",
+  "base_ref": "main",
+  "done": true,
+  "agent_items": [],
+  "held_by_human": [],
+  "evidence_free": [],
+  "notes": ["code-scanning alerts introduced by this PR are NOT yet evaluated"]
+}

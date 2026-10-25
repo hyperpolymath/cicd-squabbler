@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: CC0-1.0
+# Planted defect: the job may merge, re-run and edit. Nothing in the read-only
+# surface needs it; the capability exists only to be used.
+name: gate
+on: pull_request
+permissions:
+  contents: read
+  checks: read
+  statuses: read
+  pull-requests: write
+  actions: read
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hyperpolymath/cicd-squabbler/.github/actions/squabble@b854d17abc0dce296719a349ebe856ff945cf03e
+      - run: squabble fetch "$GITHUB_REPOSITORY" "$PR_NUMBER" | bind-gate --repo "$GITHUB_REPOSITORY" --head-sha "$PR_HEAD_SHA" | legitimate-green
