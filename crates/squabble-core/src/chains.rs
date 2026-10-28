@@ -656,6 +656,7 @@ pub enum Finding {
 }
 
 impl Finding {
+    /// Cycles and dead upstreams block; all other findings are warnings.
     pub fn severity(&self) -> Severity {
         match self {
             Finding::Cycle { .. } | Finding::DeadUpstream { .. } => Severity::Blocking,
@@ -787,6 +788,8 @@ impl ChainsReport {
 ///
 /// Mutable-pin and skew findings are reported only for edges whose consumer
 /// was actually scanned, so a frontier repo is never blamed on hearsay.
+/// Moved-upstream warnings also require a scanned consumer. Diamond and skew
+/// findings group targets by their recorded canonical names.
 pub fn analyse(graph: &ChainGraph, cost: Option<SourceCost>) -> ChainsReport {
     let mut findings = Vec::new();
 

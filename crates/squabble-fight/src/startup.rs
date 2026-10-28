@@ -26,11 +26,11 @@ use squabble_core::startup::{
 };
 use std::collections::BTreeMap;
 
-/// The coordinate exactly as written, rebuilt from an extracted [`Edge`]:
+/// Render an extracted [`Edge`] as a coordinate:
 /// `owner/repo[/subpath]@pin`.
 ///
-/// The pin is reproduced verbatim (a SHA as the SHA, a tag as the tag) — this
-/// is evidence, not resolution.
+/// The stored spelling is used; extraction lowercases full SHAs. No pin is
+/// resolved here.
 pub fn coordinate_of(edge: &Edge) -> String {
     let sub = edge
         .path
@@ -45,6 +45,8 @@ pub fn coordinate_of(edge: &Edge) -> String {
 /// Returns one entry per distinct coordinate, including `Unattributed` entries
 /// — callers that only want findings filter with
 /// [`StartupFailureClass::Unattributed`].
+/// Missing canonical resolutions are treated as unverified; `None` for
+/// `allow_list` disables admission attribution.
 pub fn attribute_workflow(
     repo: &str,
     workflow: &str,
@@ -90,9 +92,9 @@ pub fn attribute_workflow(
 /// When no coordinate is moved or unadmitted, the result is a single
 /// `Unattributed` entry rather than one per coordinate: the run failed for a
 /// reason outside this taxonomy, and the report should say that once. The
-/// entry kept is the most specific honest non-answer available (a dead
-/// coordinate, a moved action, an unverified name), because "resolves
-/// canonically" would be a false statement about a 404.
+/// entry kept is the first by coordinate in lexicographic order. Attributed
+/// results are also sorted by coordinate. The caller supplies the observed
+/// run; this function does not check its job count.
 pub fn attribute_run(
     repo: &str,
     run: &ZeroJobRun,
@@ -138,6 +140,8 @@ pub fn attribute_run(
     primary
 }
 
+/// Build a workflow-level explanation without blaming a coordinate or
+/// proposing a move.
 fn unattributed(repo: &str, workflow: &str, evidence: String) -> ZeroJobAttribution {
     ZeroJobAttribution {
         repo: repo.to_string(),
@@ -158,6 +162,13 @@ fn unattributed(repo: &str, workflow: &str, evidence: String) -> ZeroJobAttribut
 ///
 /// `jobs` is left `None` here: the count comes from a second read and is the
 /// host's evidence, not something this parser may assume.
+/// Matching is case-insensitive. Entries without an unsigned integer run ID
+/// are skipped; a missing or non-string path becomes an empty filename,
+/// otherwise only its final path component is kept.
+///
+/// # Errors
+///
+/// Returns an error for invalid JSON or a missing or non-array `workflow_runs`.
 pub fn parse_startup_runs(body: &str) -> Result<Vec<ZeroJobRun>, String> {
     let v: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| format!("could not parse actions/runs response: {e}"))?;
@@ -196,6 +207,11 @@ pub fn parse_startup_runs(body: &str) -> Result<Vec<ZeroJobRun>, String> {
 }
 
 /// `total_count` from a `GET .../runs/{id}/jobs` response.
+///
+/// # Errors
+///
+/// Returns an error for invalid JSON or when `total_count` is absent or is not
+/// an unsigned integer. Zero is a valid count.
 pub fn parse_job_count(body: &str) -> Result<u64, String> {
     let v: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| format!("could not parse actions/jobs response: {e}"))?;

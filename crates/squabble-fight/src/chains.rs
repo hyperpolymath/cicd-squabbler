@@ -104,6 +104,8 @@ pub enum Role {
 
 /// Fold snapshots into a graph. Each snapshot's scan status is always
 /// recorded; its edges are added according to its [`Role`].
+/// Canonical-name changes and source notes are retained even when a snapshot
+/// was not scanned; only scanned snapshots contribute edges.
 pub fn graph_from_snapshots<'a>(
     snapshots: impl IntoIterator<Item = (&'a RepoSnapshot, Role)>,
 ) -> ChainGraph {
@@ -157,8 +159,10 @@ pub fn upstream_roles(graph: &ChainGraph) -> Vec<(RepoId, Role)> {
 // ---------------------------------------------------------------------------
 
 /// Read a local checkout. `slug` overrides identity; otherwise it is taken
-/// from the `origin` remote in `.git/config`. Never errors: an unreadable
-/// root becomes [`ScanStatus::Unavailable`] with the reason.
+/// from the `origin` remote in `.git/config`. Missing identity or a root that
+/// is not a directory becomes [`ScanStatus::Unavailable`]. Unreadable workflow
+/// directories yield no files; unreadable files are skipped with notes.
+/// Canonical names are not resolved locally.
 pub fn snapshot_local(root: &Path, slug: Option<&str>) -> RepoSnapshot {
     let repo = match slug.map(str::to_string).or_else(|| origin_slug(root)) {
         Some(s) => RepoId::new(s),

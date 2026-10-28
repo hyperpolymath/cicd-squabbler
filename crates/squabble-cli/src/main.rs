@@ -49,6 +49,8 @@ mod zero_job;
 use squabble_core::{diagnose, gate::Gate};
 use std::process::ExitCode;
 
+/// Dispatch the requested command and return its exit code. Print the version
+/// for `--version`/`-V`, or usage with exit `2` for an unrecognised command.
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {

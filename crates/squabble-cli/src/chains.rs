@@ -62,6 +62,9 @@ struct Args {
     no_canonical: bool,
 }
 
+/// Parse sources and scan options, defaulting to no upstream traversal and
+/// canonical-name checks enabled. Returns an error for missing sources,
+/// unknown flags or invalid numeric options.
 fn parse_args(rest: &[String]) -> Result<Args, String> {
     let mut a = Args {
         sources: Vec::new(),
@@ -108,6 +111,9 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
     Ok(a)
 }
 
+/// Read sources and print a chain report as text or JSON. Returns `4` for a
+/// blocking finding, `2` for usage, serialisation or wholly unreadable sources,
+/// and `0` otherwise; warnings alone do not fail the command.
 pub fn run(rest: &[String]) -> ExitCode {
     let args = match parse_args(rest) {
         Ok(a) => a,
@@ -150,6 +156,8 @@ fn exit_for(report: &ChainsReport) -> ExitCode {
 }
 
 /// Gather snapshots from every source, follow upstreams, and analyse.
+/// Unless disabled, resolve upstream names through REST, recording dead
+/// targets and moves. Unverified resolutions become report notes.
 fn collect(
     args: &Args,
     transport: &dyn GraphQlTransport,
@@ -354,6 +362,8 @@ fn narrate(r: &ChainsReport) -> String {
     o
 }
 
+/// Format a finding's reference locations, routes or pin consumers for the
+/// text report. Cycles have no additional detail lines.
 fn details(f: &Finding) -> Vec<String> {
     let at = |e: &squabble_core::chains::Edge| {
         format!("{}:{} @{}", e.from, e.file, short(e.pin.as_str()))

@@ -74,6 +74,8 @@ impl AllowList {
     /// `owner/repo`, an owner-wide `owner/*`, or a trailing-`*` prefix form all
     /// cover. Patterns may carry an `@ref`, which is ignored: the allow-list is
     /// a name rule, not a revision rule.
+    /// Matching is case-sensitive; GitHub-owned names also pass when
+    /// `github_owned_allowed` is set.
     pub fn covers(&self, owner_repo: &str) -> bool {
         let owner = owner_repo.split('/').next().unwrap_or("");
         if self.github_owned_allowed && matches!(owner, "actions" | "github") {
@@ -96,8 +98,8 @@ impl AllowList {
         (!self.covers(owner_repo)).then(|| format!("{owner_repo}@*"))
     }
 
-    /// An empty pattern list refuses every non-GitHub-owned `uses:` at parse
-    /// time, which is the widest form of this class.
+    /// Whether there are no explicit patterns. GitHub-owned coordinates may
+    /// still be covered when `github_owned_allowed` is set.
     pub fn is_empty(&self) -> bool {
         self.patterns.is_empty()
     }
@@ -185,7 +187,8 @@ pub enum CanonicalResolution {
 }
 
 impl CanonicalResolution {
-    /// The canonical `owner/repo`, when the resolver actually observed one.
+    /// The target `owner/repo` for a move; `None` for all other resolutions,
+    /// including a name that is already canonical.
     pub fn canonical(&self) -> Option<&str> {
         match self {
             Self::Moved { canonical } => Some(canonical),
@@ -193,6 +196,7 @@ impl CanonicalResolution {
         }
     }
 
+    /// Whether resolution identified a renamed or transferred repository.
     pub fn is_moved(&self) -> bool {
         matches!(self, Self::Moved { .. })
     }
@@ -232,6 +236,7 @@ pub enum StartupFailureClass {
 }
 
 impl StartupFailureClass {
+    /// A human-readable class label for reports.
     pub fn label(&self) -> &'static str {
         match self {
             Self::MovedCoordinate => "moved coordinate",
@@ -270,8 +275,8 @@ impl ZeroJobAttribution {
     /// The single legitimate move for this class, if one is proposable.
     ///
     /// `None` for [`StartupFailureClass::Unattributed`], and for a
-    /// `MovedCoordinate` whose canonical name was never observed (there is
-    /// nothing to repoint *to*).
+    /// `MovedCoordinate` without a canonical target or a parseable coordinate.
+    /// Admission also requires a recorded allow-list pattern.
     pub fn proposed_move(&self) -> Option<Move> {
         match self.class {
             StartupFailureClass::MovedCoordinate => {
