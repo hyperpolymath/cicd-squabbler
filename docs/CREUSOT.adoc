@@ -114,8 +114,103 @@ cannot say *no* must report VOID, never green, and the estate gate enforces
 exactly that by proving a planted false contract before it proves yours.
 
 If `opam` is absent the installer stops with exit `2` and says so. That is not a
-failure of the repository; nothing about the proof claims changes until the
-prover exists.
+failure of the repository; nothing about the status of the obligations changes
+until the prover exists.
+
+=== Four layers, and what each one needs
+
+The toolchain is not one download. It is four, and a build environment that can
+reach only some of them gets useless half-answers, so the installer reports
+which layer is missing rather than "Rust unavailable":
+
+[cols="1,2,2",options="header"]
+|===
+| Layer | Needed for | Supplied by
+
+| manager (`rustup`)
+| getting everything else
+| `sh.rustup.rs`, or (where that is blocked) the `rustup` wheel on PyPI
+
+| toolchain
+| compiling and testing the workspace at all
+| `static.rust-lang.org` — `stable` plus Creusot's pinned nightly with
+  `rustc-dev` and `llvm-tools`
+
+| `cargo creusot`
+| translating Rust into Why3 goals
+| creusot's own `./INSTALL` at the pinned tag
+
+| Why3 + an SMT solver
+| discharging those goals
+| `opam` (Why3, `why3find`) plus a solver such as Z3 or Alt-Ergo
+|===
+
+Layers 3 and 4 are not optional for a verdict: `cargo creusot` without Why3 and
+a solver translates and then has nowhere to send the goals. A translation-only
+pipeline reports the same outcome for a true statement and a false one, which is
+exactly why the estate gate refuses to treat it as a verdict.
+
+=== Measured: an environment that can reach only some layers (2026-10-28)
+
+Run in a sandbox whose egress allow-list is `github.com`, `api.github.com`,
+`codeload.github.com`, `registry.npmjs.org`, `pypi.org` and
+`files.pythonhosted.org`:
+
+[source,text]
+----
+$ ./scripts/install-toolchain.sh
+installing rustup
+curl: (35) OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to sh.rustup.rs:443
+rustup install failed — is https://static.rust-lang.org reachable?
+# exit 1
+----
+
+The manager *is* obtainable from an allow-listed channel — `pip install rustup`
+(from the PyPI wheel `rustup-1.29.0.1`) yields a working `rustup 1.29.0` — so
+the failure was re-measured one layer down, with the manager present:
+
+[source,text]
+----
+$ rustup toolchain install nightly-2026-08-03 --profile minimal \
+    --component rustc-dev,llvm-tools,rustfmt
+info: syncing channel updates for nightly-2026-08-03-x86_64-unknown-linux-gnu
+error: could not download file from
+  'https://static.rust-lang.org/dist/2026-08-03/channel-rust-nightly.toml.sha256':
+  client error (Connect): tls handshake eof
+# and, for the stable channel, the same:
+error: could not download file from
+  'https://static.rust-lang.org/dist/channel-rust-stable.toml.sha256':
+  client error (Connect): tls handshake eof
+----
+
+Alternatives were checked, not assumed:
+
+[source,text]
+----
+$ curl -sS -o /dev/null -w '%{http_code}' --max-time 12 <url>
+https://raw.githubusercontent.com                   000
+https://rsproxy.cn                                 000
+https://mirrors.ustc.edu.cn/rust-static             000
+https://github.com/rust-lang/rust-dist              404
+$ gh api repos/rust-lang/rust/releases/latest --jq '.tag_name, (.assets|length)'
+1.99.1
+0                     # rust-lang/rust publishes no binary assets, so GitHub
+                      # is not a substitute distribution server
+----
+
+Also absent, and not installable here: `opam` (Why3 provider), `why3`, `z3`,
+and any container runtime (`docker`, `podman`, `nix`) that could carry a
+prebuilt image. `apt-get update` cannot write `/var/lib/apt/lists` and the
+Debian mirrors are not on the allow-list. `why3` does not exist on PyPI or npm
+(HTTP 404), so layer 4 cannot be improvised from the reachable channels either.
+
+**What this means for a verdict: nothing, which is the point.** With no
+toolchain, `just verify-status` reports every layer MISSING and exits `2`; the
+estate gate's prove phase exits `2` with NO PROOF WAS PERFORMED; and the status
+of the obligations is unchanged — STATED, NOT PROVED. What must *not* happen,
+and did not, is an installer that reports success because it skipped a layer.
+Run `just verify-install` on a host with dist access to move any of this
+forward.
 
 == Running the obligations
 
