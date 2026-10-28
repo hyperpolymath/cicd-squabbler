@@ -21,11 +21,23 @@
 #   scripts/install-toolchain.sh --no-creusot # stable + nightly only (fast)
 #   scripts/install-toolchain.sh --check      # report what is present, install nothing
 #
+# Nothing here pipes a network response into an interpreter. rustup is bootstrapped
+# from the official rustup-init *binary*, whose published SHA-256 is fetched over
+# TLS from the same origin and verified before anything is executed; Creusot is
+# cloned at the commit the release tag points to, and that commit is verified
+# after checkout before ./INSTALL runs. `curl https://sh.rustup.rs | sh` is the
+# pattern SonarCloud rates as a vulnerability, and it is right to.
+#
 # Environment:
 #   CREUSOT_VERSION   default 0.14.0 — must match the pin in
 #                     verification/squabble-creusot/rust-toolchain.toml and
 #                     .github/workflows/creusot.yml
+#   CREUSOT_COMMIT    default the commit v0.14.0 points to; required for any
+#                     version this script has no pin for (fail closed, never
+#                     clone a moving tag)
 #   CREUSOT_NIGHTLY   default nightly-2026-08-03 — same pairing
+#   RUSTUP_DIST_SERVER  default https://static.rust-lang.org (https only —
+#                     fetch() refuses any other scheme)
 #
 # Exit codes: 0 ready, 1 a requested step failed, 2 nothing was done (missing
 # prerequisite — e.g. no network, no opam and no way to install it).
@@ -33,6 +45,15 @@ set -uo pipefail
 
 creusot_version="${CREUSOT_VERSION:-0.14.0}"
 creusot_nightly="${CREUSOT_NIGHTLY:-nightly-2026-08-03}"
+
+# A tag is a moving name; a commit is not. Each supported release pins the commit
+# its tag pointed to when this script was written, so a re-pointed tag cannot
+# change what gets built and executed.
+case "$creusot_version" in
+  0.14.0) creusot_commit_default="65349025c67e69fcd7479f1f420fa5904f69bc27" ;;
+  *)      creusot_commit_default="" ;;
+esac
+creusot_commit="${CREUSOT_COMMIT:-$creusot_commit_default}"
 with_creusot=true
 check_only=false
 
@@ -47,6 +68,37 @@ done
 
 say() { printf '%s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# fetch <url> <dest> — writes to a file, never to a shell's stdin.
+fetch() {
+  if have curl; then
+    curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+      -o "$2" "$1"
+  elif have wget; then
+    wget --https-only --quiet -O "$2" "$1"
+  else
+    return 1
+  fi
+}
+
+sha256_file() {
+  if have sha256sum; then sha256sum "$1" | awk '{print $1}'
+  elif have shasum; then shasum -a 256 "$1" | awk '{print $1}'
+  else return 1
+  fi
+}
+
+# verify_sha256 <dir> <file> — compare <file> with the digest published beside it
+# as <file>.sha256 (first field, so both "hash  name" and "hash *name" work).
+verify_sha256() {
+  local dir="$1" file="$2" want got
+  [ -f "$dir/$file.sha256" ] || return 1
+  want="$(awk 'NR==1 {print $1}' "$dir/$file.sha256")"
+  case "$want" in ''|*[!0-9a-fA-F]*) return 1 ;; esac
+  [ "${#want}" -eq 64 ] || return 1
+  got="$(sha256_file "$dir/$file")" || return 1
+  [ "$want" = "$got" ]
+}
 
 status=0
 note() { printf '  %-22s %s\n' "$1" "$2"; }
@@ -72,10 +124,29 @@ fi
 
 # ---------------------------------------------------------------- rustup ----
 if ! have rustup; then
-  say "installing rustup"
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y --no-modify-path --default-toolchain stable --profile minimal \
-    || { say "rustup install failed — is https://static.rust-lang.org reachable?"; exit 1; }
+  say "installing rustup (verified rustup-init binary; no pipe-to-shell)"
+  case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64)              rustup_target=x86_64-unknown-linux-gnu ;;
+    Linux-aarch64|Linux-arm64) rustup_target=aarch64-unknown-linux-gnu ;;
+    Darwin-x86_64)             rustup_target=x86_64-apple-darwin ;;
+    Darwin-arm64)              rustup_target=aarch64-apple-darwin ;;
+    *) say "unsupported platform $(uname -s)/$(uname -m) — install rustup manually, then re-run"; exit 2 ;;
+  esac
+  dist="${RUSTUP_DIST_SERVER:-https://static.rust-lang.org}/rustup/dist/$rustup_target"
+  rustup_tmp="$(mktemp -d)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$rustup_tmp'" EXIT INT TERM
+  fetch "$dist/rustup-init" "$rustup_tmp/rustup-init" \
+    || { say "could not download $dist/rustup-init — is $dist reachable?"; exit 1; }
+  fetch "$dist/rustup-init.sha256" "$rustup_tmp/rustup-init.sha256" \
+    || { say "could not download the published digest for rustup-init — refusing to execute an unverified binary"; exit 1; }
+  verify_sha256 "$rustup_tmp" rustup-init \
+    || { say "rustup-init does not match its published digest — refusing to execute it"; exit 1; }
+  chmod 0755 "$rustup_tmp/rustup-init"
+  "$rustup_tmp/rustup-init" -y --no-modify-path --default-toolchain none --profile minimal \
+    || { say "rustup-init failed"; exit 1; }
+  rm -rf "$rustup_tmp"
+  trap - EXIT INT TERM
   # shellcheck disable=SC1091
   . "$HOME/.cargo/env" 2>/dev/null || true
 fi
@@ -105,11 +176,28 @@ else
     say "then: the obligations stay STATED, NOT PROVED."
     exit 2
   }
+  [ -n "$creusot_commit" ] || {
+    say ""
+    say "No commit is pinned for Creusot $creusot_version, and a tag can be"
+    say "re-pointed. Set CREUSOT_COMMIT to the commit v$creusot_version points"
+    say "to, and add it to the pin table in docs/CREUSOT.adoc. Nothing is cloned"
+    say "until then: the obligations stay STATED, NOT PROVED."
+    exit 2
+  }
   workdir="$(mktemp -d)"
-  say "cloning creusot v$creusot_version into $workdir"
-  git clone --depth 1 --branch "v$creusot_version" \
-    https://github.com/creusot-rs/creusot "$workdir/creusot" \
+  say "cloning creusot v$creusot_version at $creusot_commit"
+  git clone --no-checkout https://github.com/creusot-rs/creusot "$workdir/creusot" \
     || { say "could not clone creusot"; exit 1; }
+  (
+    cd "$workdir/creusot" || exit 1
+    git fetch --depth 1 origin "$creusot_commit" 2>/dev/null || git fetch origin --tags || exit 1
+    git checkout --detach "$creusot_commit" >/dev/null 2>&1 || exit 1
+    head_sha="$(git rev-parse HEAD)"
+    [ "$head_sha" = "$creusot_commit" ] || {
+      say "creusot checkout is $head_sha, expected $creusot_commit — refusing to run ./INSTALL"
+      exit 1
+    }
+  ) || { say "could not check out creusot at $creusot_commit"; exit 1; }
   ( cd "$workdir/creusot" && ./INSTALL ) \
     || { say "creusot's ./INSTALL failed — see its output above"; exit 1; }
   rm -rf "$workdir"

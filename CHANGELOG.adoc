@@ -33,6 +33,13 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
   refresh with `just graphql-schema-refresh`). Records `rateLimit` cost; an
   exhausted budget marks the remaining repos unavailable rather than guessing.
   Truncated or binary blobs and renamed repos are reported as notes.
+* `scripts/install-toolchain.sh` no longer pipes a network response into a
+  shell. rustup is bootstrapped from the official `rustup-init` binary whose
+  published SHA-256 is fetched over TLS from the same origin and verified before
+  execution; a tampered, malformed or missing digest is a refusal. Creusot is
+  cloned at the commit its tag pointed to and the checkout is verified before
+  `./INSTALL` runs; a version with no pinned commit is refused instead of being
+  cloned from a moving tag.
 * `docs/CREUSOT.adoc` — the toolchain split into the four layers that actually
   gate a verdict (manager, toolchain, `cargo creusot`, Why3 + solver), and a
   measured account of an environment that reaches only some of them: the

@@ -117,6 +117,16 @@ If `opam` is absent the installer stops with exit `2` and says so. That is not a
 failure of the repository; nothing about the status of the obligations changes
 until the prover exists.
 
+The installer bootstraps nothing by piping a network response into a shell.
+rustup comes from the official `rustup-init` binary, and the installer fetches
+the published SHA-256 from the same origin over TLS and verifies it before
+executing anything (a mismatch, a malformed digest, or a missing digest is a
+refusal, not a warning). Creusot is cloned at the **commit** its release tag
+pointed to, and that commit is verified after checkout before `./INSTALL` runs;
+a version this script has no commit for is refused rather than cloned from a
+moving tag. Both behaviours are exercised: six cases over the digest helper
+(accepted, binary-marker line, tampered, malformed, missing, content mismatch).
+
 === Four layers, and what each one needs
 
 The toolchain is not one download. It is four, and a build environment that can
@@ -159,9 +169,10 @@ Run in a sandbox whose egress allow-list is `github.com`, `api.github.com`,
 [source,text]
 ----
 $ ./scripts/install-toolchain.sh
-installing rustup
-curl: (35) OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to sh.rustup.rs:443
-rustup install failed — is https://static.rust-lang.org reachable?
+installing rustup (verified rustup-init binary; no pipe-to-shell)
+curl: (35) OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to static.rust-lang.org:443
+could not download https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init
+  — is https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu reachable?
 # exit 1
 ----
 
