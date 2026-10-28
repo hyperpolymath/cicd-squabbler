@@ -202,6 +202,8 @@ pub fn parse_chains_response(
     (snaps, rate)
 }
 
+/// Preserve the requested identity and failure reason in an empty snapshot
+/// with no resolved canonical name.
 fn unavailable(repo: &RepoId, reason: String) -> RepoSnapshot {
     RepoSnapshot {
         repo: repo.clone(),
@@ -212,6 +214,10 @@ fn unavailable(repo: &RepoId, reason: String) -> RepoSnapshot {
     }
 }
 
+/// Build a scanned snapshot from a repository node, retaining the requested
+/// identity and any different canonical name. Missing branches or workflow
+/// entries yield no files; unreadable blobs are skipped with notes, while
+/// truncated text is retained with a caveat.
 fn parse_repo(repo: &RepoId, node: &Value) -> RepoSnapshot {
     let mut notes = Vec::new();
     let mut canonical = None;

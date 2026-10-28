@@ -48,6 +48,11 @@ pub struct RestResponse {
 /// conflating it with a transport failure would erase the dead/moved
 /// distinction. `Err` is only for "no response at all".
 pub trait RestTransport {
+    /// GET an API-root-relative path, retaining HTTP error responses as data.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no response is available.
     fn get(&self, path: &str) -> Result<RestResponse, String>;
 }
 
@@ -56,6 +61,12 @@ pub trait RestTransport {
 pub struct GhRest;
 
 impl RestTransport for GhRest {
+    /// Read an API path through the authenticated `gh` CLI. Non-empty stdout
+    /// is parsed even when `gh` exits unsuccessfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `gh` cannot be run or stdout is empty or whitespace.
     fn get(&self, path: &str) -> Result<RestResponse, String> {
         let out = Command::new("gh")
             .args(["api", "--include", path])
@@ -82,7 +93,8 @@ impl RestTransport for GhRest {
 ///
 /// Only the *last* header block's status/headers are kept (a followed redirect
 /// can print more than one); the body starts after that block's blank line.
-/// Body lines are never parsed as headers.
+/// Any line beginning `HTTP/` starts a new header block. A missing or invalid
+/// status gives `0`; without a header-ending blank line, the body is empty.
 pub fn parse_included(text: &str) -> RestResponse {
     let mut status = 0u16;
     let mut location = None;
@@ -136,8 +148,10 @@ fn slug_from_location(location: &str) -> Option<String> {
 
 /// Turn one repository response into a canonical resolution for `requested`.
 ///
-/// `full_name` is the truth when present, whatever the status; otherwise a
-/// `Location` that names a repo is used, and everything else is `Unverified`.
+/// A 404 gives `NotFound`. Otherwise `full_name` takes precedence over a
+/// `Location` naming a repo, and names are compared case-insensitively.
+/// Without either name, returns `Unverified`; invalid JSON does not prevent
+/// using a name from `Location`.
 pub fn canonical_resolution(requested: &RepoId, resp: &RestResponse) -> CanonicalResolution {
     if resp.status == 404 {
         return CanonicalResolution::NotFound;
@@ -180,17 +194,19 @@ fn resolution_from_error(err: &str) -> CanonicalResolution {
     }
 }
 
+/// Split a slug with exactly two non-empty slash-separated components;
+/// return `None` for any other shape.
 fn split_slug(repo: &RepoId) -> Option<(&str, &str)> {
     let (o, n) = repo.as_str().split_once('/')?;
     (!o.is_empty() && !n.is_empty() && !n.contains('/')).then_some((o, n))
 }
 
-/// Resolve the canonical `full_name` of every repo in `repos`, one REST read
-/// each. Returns the resolutions keyed by the name as written, plus the number
-/// of calls actually made (the evidence line for the report).
+/// Resolve each distinct valid `owner/name` slug with one REST read. Returns
+/// resolutions keyed by the written name and the number of attempted calls.
+/// Invalid slugs become `Unverified` without a call.
 ///
-/// Fail-closed per repo: a transport error becomes `Unverified` and the loop
-/// continues. Nothing is concluded about a repo that could not be read.
+/// Transport errors containing `404` or `Not Found` become `NotFound`; other
+/// errors become `Unverified`. Processing continues after either result.
 pub fn resolve_canonical(
     transport: &dyn RestTransport,
     repos: &[RepoId],

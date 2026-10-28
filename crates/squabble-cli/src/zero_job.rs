@@ -54,6 +54,9 @@ struct Args {
     json: bool,
 }
 
+/// Parse one checkout path with an optional `=owner/repo` identity, a run
+/// limit (default `30`) and JSON output. Returns an error for a missing path,
+/// extra paths, unknown flags or a missing, invalid or zero limit.
 fn parse_args(rest: &[String]) -> Result<Args, String> {
     let mut a = Args {
         path: String::new(),
@@ -93,6 +96,11 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
     Ok(a)
 }
 
+/// Scan recent runs and print startup-failure attributions as text or JSON.
+/// Returns `4` when any startup failure is listed, even if its job count could
+/// not be read; `0` means none in the returned page. Usage, checkout, run
+/// listing and serialisation failures return `2`; policy and name-resolution
+/// failures are retained as report notes.
 pub fn run(rest: &[String]) -> ExitCode {
     let args = match parse_args(rest) {
         Ok(a) => a,
@@ -257,6 +265,8 @@ fn exit_for(report: &ZeroJobReport) -> ExitCode {
     }
 }
 
+/// Render runs, attributions, proposed moves, sequencing and caveats as a text
+/// report, including unreadable job counts.
 fn narrate(r: &ZeroJobReport) -> String {
     let mut o = format!(
         "zero-job: {} — {} `startup_failure` run(s) (jobs=0, no check run exists)\n",
@@ -299,6 +309,15 @@ fn narrate(r: &ZeroJobReport) -> String {
 struct GhRuns;
 
 impl GhRuns {
+    /// Request one page of recent runs with `limit` as `per_page`, retaining
+    /// startup failures.
+    /// Read each matching run's job count; a failed jobs request or invalid
+    /// count leaves `jobs` as `None`, and positive counts are retained too.
+    ///
+    /// # Errors
+    ///
+    /// Propagates transport and parsing errors from the run listing, and
+    /// returns an error for any non-success HTTP status on that listing.
     fn startup_runs(&self, slug: &str, limit: usize) -> Result<Vec<ZeroJobRun>, String> {
         let transport = GhRest;
         let path = format!("repos/{slug}/actions/runs?per_page={limit}");
