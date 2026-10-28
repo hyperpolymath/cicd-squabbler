@@ -17,7 +17,7 @@
 //! `Location` even for the error responses `gh` exits non-zero on, so a 404 is
 //! distinguishable from "no JSON came back".
 //!
-//! Fail-closed: `Not Found` maps to [`CanonicalResolution::NotFound`], anything
+//! Fail-closed: HTTP `404` maps to [`CanonicalResolution::NotFound`], anything
 //! else that did not produce a name maps to
 //! [`CanonicalResolution::Unverified`] with the reason. Nothing is inferred.
 //! A redirect to `/repositories/<id>` (GitHub's form for renames) carries no
@@ -66,8 +66,8 @@ impl RestTransport for GhRest {
             .map_err(|e| format!("failed to run `gh api --include {path}`: {e}"))?;
         let text = String::from_utf8_lossy(&out.stdout);
         if text.trim().is_empty() {
-            // No headers at all: keep the status text so the caller can still
-            // tell a 404 from a rate limit.
+            // No headers at all: keep the diagnostic text without inferring
+            // an HTTP status from it.
             return Err(format!(
                 "`gh api --include {path}` exited {} with no response: {}",
                 out.status,
@@ -168,15 +168,10 @@ pub fn canonical_resolution(requested: &RepoId, resp: &RestResponse) -> Canonica
     CanonicalResolution::Unverified { reason }
 }
 
-/// Map a transport error onto a resolution. A 404 means the repo is gone (or
-/// invisible); anything else concludes nothing.
+/// A transport error provides no HTTP response, so it concludes nothing.
 fn resolution_from_error(err: &str) -> CanonicalResolution {
-    if err.contains("404") || err.contains("Not Found") {
-        CanonicalResolution::NotFound
-    } else {
-        CanonicalResolution::Unverified {
-            reason: err.to_string(),
-        }
+    CanonicalResolution::Unverified {
+        reason: err.to_string(),
     }
 }
 
@@ -416,10 +411,22 @@ mod tests {
     }
 
     #[test]
-    fn an_error_that_mentions_404_is_not_found() {
-        let rest = Fake(vec![("repos/a/b", Err("gh: Not Found (HTTP 404)"))]);
-        let (out, _) = resolve_canonical(&rest, &[r("a/b")]);
-        assert_eq!(out.get(&r("a/b")), Some(&CanonicalResolution::NotFound));
+    fn transport_errors_stay_unverified_even_when_they_mention_404_or_not_found() {
+        for reason in [
+            "gh: Not Found (HTTP 404)",
+            "connection to proxy404 failed",
+            "gh executable Not Found",
+            "connection reset",
+        ] {
+            let rest = Fake(vec![("repos/a/b", Err(reason))]);
+            let (out, _) = resolve_canonical(&rest, &[r("a/b")]);
+            assert_eq!(
+                out.get(&r("a/b")),
+                Some(&CanonicalResolution::Unverified {
+                    reason: reason.into()
+                })
+            );
+        }
     }
 
     #[test]

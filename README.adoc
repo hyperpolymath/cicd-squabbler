@@ -108,8 +108,8 @@ scanned window.
 
 `zero-job` is *outside* `squabble-contract/1.0.0`: that revision's surface stays
 at four subcommands, and nothing here adds meaning to it. Like `chains`, the
-command reads and writes nothing, so its absence from the pinned contract costs
-a consumer nothing.
+command is read-only and writes nothing, so its absence from the pinned contract
+costs a consumer nothing.
 
 Both moves only let a check *start*. Neither drops a required context, weakens a
 check, nor edits settings: `squabble ≠ bypass` holds, and nothing here is a

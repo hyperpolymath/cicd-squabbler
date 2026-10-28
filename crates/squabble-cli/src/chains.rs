@@ -28,9 +28,9 @@
 //! as it is when `--follow` finds it.
 //!
 //! Nothing is written anywhere. Exit `0` = no blocking finding, `4` = at
-//! least one blocking finding (a cycle, a dead upstream, or a moved upstream),
-//! `2` = usage or tool failure, including a run where no repository could be
-//! read at all.
+//! least one blocking finding (a cycle or a dead upstream). A moved upstream
+//! is a warning. Exit `2` = usage or tool failure, including a run where no
+//! repository could be read at all.
 
 use squabble_core::chains::{
     analyse, ChainsReport, Finding, RepoId, RepoSnapshot, ScanStatus, Severity, SourceCost,
@@ -624,7 +624,7 @@ mod tests {
             r.canonical.get(&RepoId::new("old/stds")),
             Some(&RepoId::new("hyperpolymath/standards"))
         );
-        let c = r.cost.expect("cost");
+        let c = r.cost.as_ref().expect("cost");
         assert_eq!(c.rest_calls, 1, "one REST read for the one coordinate");
         assert_eq!(c.queries, 1, "GraphQL still reads only the subject");
 

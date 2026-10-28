@@ -69,8 +69,8 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
                 a.limit = it
                     .next()
                     .and_then(|v| v.parse().ok())
-                    .filter(|&n: &usize| n > 0)
-                    .ok_or("--limit needs a positive integer")?
+                    .filter(|n: &usize| (1..=100).contains(n))
+                    .ok_or("--limit must be an integer from 1 to 100")?
             }
             s if s.starts_with("--") => return Err(format!("unknown flag `{s}`\n{USAGE}")),
             s => {
@@ -562,5 +562,24 @@ mod tests {
         assert!(parse_args(&[]).is_err());
         assert!(parse_args(&["x".into(), "--limit".into(), "0".into()]).is_err());
         assert!(parse_args(&["x".into(), "--nope".into()]).is_err());
+    }
+
+    #[test]
+    fn limit_is_bounded_by_the_single_page_run_cap() {
+        for limit in [1, 100] {
+            let a = parse_args(&["x".into(), "--limit".into(), limit.to_string()]).unwrap();
+            assert_eq!(a.limit, limit);
+        }
+        for limit in ["0", "101", "1000", "-1", "nope", "18446744073709551616"] {
+            let result = parse_args(&["x".into(), "--limit".into(), limit.into()]);
+            assert_eq!(
+                result.err().as_deref(),
+                Some("--limit must be an integer from 1 to 100")
+            );
+        }
+        assert_eq!(
+            parse_args(&["x".into(), "--limit".into()]).err().as_deref(),
+            Some("--limit must be an integer from 1 to 100")
+        );
     }
 }
