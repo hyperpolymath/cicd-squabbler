@@ -44,3 +44,7 @@ jobs:
       # A creusot-std dependency that annotates nothing would be a hollow
       # dependency: prove nothing, claim nothing. Fail rather than warn.
       enforce_hollow: true
+      # The contracts live behind the crate's `creusot` feature, so the prove
+      # phase must enable it — otherwise it discharges an empty module and
+      # reports success over nothing.
+      prove_args: "--features creusot"

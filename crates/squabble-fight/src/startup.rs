@@ -164,7 +164,11 @@ fn unattributed(repo: &str, workflow: &str, evidence: String) -> ZeroJobAttribut
 /// host's evidence, not something this parser may assume.
 /// Matching is case-insensitive. Entries without an unsigned integer run ID
 /// are skipped; a missing or non-string path becomes an empty filename,
-/// otherwise only its final path component is kept.
+/// otherwise the ref suffix is dropped and only the final path component is
+/// kept. GitHub reports `path` either as `.github/workflows/ci.yml` or as
+/// `.github/workflows/ci.yml@refs/heads/main`; taking the last slash-separated
+/// component of the second form would name the file `main`, so every run would
+/// fail to match the checkout and be attributed to nothing.
 ///
 /// # Errors
 ///
@@ -191,6 +195,10 @@ pub fn parse_startup_runs(body: &str) -> Result<Vec<ZeroJobRun>, String> {
                 .get("path")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
+            // Drop a `@ref` suffix before taking the filename: `.github/
+            // workflows/ci.yml@refs/heads/main` must yield `ci.yml`, not
+            // `main`. The ref is not evidence of which file ran.
+            let path = path.split('@').next().unwrap_or(path);
             let workflow_file = path.rsplit('/').next().unwrap_or(path).to_string();
             let workflow_name = r
                 .get("name")
@@ -421,6 +429,26 @@ jobs:
         assert_eq!(runs[0].workflow_name.as_deref(), Some("Hypatia scan"));
         assert_eq!(runs[1].workflow_file, "gov.yml");
         assert!(runs.iter().all(|r| r.jobs.is_none()));
+    }
+
+    #[test]
+    fn a_run_path_carrying_a_ref_suffix_still_names_the_workflow_file() {
+        // GitHub reports `path` both ways. Taking the last slash-separated
+        // component of the suffixed form would name the file after the ref and
+        // silently attribute nothing, so the suffix must go first.
+        let body = serde_json::json!({
+            "workflow_runs": [
+                {"id": 21, "conclusion": "startup_failure",
+                 "path": ".github/workflows/gov.yml@refs/heads/main"},
+                {"id": 22, "conclusion": "startup_failure",
+                 "path": ".github/workflows/ci.yml@refs/pull/140/merge"}
+            ]
+        })
+        .to_string();
+        let runs = parse_startup_runs(&body).expect("parse");
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].workflow_file, "gov.yml");
+        assert_eq!(runs[1].workflow_file, "ci.yml");
     }
 
     #[test]

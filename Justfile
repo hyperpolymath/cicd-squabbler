@@ -373,8 +373,11 @@ verify-mirror:
 
 # Discharge the obligations. This is the ONLY step that turns "stated" into
 # "proved"; until it has run on a real toolchain, the contracts are stated only.
+# `--features creusot` is REQUIRED: the contracts live behind that feature, so a
+# plain `cargo creusot prove` would prove an empty module and report success
+# over nothing.
 verify-creusot:
-    cd verification/squabble-creusot && cargo creusot prove
+    cd verification/squabble-creusot && cargo creusot prove --features creusot
 
 # The estate gate, verbatim: detect → theatre (T1 claims, T2 hollow, T3 trusted)
 # → prove. Fetches the pinned script from hyperpolymath/cicd-suite rather than
