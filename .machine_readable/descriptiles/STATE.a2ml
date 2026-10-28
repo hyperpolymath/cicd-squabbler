@@ -6,7 +6,7 @@
 [metadata]
 project = "cicd-squabbler"
 version = "0.1.0"
-last-updated = "2026-09-29"
+last-updated = "2026-10-28"
 status = "active"  # active | paused | archived
 
 [project-context]
@@ -34,6 +34,7 @@ milestones = [
   { name = "cicd-squabbler-mcp cartridge (boj-server-cartridges cartridges/domains/ci-cd/): squabble_fight + squabble_diagnose tools, mod.js proxy to SQUABBLE_BACKEND_URL, no ffi block (JS dispatch path)", completion = 100 },
   { name = "`squabble fight --apply` — enacts the first appliable self-win: strips an on.*.paths trigger filter that strands a required check (Missing-only classification), writing the workflow file. Fail-closed + idempotent + no commit/push/re-run; Outcome stays Red with an `applied` evidence section (no overclaim). Provably gate-strengthening (more coverage, never fewer) so the SPARK invariant is untouched. Other self-wins (context reconcile, reusable re-pin) stay propose-only pending the GitHub ruleset API.", completion = 100 },
   { name = "`squabble chains` (Phase A, read-only) — pure cross-repo chain analysis in squabble-core::chains (cycles + dead upstreams blocking; diamonds, pin skew, tag/branch pins warnings; landing order; max-plus longest chain), local + GitHub GraphQL sources (new squabble-forge crate, queries validated against a committed schema snapshot), `--follow N` upstream probing, exit 4 on blocking. Dogfooded offline on cicd-squabbler, standards, typed-wasm, rsr-template-repo; live GraphQL run pending a gh-authenticated host.", completion = 90 },
+  { name = "Zero-job `startup_failure` attribution — a run that dies before any job exists creates no check run, so nothing shows on the PR. Two first-class classes with DISTINCT moves: moved coordinate (reusable owner renamed/transferred → `RepointToCanonical`, same pin) and allow-list admission required (canonical coordinate refused by the caller's `selected` allow-list → `AllowListAdmissionRequired`, exact `owner/repo@*`). `squabble zero-job <path>` reports per-run attribution (repo, workflow, coordinate as written, canonical target, required pattern) and exits 4 on any observed run; `squabble chains` resolves every upstream's canonical `full_name` through REST (names compared, never pins) to flag moved upstreams and canonical-grouped pin skew before a run proves it. Diagnosis only — no CheckRun is constructed, no postures edited, no green declared. Code complete; build/tests and a live `gh`-authenticated run pending a Rust toolchain (none installable in the authoring environment).", completion = 70 },
   { name = "RSR scaffolding customisation (identity, root-allow, A2ML manifests)", completion = 80 },
 ]
 
