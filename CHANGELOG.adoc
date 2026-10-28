@@ -110,6 +110,13 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
 
 ==== Fixed
 
+* `squabble-forge` REST: an API path is now validated before it becomes an
+  argument to `gh` — empty, over-long, option-looking, upward-traversing, or any
+  path carrying a byte outside `[A-Za-z0-9._-/=@+~:]` (so whitespace, `;`, `&&`,
+  backticks, `$()` and newlines) is refused, and `--` ends `gh`'s option list.
+  Paths are built from repository slugs that originate in workflow YAML, so this
+  was untrusted data reaching argv. Six new cases cover the refusals.
+
 * verify-satisfied: a PR with an unsigned or unverified commit no longer
   reads as done when the base requires signed commits. GitHub blocks that
   merge, squash included; it is now the agent item `unverified_commits`,

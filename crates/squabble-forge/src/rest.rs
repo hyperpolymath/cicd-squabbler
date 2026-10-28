@@ -56,6 +56,49 @@ pub trait RestTransport {
     fn get(&self, path: &str) -> Result<RestResponse, String>;
 }
 
+/// The characters an API path may contain.
+///
+/// This is not cosmetic. The path is passed to `gh` as an argument, so a value
+/// beginning with `-` would be read as an option, and a newline would end `gh`'s
+/// argv entry and let the next line be interpreted. Callers build the path from
+/// repository slugs that come from workflow YAML and from the API itself, which
+/// is to say from data this program does not control. `Owner`/`Repo`/`.`/`-`/`_`
+/// and the separators are all a real path ever needs; everything else is
+/// refused before a process is spawned.
+const PATH_ALLOWED: &[u8] =
+    b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/=@+~:";
+
+/// Check an API path before it becomes an argument to `gh`.
+///
+/// # Errors
+///
+/// Returns the reason the path was refused: empty, too long, an option-looking
+/// leading `-`, a `..` segment, or any byte outside [`PATH_ALLOWED`].
+pub fn check_api_path(path: &str) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("empty API path".to_string());
+    }
+    if path.len() > 512 {
+        return Err(format!("API path is {} bytes; refusing", path.len()));
+    }
+    if path.starts_with('-') {
+        return Err(format!("API path '{path}' looks like an option; refusing"));
+    }
+    for seg in path.split('/') {
+        if seg == ".." {
+            return Err(format!("API path '{path}' traverses upward; refusing"));
+        }
+    }
+    for &b in path.as_bytes() {
+        if !PATH_ALLOWED.contains(&b) {
+            return Err(format!(
+                "API path '{path}' contains byte 0x{b:02x}, which is not allowed; refusing"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// `gh api --include`, which prints headers and body.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GhRest;
@@ -68,8 +111,12 @@ impl RestTransport for GhRest {
     ///
     /// Returns an error if `gh` cannot be run or stdout is empty or whitespace.
     fn get(&self, path: &str) -> Result<RestResponse, String> {
+        // Validate before spawning: an argument is not a string once it is in
+        // `gh`'s argv, and nothing below this line may run on a rejected path.
+        check_api_path(path)?;
         let out = Command::new("gh")
-            .args(["api", "--include", path])
+            .args(["api", "--include", "--"])
+            .arg(path)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -454,5 +501,38 @@ mod tests {
             out.get(&r("not-a-slug")),
             Some(CanonicalResolution::Unverified { .. })
         ));
+    }
+
+    #[test]
+    fn a_plain_repository_path_is_accepted() {
+        assert!(check_api_path("repos/hyperpolymath/cicd-squabbler").is_ok());
+        assert!(check_api_path("repos/a/b/commits/main").is_ok());
+    }
+
+    #[test]
+    fn an_option_looking_path_is_refused_before_it_reaches_argv() {
+        let err = check_api_path("--help").expect_err("must be refused");
+        assert!(err.contains("option"), "{err}");
+    }
+
+    #[test]
+    fn a_path_carrying_a_metacharacter_or_newline_is_refused() {
+        for bad in [
+            "repos/a/b;rm -rf /",
+            "repos/a/b && gh pr merge 1",
+            "repos/a/b\nx",
+            "repos/a/b`id`",
+            "repos/a/b$(id)",
+            "repos/a/../..",
+        ] {
+            assert!(check_api_path(bad).is_err(), "accepted {bad:?}");
+        }
+    }
+
+    #[test]
+    fn an_empty_or_overlong_path_is_refused() {
+        assert!(check_api_path("").is_err());
+        let long = format!("repos/{}", "a".repeat(600));
+        assert!(check_api_path(&long).is_err());
     }
 }
