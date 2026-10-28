@@ -1,0 +1,167 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= The Creusot complement: Rust deductive verification
+:toc: left
+:toclevels: 3
+
+[.lead]
+The estate requires Rust that carries deductive-verification obligations, the
+Rust twin of the SPARK proofs in `spark/`. This page records what exists here,
+what it means, and — plainly — what has *not* happened yet.
+
+== Status: stated, not proved
+
+[cols="2,1,3"]
+|===
+| Item | State | Meaning
+
+| Contracts in `verification/squabble-creusot`
+| written
+| Six obligations state the engine's load-bearing invariants to Creusot.
+
+| Stable-Rust mirror (`src/model.rs`)
+| written, not yet run
+| The same statements as ordinary functions, with `#[test]`s that compare them
+  to the real `squabble-core`. Needs only a stable toolchain.
+
+| `cargo creusot prove`
+| **never run**
+| No obligation has reached Why3. No run has discharged anything.
+
+| Estate gate (`Creusot Gate` workflow)
+| wired
+| Calls `hyperpolymath/cicd-suite`'s `creusot-gate.yml`, phase-verified locally
+  (see <<_what_was_actually_checked>>). It cannot pass until a runner installs
+  the toolchain and the obligations discharge.
+
+| Rust CI on this repository
+| **not running at all**
+| `Rust CI` concludes `startup_failure` with **zero jobs** on `main` and on
+  branches, so nothing here has been compiled in CI either. That is the class
+  `squabble zero-job` exists to name (see `README.adoc`); until it is fixed, no
+  Rust in this repository is built by CI.
+|===
+
+The honest phrase is **stated, not proved**. Do not upgrade it until a `prove`
+run discharges every obligation on a real toolchain; the estate gate fails a
+claim of proof that has no contracts behind it, and that gate is right to.
+
+== What the obligations say
+
+`verification/squabble-creusot` restates four invariants that the engine's
+correctness rests on:
+
+Acceptance::
+`Green` ⇔ the required set is non-empty ∧ every requirement is satisfied
+(passed or skipped). The non-emptiness clause is load-bearing: a branch with no
+required checks is unprotected, not won, so `Gate::evaluate` reports `Blocked`.
+
+Evidence::
+A gate satisfied only by skips is `Green` by the ruleset and evidence-free in
+fact. `has_evidence` states the stronger claim a *real* green makes.
+
+No diagnosis is a green::
+Whatever `MissingCause` is attached to a requirement, acceptance depends only on
+the realised runs. `after_diagnosis` takes the diagnosis as a free variable and
+the postcondition does not mention it.
+
+Admission::
+`requires_admission` is exactly the complement of `admits`: no third answer, and
+never a `true` invented for an unknown. `after_admission` states that admission
+changes nothing about acceptance — it only lets a check start.
+
+The pin::
+A repoint carries the pin verbatim. The string-level statement lives in the
+stable mirror (`#test a_repoint_carries_the_pin_verbatim`), where it is checked
+against `squabble_core::startup::Coordinate`; the contracts stay on scalars
+because that is what discharges quickly and reads clearly in Why3.
+
+== The three pins that must move together
+
+[cols="2,2"]
+|===
+| Pin | Where
+
+| `nightly-2026-08-03`
+| `verification/squabble-creusot/rust-toolchain.toml` and `rust_nightly:` in
+  `.github/workflows/creusot.yml`
+
+| Creusot `v0.14.0`
+| `creusot_version:` in `.github/workflows/creusot.yml` (installed by the gate's
+  `./INSTALL`)
+
+| `creusot-std = "0.14"`
+| `verification/squabble-creusot/Cargo.toml`
+|===
+
+The nightly is not a preference: Creusot is built against exactly one nightly
+per release (upstream's `rust-toolchain` at the tag), and a mismatch fails at
+translation time rather than at build time. Move all three, or none.
+
+== Installing the toolchain
+
+[source,sh]
+----
+just verify-status            # what is present; installs nothing
+just verify-install           # stable + Creusot's nightly + Creusot itself
+scripts/install-toolchain.sh --no-creusot   # toolchains only (no opam needed)
+----
+
+Creusot is **not** installed with `cargo install creusot`. Upstream ships an
+`INSTALL` script that provisions Why3 and `why3find` through opam; `cargo
+install` produces a `cargo creusot` that cannot reach a prover — a gate that
+cannot say *no* must report VOID, never green, and the estate gate enforces
+exactly that by proving a planted false contract before it proves yours.
+
+If `opam` is absent the installer stops with exit `2` and says so. That is not a
+failure of the repository; nothing about the proof claims changes until the
+prover exists.
+
+== Running the obligations
+
+[source,sh]
+----
+# Stable mirror of every statement (needs only stable Rust)
+just verify-mirror
+
+# Discharge the obligations — the only step that turns "stated" into "proved"
+just verify-creusot
+
+# The estate gate, verbatim, at the pinned cicd-suite commit
+just verify-gate $(grep -oE 'cicd-suite/\.github/workflows/creusot-gate\.yml@[0-9a-f]{40}' \
+    .github/workflows/creusot.yml | head -1 | sed 's/.*@//')
+----
+
+== What was actually checked
+
+Run against this tree with the estate script
+(`cicd-suite/actions/creusot-check/check.sh`), tracked files only:
+
+[source,text]
+----
+$ CREUSOT_GATE_PHASE=detect  ... -> obligations=true  claims=false  contract_count=10
+$ CREUSOT_GATE_PHASE=theatre ... -> no theatre found (T1, T2, T3 clean)
+$ CREUSOT_GATE_PHASE=prove   ... -> exit 2: 'cargo creusot' is not available
+                                    — NO PROOF WAS PERFORMED.
+----
+
+So: the wiring is exercised end to end, the anti-theatre checks pass honestly,
+and the prove phase fails closed rather than reporting a verdict it cannot
+support. **No obligation has been discharged.**
+
+== Why a separate crate, and the licence position
+
+`creusot-std` is nightly-only and carries `LGPL-2.1-or-later`. It is therefore
+
+* **not** a dependency of the root workspace — `exclude = ["verification"]` in
+  `Cargo.toml` keeps it out of the stable `--locked` build and `cargo audit`,
+  which read one lockfile for the whole workspace (the failure echidna measured
+  and recorded in its `CREUSOT-SETUP.adoc`);
+* optional even inside the verification crate, behind the `creusot` feature, so
+  the crate still builds and tests on stable Rust without it;
+* never linked into `squabble` or published (`publish = false`).
+
+The licence question is flagged for the owner rather than decided here: an
+LGPL-2.1-or-later *verification-only*, non-distributed dependency is not
+obviously a problem, but `standards`' licence policy decides that, not this
+document.

@@ -115,6 +115,31 @@ Both moves only let a check *start*. Neither drops a required context, weakens a
 check, nor edits settings: `squabble ≠ bypass` holds, and nothing here is a
 green. A missing or skipped check cannot be made green by a diagnosis.
 
+== Rust deductive verification (Creusot)
+
+The estate requires its Rust to carry verification obligations, the twin of the
+SPARK proofs. `verification/squabble-creusot` states the engine's load-bearing
+invariants — acceptance ⇔ every requirement satisfied and the set non-empty, a
+skip is not evidence, no diagnosis is a green, admission is refused exactly when
+it is required, a repoint carries the pin verbatim — to
+https://github.com/creusot-rs/creusot[Creusot], and mirrors them as ordinary
+`#[test]`s against the real code so drift is caught on stable Rust.
+
+[source,sh]
+----
+just verify-status    # which toolchain and prover are present
+just verify-install   # stable + Creusot's pinned nightly + Creusot itself
+just verify-mirror    # stable Rust: the model vs the real engine
+just verify-creusot   # the prover: discharge the obligations
+----
+
+**Stated, not proved.** No obligation has been discharged, and this repository's
+own `Rust CI` currently ends as a zero-job `startup_failure`, so CI has not
+compiled the workspace either. `.github/workflows/creusot.yml` calls the estate's
+`creusot-gate.yml`, which fails a claim of proof with no contracts behind it and
+reports *no proof performed* rather than a verdict when the prover cannot be
+shown to work. Details and the licence note: `docs/CREUSOT.adoc`.
+
 == Downstream integration contracts (pinned, immutable revisions)
 
 `contracts/` publishes two contracts that other repositories integrate against.
@@ -171,6 +196,7 @@ check away, or any override are provably *not* paths to green.
 | `crates/squabble-app`  | The loopback HTTP backend (axum, `127.0.0.1:7741`): serves the shared planner to the boj-server `cicd-squabbler-mcp` cartridge. The GitHub App *webhook* leg (trigger button + octocrab) is still to come — no webhook route is registered.
 | `crates/squabble-forge`| Forge access: GitHub GraphQL via `gh api graphql`, batched, validated against a committed schema snapshot. REST where GraphQL has no equivalent — notably `repos/{o}/{n}` for canonical `full_name` resolution (redirects followed, names compared).
 | `spark/`               | The formal heart. `Gate_Machine` + the proved theorem `green ⇔ (non-empty ∧ all passed)`.
+| `verification/squabble-creusot` | The Rust twin of `spark/`: Creusot contracts for the same invariants, plus a stable-Rust mirror that fails if the engine drifts from them. **Stated, not proved** — no obligation has been discharged yet. See `docs/CREUSOT.adoc`.
 |===
 
 == Verify it yourself

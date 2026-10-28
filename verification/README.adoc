@@ -1,3 +1,17 @@
 // SPDX-License-Identifier: CC-BY-SA-4.0
 // Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 = Verification Pillar
+
+== Rust: the Creusot complement
+
+Rust obligations live in `squabble-creusot/` (the Rust twin of `spark/` and of
+the proofs under `proofs/`). They are **stated, not proved**: no obligation has
+been discharged yet. See `../docs/CREUSOT.adoc` and `squabble-creusot/README.adoc`.
+
+[source,sh]
+----
+just verify-mirror     # stable Rust: the model vs the real engine
+just verify-creusot    # Creusot: discharge the obligations
+just verify-status     # what toolchain/prover is present
+----
+

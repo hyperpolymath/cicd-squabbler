@@ -14,7 +14,10 @@ members = [
 # an independent package, not a member of this workspace; without this cargo
 # refuses to build it (governance run 39253292198, 2026-10-19; root fix is
 # hyperpolymath/standards#1299, after which this is harmless).
-exclude = [".standards-js"]
+# `verification/squabble-creusot` is deliberately outside this workspace too: it
+# is a nightly-only Creusot artefact with its own Cargo.lock, so the stable
+# `--locked` build and `cargo audit` here never resolve `creusot-std`.
+exclude = [".standards-js", "verification"]
 
 [workspace.package]
 version = "0.1.0"

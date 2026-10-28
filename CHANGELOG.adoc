@@ -70,6 +70,29 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
   is blocking in `zero-job`. `chains` exit semantics are unchanged, so the
   frozen `squabble-contract/1.0.0` remains accurate. `SourceCost` records the
   REST calls made.
+* The Creusot complement for Rust, the twin of `spark/`:
+  `verification/squabble-creusot` states six obligations over the engine's
+  load-bearing invariants (acceptance, evidence, "no diagnosis is a green",
+  admission, and admission-not-green) and mirrors every one as a stable-Rust
+  `#[test]` against the real `squabble-core`, so drift is caught without a
+  prover. The crate is its own workspace with its own
+  `rust-toolchain.toml` (Creusot v0.14.0's `nightly-2026-08-03`) and
+  `publish = false`, keeping the nightly-only LGPL proof library out of the
+  stable `--locked` build and `cargo audit`. `.github/workflows/creusot.yml`
+  calls the estate gate (`hyperpolymath/cicd-suite`'s `creusot-gate.yml`) with
+  `enforce_hollow: true`, and `scripts/install-toolchain.sh` plus `just
+  verify-{status,install,mirror,creusot,gate}` install and run the toolchain,
+  Creusot included via upstream's `./INSTALL` (not `cargo install`).
+  **Stated, not proved**: no obligation has been discharged — the authoring
+  environment has no Rust toolchain at all, and this repository's `Rust CI`
+  currently ends as a zero-job `startup_failure`, so CI has not compiled the
+  workspace either. The estate gate's detect/theatre phases were run against
+  this tree (obligations=true, claims=false, 10 contract attributes, T1/T2/T3
+  clean) and its prove phase correctly reported "NO PROOF WAS PERFORMED".
+* The dev container now installs the Rust toolchains it was missing (stable for
+  the workspace, Creusot's pinned nightly for `verification/`), and
+  `devcontainer.json` reports toolchain status on first boot. Creusot's prover
+  stack (opam + Why3 + SMT) stays opt-in via `just verify-install`.
 
 ==== Fixed
 

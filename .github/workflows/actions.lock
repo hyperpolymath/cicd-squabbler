@@ -8,6 +8,8 @@ workflows:
         - 'github/codeql-action@v4.39.1'
     '.github/workflows/container-build.yml':
         - 'actions/checkout@v7.0.1'
+    '.github/workflows/creusot.yml':
+        - 'hyperpolymath/cicd-suite@bf7dd95cf49733019343ff485c2f45c6b261839c'
     '.github/workflows/dependabot-automerge.yml':
         - 'dependabot/fetch-metadata@v3.1.0'
     '.github/workflows/dogfood-gate.yml':
@@ -205,6 +207,15 @@ dependencies:
             - 'dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8'
             - 'goto-bus-stop/setup-zig@abea47f85e598557f500fa1fd2ab7464fcb39406'
             - 'swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6'
+    'hyperpolymath/cicd-suite@bf7dd95cf49733019343ff485c2f45c6b261839c':
+        ref: 'bf7dd95cf49733019343ff485c2f45c6b261839c'
+        commit: 'sha1-bf7dd95cf49733019343ff485c2f45c6b261839c'
+        owner_id: 6759885
+        repo_id: 1326697643
+        uses:
+            - 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
+            - 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
+            - 'dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f'
     'metadatastician/standards@8e48b1caade08a552646adeab66558ac43b4360d':
         ref: '8e48b1caade08a552646adeab66558ac43b4360d'
         commit: 'sha1-8e48b1caade08a552646adeab66558ac43b4360d'

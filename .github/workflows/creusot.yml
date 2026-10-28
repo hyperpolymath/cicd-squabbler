@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# Creusot Gate — thin caller of the estate's Rust deductive-verification gate
+# (hyperpolymath/cicd-suite), the Rust twin of the SPARK gate that proves
+# spark/gate_machine. It detects Creusot obligations and claims, fails a claim of
+# proof that has no contracts behind it, and — when obligations exist — installs
+# Creusot at a pinned release, proves a planted FALSE contract to show the prover
+# can say no, proves a planted TRUE one, and only then runs
+# `cargo creusot prove` in every crate that carries contracts.
+#
+# What it covers here: verification/squabble-creusot. Obligations are
+# **stated, not discharged** — no run has reached Why3 yet (see
+# docs/CREUSOT.adoc). A green on this check means the obligations were
+# discharged on that run, not that they were ever stated before.
+#
+# Full-SHA pin, DE-ONBOARDED from actions.lock — same rule as rust-ci.yml: the
+# gate scripts are pinned by the caller's own `uses:` SHA, so this line is the
+# single pin for both the workflow and the script it runs.
+name: Creusot Gate
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  creusot:
+    uses: hyperpolymath/cicd-suite/.github/workflows/creusot-gate.yml@bf7dd95cf49733019343ff485c2f45c6b261839c
+    with:
+      # Paired inputs: Creusot v0.14.0 is built against nightly-2026-08-03
+      # (creusot-rs/creusot's own rust-toolchain at that tag, mirrored in
+      # verification/squabble-creusot/rust-toolchain.toml). Move all three
+      # together or the translation fails.
+      creusot_version: "0.14.0"
+      rust_nightly: "nightly-2026-08-03"
+      # A creusot-std dependency that annotates nothing would be a hollow
+      # dependency: prove nothing, claim nothing. Fail rather than warn.
+      enforce_hollow: true

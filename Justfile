@@ -356,6 +356,48 @@ validate-coapt:
     @bash .machine_readable/coaptation/verify.sh
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# VERIFICATION — the Creusot complement (Rust twin of the SPARK proofs)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Report which toolchains and provers are present (installs nothing)
+verify-status:
+    @bash scripts/install-toolchain.sh --check
+
+# Install the stable toolchain, Creusot's pinned nightly, and Creusot itself
+verify-install:
+    @bash scripts/install-toolchain.sh
+
+# Stable-Rust mirror of every Creusot obligation (the real engine's tests too)
+verify-mirror:
+    cargo test --manifest-path verification/squabble-creusot/Cargo.toml
+
+# Discharge the obligations. This is the ONLY step that turns "stated" into
+# "proved"; until it has run on a real toolchain, the contracts are stated only.
+verify-creusot:
+    cd verification/squabble-creusot && cargo creusot prove
+
+# The estate gate, verbatim: detect → theatre (T1 claims, T2 hollow, T3 trusted)
+# → prove. Fetches the pinned script from hyperpolymath/cicd-suite rather than
+# keeping a second copy that could drift.
+verify-gate suite_sha=sha(current):
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sha="{{suite_sha}}"
+    if [ "$sha" = "current" ]; then
+        echo "usage: just verify-gate <full cicd-suite sha pinned in .github/workflows/creusot.yml>" >&2
+        exit 2
+    fi
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    gh api "repos/hyperpolymath/cicd-suite/contents/actions/creusot-check/check.sh?ref=$sha" \
+        --jq .content | base64 -d > "$tmp/check.sh"
+    for phase in detect theatre prove; do
+        echo "── creusot-check[$phase]"
+        CREUSOT_GATE_PHASE="$phase" WORKING_DIRECTORY="$PWD" CREUSOT_FACTS="$tmp/facts" \
+            bash "$tmp/check.sh"
+    done
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # DOCUMENTATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
