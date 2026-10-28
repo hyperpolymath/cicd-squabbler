@@ -12,6 +12,8 @@ rust-version.workspace = true
 
 [dependencies]
 squabble-core = { workspace = true }
+# Reads Actions runs/jobs payloads for zero-job startup attribution.
+serde_json = { workspace = true }
 serde_yaml_ng = { workspace = true }
 
 [dev-dependencies]

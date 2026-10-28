@@ -15,7 +15,7 @@ A standalone, per-repo CI/CD fighter that drives a stuck pipeline to a
 *legitimate* green — or improves red→yellow, or fails and hands the human a
 structured report. It *wins* the gate; it never cheats past it.
 
-NOTE: Status — *v0.1 in active development (updated 2026-09-26).* The engine and
+NOTE: Status — *v0.1 in active development (updated 2026-10-28).* The engine and
 its formal invariant are real and verified (see below); live gate fetch via `gh`
 landed in #6; `squabble fight` (classify each red as self-win | escalate |
 assign-owner), the `squabble-app` loopback HTTP backend, and the boj-server
@@ -29,7 +29,12 @@ required context refuses to start, so a `STARTUP_FAILURE` is attributed to the
 posture that caused it rather than to the reusable's owner or a security scan
 (#15). Still open: applying the other self-wins (required-context reconcile,
 reusable-workflow re-pin — these need the GitHub ruleset API / a target SHA) and
-the GitHub App *webhook* leg (pending the owner's hosting decision). See
+the GitHub App *webhook* leg (pending the owner's hosting decision). Zero-job
+`startup_failure` runs — no job, therefore no check run, therefore nothing in a
+PR check list — are now first-class: `squabble zero-job` attributes each observed
+run to a moved coordinate or an allow-list gap, and `squabble chains` compares
+canonical upstream names through REST so a move is named *before* a run proves
+it. Both are diagnosis only; `squabble ≠ bypass` still holds. See
 `docs/CHARTER.adoc` for the design and open owner decisions.
 
 == Chains: cross-repo CI dependencies (read-only)
@@ -45,14 +50,70 @@ squabble chains . ../standards gh:hyperpolymath/typed-wasm --follow 1
 * *Blocking* (exit 4): dependency cycles, and dead upstreams. A deleted action
   repo produces no check run at all, so the board reads green.
 * *Warnings*: diamonds (one repo's CI receives an upstream at two pins, one
-  of them via a reusable workflow), pin skew across repos, and tag/branch
-  pins.
+  of them via a reusable workflow), pin skew across repos, tag/branch pins,
+  and **moved upstreams** (see below).
 * It also prints an upstreams-first landing order and the longest chain.
+
+Every upstream coordinate is resolved through REST with redirects followed, and
+its canonical `full_name` is compared with the name as written — names, never
+pins. A difference is reported as a moved upstream: a reusable coordinate under
+a renamed/transferred owner can die as a zero-job `startup_failure` ("workflow
+was not found") that no PR check list shows, so it is named *before* CI goes
+quiet. It stays a warning while the redirect still works (that is a risk, not an
+observed failure); `squabble zero-job` is what turns an observed failure into a
+blocking finding. The same canonicalisation groups pin skew, so the old and new
+spellings of one upstream cannot hide a split. `--no-canonical` skips the REST
+reads and says so — a deliberate blind spot, not a clean bill.
 
 An upstream that was never probed is listed on the frontier, not assumed
 healthy. See `docs/proposals/squabble-modes-and-app-layer.adoc` for where
 this is heading: upstream conformance, custodian rulesets, and the app-aware
 layer.
+
+== Zero-job startup failures: the CI that never reports
+
+Some workflows fail *before any job exists*. GitHub creates no check run, the PR
+check list stays tidy, and a required context is simply absent. Two first-class
+classes are modelled, each with its own move:
+
+[cols="2,1,2"]
+|===
+| Class | Move | What it means
+
+| *moved coordinate*
+| `RepointToCanonical`
+| A reusable coordinate names an owner/repo that was renamed or transferred.
+  Repoint to the canonical name **carrying the same pin** — repointing is not
+  re-pinning, and no pin is ever resolved on the way.
+
+| *allow-list admission required*
+| `AllowListAdmissionRequired`
+| The coordinate (or its canonical target) is refused by the caller's
+  `allowed_actions=selected` allow-list. The report names the exact minimal
+  `owner/repo@*` pattern to admit; no workflow edit can make the run start.
+|===
+
+[source,sh]
+----
+squabble zero-job . --limit 30        # attribute the latest zero-job runs
+squabble zero-job . --limit 30 --json # the same, machine-readable
+----
+
+Per run it reports the repo, the workflow, the coordinate **as written**, the
+canonical target, and the required allow-list pattern — plus the sequencing: fix
+the repoint first, then admit the canonical pattern if the run is still refused.
+Exit `4` means zero-job runs were observed, attributed or not: a run it cannot
+attribute is still a run that never reported. Exit `0` speaks only for the
+scanned window.
+
+`zero-job` is *outside* `squabble-contract/1.0.0`: that revision's surface stays
+at four subcommands, and nothing here adds meaning to it. Like `chains`, the
+command reads and writes nothing, so its absence from the pinned contract costs
+a consumer nothing.
+
+Both moves only let a check *start*. Neither drops a required context, weakens a
+check, nor edits settings: `squabble ≠ bypass` holds, and nothing here is a
+green. A missing or skipped check cannot be made green by a diagnosis.
 
 == Downstream integration contracts (pinned, immutable revisions)
 
@@ -108,7 +169,7 @@ check away, or any override are provably *not* paths to green.
 | `crates/squabble-fight`| The shared host brain: a2ml ecosystem-context reader + workflow ground-truth + the fight planner. One planner for the CLI and the App, so they cannot drift.
 | `crates/squabble-cli`  | `squabble` — runs locally or as a CI step. `fetch`, `diagnose`, and `fight` (with `--summon` under the `boj` feature to put expert verdicts on the report, and `--apply` to enact the path-filter self-win by editing the workflow — no commit/push).
 | `crates/squabble-app`  | The loopback HTTP backend (axum, `127.0.0.1:7741`): serves the shared planner to the boj-server `cicd-squabbler-mcp` cartridge. The GitHub App *webhook* leg (trigger button + octocrab) is still to come — no webhook route is registered.
-| `crates/squabble-forge`| Forge access: GitHub GraphQL via `gh api graphql`, batched, validated against a committed schema snapshot. REST stays in `squabble-cli` where GraphQL has no equivalent.
+| `crates/squabble-forge`| Forge access: GitHub GraphQL via `gh api graphql`, batched, validated against a committed schema snapshot. REST where GraphQL has no equivalent — notably `repos/{o}/{n}` for canonical `full_name` resolution (redirects followed, names compared).
 | `spark/`               | The formal heart. `Gate_Machine` + the proved theorem `green ⇔ (non-empty ∧ all passed)`.
 |===
 
@@ -147,6 +208,16 @@ squabbler run). Every move *satisfies* the gate:
   settings/pin move instead of mis-attributing to the reusable's owner or a
   security scan. These moves only let a required check *start*; none weakens
   the gate.
+. *Zero-job `startup_failure`* — a workflow that dies before any job exists, so
+  no check run is created and no PR check list shows it. Two distinct classes:
+  a *moved coordinate* (reusable owner renamed/transferred) →
+  `RepointToCanonical` **with the same pin**; and *allow-list admission
+  required* (canonical coordinate refused by the caller's `selected` allow-list)
+  → `AllowListAdmissionRequired` naming the exact `owner/repo@*` pattern.
+  `squabble chains` resolves every upstream's canonical `full_name` and flags
+  moved upstreams and canonical-grouped pin skew before a run proves it;
+  `squabble zero-job` reports attribution per observed zero-job run. Diagnosis
+  and sequencing only — neither move makes anything green.
 
 Red→green *code* fixes are deliberately *out of scope* for v0.1: "fixing" a
 failing test by weakening it would violate squabble ≠ bypass.

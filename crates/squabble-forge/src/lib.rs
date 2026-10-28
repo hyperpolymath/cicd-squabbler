@@ -30,6 +30,7 @@ use std::process::{Command, Stdio};
 
 pub mod board;
 pub mod inbox;
+pub mod rest;
 
 /// The per-repo fragment, aliased once per repo in [`chains_query`].
 pub const WORKFLOW_TREE: &str = include_str!("../graphql/workflow_tree.graphql");
@@ -183,6 +184,7 @@ pub fn parse_chains_response(
                             status: ScanStatus::NotFound,
                             files: Vec::new(),
                             notes: Vec::new(),
+                            canonical: None,
                         }
                     }
                     Some(e) => unavailable(
@@ -206,13 +208,19 @@ fn unavailable(repo: &RepoId, reason: String) -> RepoSnapshot {
         status: ScanStatus::Unavailable { reason },
         files: Vec::new(),
         notes: Vec::new(),
+        canonical: None,
     }
 }
 
 fn parse_repo(repo: &RepoId, node: &Value) -> RepoSnapshot {
     let mut notes = Vec::new();
+    let mut canonical = None;
     if let Some(canon) = node.get("nameWithOwner").and_then(Value::as_str) {
         if RepoId::new(canon) != *repo {
+            // GraphQL answers under the *requested* name but reports the
+            // current one. Comparing names is the finding; the pin says
+            // nothing about a move.
+            canonical = Some(canon.to_string());
             notes.push(format!(
                 "resolves to `{canon}` (renamed or transferred); references to the old name rely on a redirect"
             ));
@@ -272,6 +280,7 @@ fn parse_repo(repo: &RepoId, node: &Value) -> RepoSnapshot {
         },
         files,
         notes,
+        canonical,
     }
 }
 
@@ -504,6 +513,11 @@ mod tests {
         let resp = json!({ "data": { "r0": node } });
         let (s, _) = parse_chains_response(&repos(&["me/old-name"]), &resp);
         assert_eq!(s[0].repo, RepoId::new("me/old-name"));
+        // Identity stays as requested; the canonical name is recorded separately
+        // so a move is data, not prose. `squabble chains` turns this into the
+        // moved-upstream finding.
+        assert_eq!(s[0].canonical.as_deref(), Some("me/new-name"));
+        assert_eq!(s[0].canonical_id(), RepoId::new("me/new-name"));
         assert!(s[0].notes[0].contains("renamed"));
     }
 

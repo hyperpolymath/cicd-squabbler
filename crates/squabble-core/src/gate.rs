@@ -108,6 +108,32 @@ pub enum MissingCause {
     /// no workflow edit can fix it.
     ActionsPolicyRefusal,
 
+    /// A reusable coordinate names an owner/repo that has been **renamed or
+    /// transferred**. GitHub resolves reusable workflows before any job exists,
+    /// answers "workflow was not found", and the run dies as
+    /// `startup_failure` with **zero jobs** — no check run exists, so no PR
+    /// check list shows it. The coordinate still resolves through a redirect
+    /// for now, which is exactly why this hides: a lapsed redirect (or the old
+    /// name being re-registered) turns the silence into a dead dependency.
+    ///
+    /// Distinct from [`Self::DeadActionPin`]: the target repo is alive under a
+    /// different canonical name, so the fix is to repoint the coordinate
+    /// (`Move::RepointToCanonical`), **not** to vendor the action per-consumer.
+    MovedUpstreamCoordinate,
+
+    /// A `selected` actions allow-list is populated but has no pattern covering
+    /// this (canonical) coordinate, so GitHub refuses the run at startup with
+    /// zero jobs. Wider than [`Self::ActionsPolicyRefusal`] (which is the empty
+    /// list) and distinct from [`Self::DeadActionPin`]: the repo is fine, the
+    /// caller's settings are not. Measured: `hypatia` run 40451601571, a
+    /// canonical reusable refused by the caller's selected-actions allow-list;
+    /// invisible in the PR check list.
+    ///
+    /// The move names the minimal `owner/repo@*` pattern
+    /// (`Move::AllowListAdmissionRequired`); settings are the owner's realm, so
+    /// the squabbler reports it and never edits permissions itself.
+    AllowListAdmissionRequired,
+
     /// The workflow's `jobs:` map is present but empty — every job block
     /// commented out. An empty `jobs:` map is invalid, so the run fails with
     /// zero jobs. Measured in 20 repos' `e2e.yml`.
@@ -137,6 +163,10 @@ impl MissingCause {
                 "The action repo is gone. Repoint `uses:` at its live location; do NOT vendor it per-consumer.",
             Self::ActionsPolicyRefusal =>
                 "Repository settings: populate `patterns_allowed`, or set allowed_actions to `all`. No workflow edit can fix this.",
+            Self::MovedUpstreamCoordinate =>
+                "Repoint `uses:` at the canonical owner/repo and KEEP the same pin; a moved reusable coordinate dies as `startup_failure` with zero jobs.",
+            Self::AllowListAdmissionRequired =>
+                "Add the canonical `owner/repo@*` to the selected-actions allow-list (or set allowed_actions to `all` with SHA pinning KEPT); no workflow edit can make the run start.",
             Self::EmptyJobsMap =>
                 "The workflow has no uncommented jobs. Instantiate one, or delete the workflow.",
             Self::NotTriggeredOnPullRequest =>
@@ -362,12 +392,28 @@ mod tests {
     }
 
     #[test]
+    fn zero_job_causes_carry_distinct_remedies() {
+        // The two zero-job startup classes must never read as one another:
+        // repointing is a workflow edit, admission is a settings act.
+        let moved = MissingCause::MovedUpstreamCoordinate.remedy();
+        let admission = MissingCause::AllowListAdmissionRequired.remedy();
+        assert!(moved.contains("KEEP the same pin"), "{moved}");
+        assert!(admission.contains("owner/repo@*"), "{admission}");
+        assert!(admission.contains("pinning KEPT"), "{admission}");
+        assert_ne!(moved, admission);
+        // A moved name is not a dead pin: the repo is alive elsewhere.
+        assert_ne!(moved, MissingCause::DeadActionPin.remedy());
+    }
+
+    #[test]
     fn a_diagnosed_missing_check_still_cannot_reach_green() {
         // The load-bearing invariant: no diagnosis is a bypass.
         for cause in [
             MissingCause::NoSuchJob,
             MissingCause::DeadActionPin,
             MissingCause::ActionsPolicyRefusal,
+            MissingCause::MovedUpstreamCoordinate,
+            MissingCause::AllowListAdmissionRequired,
             MissingCause::EmptyJobsMap,
             MissingCause::NotTriggeredOnPullRequest,
             MissingCause::Unknown,

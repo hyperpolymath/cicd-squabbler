@@ -43,6 +43,33 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
   before any run refuses to start.
 * ADR 0002 (`docs/decisions/`), the spec for representing vacuous greens in
   the `Outcome` contract — the spec-first remainder of issue #58.
+* Zero-job `startup_failure` taxonomy (`squabble_core::startup`), with two
+  first-class classes and *distinct* moves: a **moved coordinate** (a reusable
+  owner/repo renamed or transferred — GitHub answers "workflow was not found"
+  and creates no job) → `RepointToCanonical`, which carries the **same pin**;
+  and **allow-list admission required** (the canonical coordinate is refused by
+  the caller's `selected` actions allow-list; measured on `hypatia` run
+  40451601571) → `AllowListAdmissionRequired`, naming the exact minimal
+  `owner/repo@*` pattern. Both are invisible in PR check lists because zero jobs
+  means zero check runs. Neither is a bypass: each only lets a check *start*.
+  Two new `MissingCause` variants carry the same distinction to a stuck gate.
+* `squabble zero-job <path[=owner/repo]>` — attribute every observed zero-job
+  run: repo, workflow, coordinate as written, canonical target, required
+  allow-list pattern, and the move with its sequencing. Exit `4` on any observed
+  zero-job run, attributed or not; exit `0` only for the scanned window. This is
+  a diagnosis surface — it edits no settings and declares nothing green. It is
+  outside `squabble-contract/1.0.0`, whose four-subcommand surface and exit-code
+  meanings are unchanged.
+* `squabble chains` now resolves each upstream coordinate's canonical
+  `full_name` through REST (`repos/{o}/{n}`, redirects followed) and compares
+  **names, not pins**, flagging moved upstreams and grouping pin skew by the
+  canonical name so two spellings of one upstream cannot hide a split. A dead
+  upstream is found by REST even without `--follow`; `--no-canonical` skips the
+  reads and records the blind spot. A moved upstream is a *warning* — a working
+  redirect is a risk, not an observed failure — while the observed zero-job run
+  is blocking in `zero-job`. `chains` exit semantics are unchanged, so the
+  frozen `squabble-contract/1.0.0` remains accurate. `SourceCost` records the
+  REST calls made.
 
 ==== Fixed
 

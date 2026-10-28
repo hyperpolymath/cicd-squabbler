@@ -29,6 +29,7 @@ pub mod apply;
 pub mod chains;
 pub mod context;
 pub mod gate_triage;
+pub mod startup;
 pub mod workflows;
 
 use context::RepoContext;

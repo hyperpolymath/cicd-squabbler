@@ -17,6 +17,7 @@
 
 use squabble_core::gate::{CheckRun, RequiredCheck};
 use squabble_core::moves::{EscalationKind, ExpertGroup, Move, OwnershipDisposition};
+use squabble_core::startup::AllowList;
 use std::path::Path;
 
 /// What kind of work a workflow's failing job represents — decides lane.
@@ -85,30 +86,30 @@ impl ActionsPolicyFacts {
         self.allowed_actions == "selected"
     }
 
+    /// The same data as the estate-free [`AllowList`], which owns the single
+    /// implementation of pattern matching (the estate preflight in `standards`
+    /// `scripts/check-allowed-actions.sh`). Keeping one implementation means the
+    /// gate classifier and `squabble zero-job` cannot disagree about whether a
+    /// coordinate is admitted.
+    pub fn allow_list(&self) -> AllowList {
+        AllowList {
+            patterns: self.patterns_allowed.clone(),
+            github_owned_allowed: self.github_owned_allowed,
+        }
+    }
+
     /// Is `owner_repo` (normalised `owner/repo`, no `@ref`) permitted by a
-    /// `selected` posture? Mirrors the estate preflight
-    /// (`standards` `scripts/check-allowed-actions.sh`): GitHub-owned
-    /// `actions/*` and `github/*` pass when `github_owned_allowed`; a pattern
-    /// covers when it is an exact `owner/repo`, an owner-wide `owner/*`, or a
-    /// trailing-`*` prefix form such as `r-lib/*`.
+    /// `selected` posture? GitHub-owned `actions/*` and `github/*` pass when
+    /// `github_owned_allowed`; a pattern covers when it is an exact
+    /// `owner/repo`, an owner-wide `owner/*`, or a trailing-`*` prefix form
+    /// such as `r-lib/*`.
     ///
     /// Deliberately NOT consulted when the posture is not `selected` — under
     /// `all` nothing is blocked; under `local_only` *everything* external is
     /// blocked but that is out of issue #15's scope, so callers gate on
     /// [`Self::is_selected`] first.
     pub fn covers(&self, owner_repo: &str) -> bool {
-        let owner = owner_repo.split('/').next().unwrap_or("");
-        if self.github_owned_allowed && matches!(owner, "actions" | "github") {
-            return true;
-        }
-        self.patterns_allowed.iter().any(|p| {
-            let base = p.split('@').next().unwrap_or(p.as_str());
-            base == owner_repo
-                || base == format!("{owner}/*")
-                || base
-                    .strip_suffix('*')
-                    .is_some_and(|prefix| !prefix.is_empty() && owner_repo.starts_with(prefix))
-        })
+        self.allow_list().covers(owner_repo)
     }
 
     /// The first `external_uses` entry (normalised `owner/repo@ref`) this
