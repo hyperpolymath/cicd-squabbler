@@ -468,6 +468,34 @@ jobs:
     }
 
     #[test]
+    fn a_startup_failure_without_a_usable_id_is_an_error_not_a_skip() {
+        // Skipping it would leave an empty result, and `zero-job` would then exit
+        // 0 reporting that it observed no startup failure — a silent skip.
+        let body = serde_json::json!({
+            "workflow_runs": [
+                {"conclusion": "startup_failure", "path": ".github/workflows/gov.yml"}
+            ]
+        })
+        .to_string();
+        let err = parse_startup_runs(&body).expect_err("must refuse");
+        assert!(err.contains("no unsigned integer `id`"), "{err}");
+        assert!(err.contains("gov.yml"), "the error must name the run: {err}");
+
+        // A non-integer id is refused the same way, and a healthy run without an
+        // id is still ignored: it is not a startup failure.
+        let quoted = serde_json::json!({
+            "workflow_runs": [{"id": "12", "conclusion": "startup_failure"}]
+        })
+        .to_string();
+        assert!(parse_startup_runs(&quoted).is_err());
+        let fine = serde_json::json!({
+            "workflow_runs": [{"conclusion": "failure"}]
+        })
+        .to_string();
+        assert!(parse_startup_runs(&fine).expect("parse").is_empty());
+    }
+
+    #[test]
     fn malformed_run_payloads_are_errors_not_empty_successes() {
         assert!(parse_startup_runs("not json").is_err());
         assert!(parse_startup_runs("{}").is_err());
