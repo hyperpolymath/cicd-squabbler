@@ -61,20 +61,15 @@ pub fn attribute_workflow(
     let mut out: Vec<ZeroJobAttribution> = Vec::new();
     for edge in crate::chains::extract_edges(&RepoId::new(repo), &wf) {
         let written = coordinate_of(&edge);
-        let resolution = canonical
-            .get(&edge.to)
-            .cloned()
-            .unwrap_or(CanonicalResolution::Unverified {
-                reason: "canonical name was not resolved".to_string(),
-            });
-        let attribution = attribute_zero_job(
-            repo,
-            workflow,
-            &written,
-            edge.kind,
-            &resolution,
-            allow_list,
-        );
+        let resolution =
+            canonical
+                .get(&edge.to)
+                .cloned()
+                .unwrap_or(CanonicalResolution::Unverified {
+                    reason: "canonical name was not resolved".to_string(),
+                });
+        let attribution =
+            attribute_zero_job(repo, workflow, &written, edge.kind, &resolution, allow_list);
         if !out.contains(&attribution) {
             out.push(attribution);
         }
@@ -292,7 +287,13 @@ jobs:
                 canonical: "hyperpolymath/standards".into(),
             },
         )]);
-        let out = attribute_run(CALLER, &run(40_451_601_571, "hypatia-scan.yml"), &files, &names, None);
+        let out = attribute_run(
+            CALLER,
+            &run(40_451_601_571, "hypatia-scan.yml"),
+            &files,
+            &names,
+            None,
+        );
         assert_eq!(out.len(), 1, "{out:#?}");
         let a = &out[0];
         assert_eq!(a.repo, CALLER);
@@ -304,9 +305,7 @@ jobs:
         assert_eq!(a.canonical.as_deref(), Some("hyperpolymath/standards"));
         assert_eq!(a.class, StartupFailureClass::MovedCoordinate);
         match a.proposed_move() {
-            Some(Move::RepointToCanonical {
-                canonical, pin, ..
-            }) => {
+            Some(Move::RepointToCanonical { canonical, pin, .. }) => {
                 assert_eq!(canonical, "hyperpolymath/standards");
                 assert_eq!(pin, SHA);
             }
@@ -364,7 +363,10 @@ jobs:
             Some(&allow),
         );
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].class, StartupFailureClass::AllowListAdmissionRequired);
+        assert_eq!(
+            out[0].class,
+            StartupFailureClass::AllowListAdmissionRequired
+        );
         assert_eq!(
             out[0].required_allow_list_pattern.as_deref(),
             Some("old/standards@*")
@@ -395,13 +397,7 @@ jobs:
 
     #[test]
     fn a_missing_workflow_file_is_unattributed_not_clean() {
-        let out = attribute_run(
-            CALLER,
-            &run(3, "deleted.yml"),
-            &[],
-            &BTreeMap::new(),
-            None,
-        );
+        let out = attribute_run(CALLER, &run(3, "deleted.yml"), &[], &BTreeMap::new(), None);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].class, StartupFailureClass::Unattributed);
         assert!(out[0].evidence.contains("not in the local checkout"));
@@ -479,7 +475,10 @@ jobs:
         .to_string();
         let err = parse_startup_runs(&body).expect_err("must refuse");
         assert!(err.contains("no unsigned integer `id`"), "{err}");
-        assert!(err.contains("gov.yml"), "the error must name the run: {err}");
+        assert!(
+            err.contains("gov.yml"),
+            "the error must name the run: {err}"
+        );
 
         // A non-integer id is refused the same way, and a healthy run without an
         // id is still ignored: it is not a startup failure.
@@ -499,13 +498,18 @@ jobs:
     fn malformed_run_payloads_are_errors_not_empty_successes() {
         assert!(parse_startup_runs("not json").is_err());
         assert!(parse_startup_runs("{}").is_err());
-        assert!(parse_startup_runs("{\"workflow_runs\":[]}").unwrap().is_empty());
+        assert!(parse_startup_runs("{\"workflow_runs\":[]}")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
     fn job_counts_are_read_strictly() {
         assert_eq!(parse_job_count("{\"total_count\":0}").unwrap(), 0);
-        assert_eq!(parse_job_count("{\"total_count\":0,\"jobs\":[]}").unwrap(), 0);
+        assert_eq!(
+            parse_job_count("{\"total_count\":0,\"jobs\":[]}").unwrap(),
+            0
+        );
         assert!(parse_job_count("{}").is_err());
         assert!(parse_job_count("[]").is_err());
     }

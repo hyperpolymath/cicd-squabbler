@@ -604,8 +604,9 @@ mod tests {
             // the pin; admission only lets the check start. Neither drops a
             // required context nor weakens a check.
             Move::RepointToCanonical {
-                written: "old/stds/.github/workflows/gov.yml@8f2ee50841e216cd8c192eeb68953118190f105c"
-                    .into(),
+                written:
+                    "old/stds/.github/workflows/gov.yml@8f2ee50841e216cd8c192eeb68953118190f105c"
+                        .into(),
                 canonical: "hyperpolymath/standards".into(),
                 pin: "8f2ee50841e216cd8c192eeb68953118190f105c".into(),
             },
