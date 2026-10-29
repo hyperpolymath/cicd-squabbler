@@ -337,7 +337,8 @@ mod tests {
 
     #[test]
     fn headers_and_body_are_separated_at_the_blank_line() {
-        let raw = "HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n{\"full_name\":\"a/b\"}\n";
+        let raw =
+            "HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n{\"full_name\":\"a/b\"}\n";
         let resp = parse_included(raw);
         assert_eq!(resp.status, 200);
         assert_eq!(resp.body.trim(), "{\"full_name\":\"a/b\"}");
@@ -346,7 +347,8 @@ mod tests {
 
     #[test]
     fn a_location_header_is_kept_even_when_gh_exits_non_zero() {
-        let raw = "HTTP/2.0 301 Moved Permanently\nLocation: https://api.github.com/repos/new/name\n\n";
+        let raw =
+            "HTTP/2.0 301 Moved Permanently\nLocation: https://api.github.com/repos/new/name\n\n";
         let resp = parse_included(raw);
         assert_eq!(resp.status, 301);
         assert_eq!(
@@ -462,7 +464,10 @@ mod tests {
             ),
         ]);
         let (out, _) = resolve_canonical(&rest, &[r("ghost/repo")]);
-        assert_eq!(out.get(&r("ghost/repo")), Some(&CanonicalResolution::NotFound));
+        assert_eq!(
+            out.get(&r("ghost/repo")),
+            Some(&CanonicalResolution::NotFound)
+        );
     }
 
     #[test]
@@ -573,7 +578,10 @@ mod tests {
                 canonical: "new/lib".into()
             })
         );
-        assert_eq!(out.get(&r("gone/repo")), Some(&CanonicalResolution::NotFound));
+        assert_eq!(
+            out.get(&r("gone/repo")),
+            Some(&CanonicalResolution::NotFound)
+        );
         assert!(matches!(
             out.get(&r("rate/limited")),
             Some(CanonicalResolution::Unverified { .. })

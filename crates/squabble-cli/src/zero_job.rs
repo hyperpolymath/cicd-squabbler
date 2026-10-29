@@ -152,7 +152,14 @@ pub fn run(rest: &[String]) -> ExitCode {
             },
         }
     } else {
-        collect(&slug, &snapshot.files, runs, &GhRest, allow_list.as_ref(), notes)
+        collect(
+            &slug,
+            &snapshot.files,
+            runs,
+            &GhRest,
+            allow_list.as_ref(),
+            notes,
+        )
     };
 
     if args.json {
@@ -279,9 +286,16 @@ fn narrate(r: &ZeroJobReport) -> String {
             Some(n) => format!("{n} job(s)"),
             None => "job count unreadable".to_string(),
         };
-        o.push_str(&format!("\nrun {} · {} ({jobs})\n", run.run_id, run.workflow));
+        o.push_str(&format!(
+            "\nrun {} · {} ({jobs})\n",
+            run.run_id, run.workflow
+        ));
         for a in &run.attributions {
-            o.push_str(&format!("  [{}] {}\n", a.class.label().to_uppercase(), a.describe()));
+            o.push_str(&format!(
+                "  [{}] {}\n",
+                a.class.label().to_uppercase(),
+                a.describe()
+            ));
             if let Some(m) = a.proposed_move() {
                 o.push_str(&format!("      move: {}\n", m.describe()));
             }
@@ -330,9 +344,7 @@ impl GhRuns {
                      the token's Actions read scope"
                 ))
             }
-            s if !(200..300).contains(&s) => {
-                return Err(format!("`{path}` returned HTTP {s}"))
-            }
+            s if !(200..300).contains(&s) => return Err(format!("`{path}` returned HTTP {s}")),
             _ => {}
         }
         let mut runs = parse_startup_runs(&resp.body)?;

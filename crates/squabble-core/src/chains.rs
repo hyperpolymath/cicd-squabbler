@@ -262,7 +262,7 @@ impl RepoSnapshot {
     pub fn canonical_id(&self) -> RepoId {
         self.canonical
             .as_deref()
-            .map(|c| RepoId::new(c))
+            .map(RepoId::new)
             .unwrap_or_else(|| self.repo.clone())
     }
 }
