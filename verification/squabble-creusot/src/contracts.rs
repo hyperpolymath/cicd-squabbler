@@ -18,10 +18,11 @@ use creusot_std::prelude::*;
 /// `total > 0` is stated as a precondition as well, so the proof does not have
 /// to reason about the vacuous case: a gate with no requirements is
 /// unprotected, and `Gate::evaluate` deliberately reports it `Blocked`.
+/// Counts are widened before addition so every pair of `u32` inputs is safe.
 #[requires(total > 0u32)]
-#[ensures(result == (passed + skipped == total))]
+#[ensures(result == (passed as u64 + skipped as u64 == total as u64))]
 pub fn accepted(passed: u32, skipped: u32, total: u32) -> bool {
-    passed + skipped == total
+    passed as u64 + skipped as u64 == total as u64
 }
 
 /// A real green needs every requirement to have *passed*, not merely been
@@ -37,10 +38,10 @@ pub fn has_evidence(passed: u32, total: u32) -> bool {
 ///
 /// `diagnosed` is deliberately free: the postcondition does not mention it.
 #[requires(total > 0u32)]
-#[ensures(result == (passed + skipped == total))]
+#[ensures(result == (passed as u64 + skipped as u64 == total as u64))]
 pub fn after_diagnosis(passed: u32, skipped: u32, total: u32, diagnosed: bool) -> bool {
     let _ = diagnosed;
-    passed + skipped == total
+    passed as u64 + skipped as u64 == total as u64
 }
 
 /// Admission of a coordinate: a covering pattern, or a GitHub-owned coordinate
@@ -60,8 +61,8 @@ pub fn requires_admission(covered: bool, github_owned: bool) -> bool {
 /// Admission only lets a check *start*: it changes nothing about acceptance, so
 /// the green still has to come from the check genuinely running and passing.
 #[requires(total > 0u32)]
-#[ensures(result == (passed + skipped == total))]
+#[ensures(result == (passed as u64 + skipped as u64 == total as u64))]
 pub fn after_admission(passed: u32, skipped: u32, total: u32, admitted: bool) -> bool {
     let _ = admitted;
-    passed + skipped == total
+    passed as u64 + skipped as u64 == total as u64
 }

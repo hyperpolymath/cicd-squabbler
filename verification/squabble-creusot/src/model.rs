@@ -20,8 +20,9 @@
 /// The non-emptiness clause is load-bearing: the vacuous truth of "all zero
 /// requirements passed" would otherwise read as a win, and a branch with no
 /// required checks is unprotected, not won.
+/// Counts are widened before addition so every pair of `u32` inputs is safe.
 pub fn accepted(passed: u32, skipped: u32, total: u32) -> bool {
-    total > 0 && passed + skipped == total
+    total > 0 && passed as u64 + skipped as u64 == total as u64
 }
 
 /// Evidence-bearing acceptance: a **real** green needs every requirement to
@@ -102,6 +103,28 @@ mod tests {
                 accepted(passed, skipped, total),
                 real,
                 "model disagrees with Gate::evaluate for {runs:?}"
+            );
+        }
+    }
+
+    /// Large counts must neither panic nor wrap into a falsely accepted gate.
+    #[test]
+    fn acceptance_handles_count_boundaries() {
+        for (passed, skipped, total, expected) in [
+            (0, 0, 0, false),
+            (u32::MAX, 0, u32::MAX, true),
+            (0, u32::MAX, u32::MAX, true),
+            (u32::MAX - 1, 1, u32::MAX, true),
+            (u32::MAX, 1, u32::MAX, false),
+            (u32::MAX, 1, 0, false),
+            (u32::MAX, 2, 1, false),
+            (2, u32::MAX, 1, false),
+            (u32::MAX, u32::MAX, u32::MAX - 1, false),
+        ] {
+            assert_eq!(
+                accepted(passed, skipped, total),
+                expected,
+                "passed={passed}, skipped={skipped}, total={total}"
             );
         }
     }
