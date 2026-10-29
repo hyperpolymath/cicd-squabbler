@@ -76,6 +76,10 @@ pub struct ActionsPolicyFacts {
     pub sha_pinning_required: bool,
     /// `github_owned_allowed` from the selected-actions endpoint.
     pub github_owned_allowed: bool,
+    /// `verified_allowed`: verified Marketplace creators are admitted without a
+    /// pattern, so an uncovered *action* has an unknown admission rather than a
+    /// refused one.
+    pub verified_allowed: bool,
     /// `patterns_allowed` (meaningful only when `allowed_actions == selected`).
     pub patterns_allowed: Vec<String>,
 }
@@ -95,6 +99,7 @@ impl ActionsPolicyFacts {
         AllowList {
             patterns: self.patterns_allowed.clone(),
             github_owned_allowed: self.github_owned_allowed,
+            verified_allowed: self.verified_allowed,
         }
     }
 
@@ -1081,6 +1086,7 @@ jobs:
             allowed_actions: "selected".into(),
             sha_pinning_required: true,
             github_owned_allowed: true,
+            verified_allowed: false,
             patterns_allowed: vec![
                 "hyperpolymath/*".into(),
                 "oven-sh/setup-bun@*".into(),
@@ -1099,6 +1105,7 @@ jobs:
         // Without github_owned_allowed the GitHub-owned refs are NOT free.
         let strict = ActionsPolicyFacts {
             github_owned_allowed: false,
+            verified_allowed: false,
             ..p.clone()
         };
         assert!(!strict.covers("actions/checkout"));
@@ -1125,6 +1132,7 @@ jobs:
             allowed_actions: "selected".into(),
             sha_pinning_required: true,
             github_owned_allowed: true,
+            verified_allowed: false,
             patterns_allowed: vec![],
         };
         assert_eq!(
@@ -1146,6 +1154,7 @@ jobs:
             allowed_actions: "selected".into(),
             sha_pinning_required: true,
             github_owned_allowed: true,
+            verified_allowed: false,
             patterns_allowed: vec!["oven-sh/setup-bun@*".into()],
         };
         assert_eq!(
@@ -1171,6 +1180,7 @@ jobs:
             allowed_actions: "all".into(), // no mode-1 surface at all
             sha_pinning_required: true,
             github_owned_allowed: true,
+            verified_allowed: false,
             patterns_allowed: vec![],
         };
         assert_eq!(
@@ -1201,6 +1211,7 @@ jobs:
             allowed_actions: "selected".into(),
             sha_pinning_required: true,
             github_owned_allowed: true,
+            verified_allowed: false,
             patterns_allowed: vec![],
         };
         let check = RequiredCheck::new("analyze", CheckRun::Failed);

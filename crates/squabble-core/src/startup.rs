@@ -643,6 +643,7 @@ mod tests {
         AllowList {
             patterns: patterns.iter().map(|p| p.to_string()).collect(),
             github_owned_allowed: true,
+            verified_allowed: false,
         }
     }
 

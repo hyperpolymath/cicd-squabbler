@@ -59,6 +59,7 @@ pub fn run(rest: &[String]) -> ExitCode {
             allowed_actions: p.allowed_actions.clone(),
             sha_pinning_required: p.sha_pinning_required,
             github_owned_allowed: p.github_owned_allowed,
+            verified_allowed: p.verified_allowed,
             patterns_allowed: p.patterns_allowed.clone(),
         }),
         fetch::PolicyProbe::Failed(e) => {

@@ -716,6 +716,7 @@ mod policy_fixture_tests {
             allowed_actions: "selected".into(),
             sha_pinning_required: true,
             github_owned_allowed: true,
+            verified_allowed: false,
             patterns_allowed: vec![],
         };
 
@@ -812,6 +813,7 @@ mod policy_fixture_tests {
             allowed_actions: "selected".into(),
             sha_pinning_required: true,
             github_owned_allowed: true,
+            verified_allowed: false,
             patterns_allowed: vec![],
         };
         let Outcome::Red { report } = plan_with_policy(
