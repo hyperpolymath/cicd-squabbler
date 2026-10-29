@@ -1,0 +1,830 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// SPDX-FileCopyrightText: 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= Next-session prompts — cicd-squabbler and the repos it depends on
+:toc: left
+
+____
+Written 2026-10-29 after PR #140 merged (`b625e05`) and main moved to `1933490`
+(#142). Every claim below was measured this session against the live API or the
+working tree; where something could not be measured it says so and says why.
+Each prompt is self-contained and copy-paste ready for a session in *that* repo.
+Nothing here asks any repo to weaken a gate, and nothing here is a green.
+____
+
+== Sitrep: what is true now
+
+[cols="2,3,3",options="header"]
+|===
+| Area | State | Evidence
+
+| `main` CI
+| 5 workflows die before any job; every self-contained workflow is green
+| 2026-10-29T11:41Z: `Secret Scanner`, `Rust CI`, `Governance`,
+  `Hypatia Security Scan`, `Mirror to Git Forges` = `startup_failure`;
+  `OSSF Scorecard` = `startup_failure` 04:02Z; `Creusot Gate` = `failure`.
+
+| Cause of the zero-job class
+| A caller-side coordinate change the allow-list never caught up with
+| `00d4916` (2026-10-25T19:48Z) "re-pin every standards caller to
+  metadatastician/standards@8e48b1ca"; last success 19:41Z, first
+  `startup_failure` 19:49Z. Actions matches `patterns_allowed` against the
+  coordinate **as written**.
+
+| The other half of the estate
+| Callers still on the old name die the *other* way
+| `echidna`, `docmatrix`, `modshells` write `hyperpolymath/standards/...`
+  (admitted by `hyperpolymath/*`) and get `failure` with **0 jobs** — the
+  transfer is not followed for `uses:`. Measured: echidna runs 40522192233,
+  40463073576; docmatrix 40579977962.
+
+| The marooned required context
+| `scan / gitleaks` is required and cannot be produced
+| Ruleset `Secret-Scan-Floor` (id 24308890) requires context `scan / gitleaks`
+  from integration 15368. Its only producer in this repo is `secret-scanner.yml`,
+  which is one of the zero-job workflows.
+
+| How merges still happen
+| Ruleset bypass, not a satisfied policy
+| Same ruleset: `bypass_actors` = RepositoryRole, `current_user_can_bypass`
+  = `always`. #142 merged 11:40Z today with the context still absent.
+
+| Rust on PRs
+| Never compiled
+| The only `cargo build` in CI is `release.yml`, on tag push. `e2e.yml`'s cargo
+  steps are commented out. `release.yml` last ran 2026-10-09 for `v0.1.0`,
+  which predates `zero-job` and `chains`.
+
+| Rust in this sandbox
+| Impossible
+| No `rustc`/`cargo`; `static.rust-lang.org`, `sh.rustup.rs`, `index.crates.io`,
+  `static.crates.io` and `objects.githubusercontent.com` are all unreachable
+  (only `github.com`/`api.github.com`/PyPI/npm). No build can happen here.
+
+| Code that has never been compiled
+| 20,031 lines of Rust, 356 `#[test]`s
+| Includes all of PR #140 and the follow-up fixes (REST path validation, the
+  404 owner-probe, `verified_allowed`, the `parse_startup_runs` error path, the
+  `u64` widening in the Creusot clauses).
+
+| Creusot
+| Red at the gate's own install step, upstream of our code
+| Job `creusot / Creusot proofs` fails at step *Install Creusot v0.14.0 (clone
+  at the tag, ./INSTALL)*; `Creusot verdict` then fails closed. Our pin
+  `bf7dd95` (2026-10-19) is old (cicd-suite HEAD `c6f5b49`, 2026-10-28) but
+  `actions/creusot-check/check.sh` is **byte-identical** at both, so a re-pin
+  alone changes nothing about the install.
+
+| Estate remediation
+| The remedy is broken and something undoes it
+| `hypatia` `ci-health-sweep.yml` fails daily at *Run CI-health sweep*
+  (needs `HYPATIA_DISPATCH_PAT`); hypatia#638 records a *heal-then-wipe
+  oscillation* — an off-tree actor resets `selected-actions` back to empty.
+
+| Reachable permissions
+| Repo admin yes; Actions settings no
+| `repos/hyperpolymath/cicd-squabbler` → `admin: true`, but
+  `actions/permissions` and `.../selected-actions` → 403 (the App installation
+  token has no `administration` scope). So read *and* edit of the allow-list
+  are out of reach from this session.
+|===
+
+=== Open work already filed
+
+* this repo: #141 (zero-job / marooned required context), #127 (SHA-pin lint
+  red on main), #105 (4 residual reds incl. an allowlist gap), #100 (branch
+  protection never read), #122 (App rollout), #121, #120, #118, #117, #115
+  (SPARK proof in CI), #58, #18, #132.
+* `metadatastician/standards`: #1340 (390 files still name the old owner),
+  #1369 (allowlist preflight rejects a reusable post-transfer), #1290
+  (actions.lock leaf entries), #1347 (RSR 3.0.0 `creusot-ready`).
+* `hyperpolymath/cicd-suite`: #43 (stale gate pins across consumers), #9
+  (`main-estate-audit` startup-dies from any caller), #30 (`@main` composites),
+  #29, #42, #60.
+* `hyperpolymath/hypatia`: #638 (wiper), #683 (health tracker), #464.
+
+== Jurisdiction: what this session can and cannot do
+
+[cols="1,1,3",options="header"]
+|===
+| Can | Cannot | Why
+
+| Commit/push this repo; open PRs; merge with `--admin`
+| Edit or even read the Actions allow-list
+| App token lacks `administration`; every `actions/permissions*` call is 403
+
+| Read rulesets, runs, jobs, checks, releases, issues anywhere public
+| Download run logs, or read SonarCloud
+| `results-receiver.actions.githubusercontent.com` and `sonarcloud.io` are not
+  on the egress allow-list
+
+| File issues
+| Comment on or edit issues
+| Issue create succeeds; comment/patch return 403 (`issues: write` absent)
+|===
+
+== Priority order (and why)
+
+. *Make Rust compile on PRs.* 4,600 lines of merged, never-compiled Rust is the
+  single largest risk in this repo, and it gates every later claim (including
+  "the 356 tests pass").
+. *Restore the required context* — via the allow-list (needs admin) or via an
+  in-repo scanner that produces `scan / gitleaks` itself. Coordinate with
+  hypatia#638, or the next sweep may undo it.
+. *Release v0.2.0* and refresh the consumer action digest, so `zero-job` and
+  `chains` exist as something other repos can actually run.
+. *Creusot*: get past the install, then discharge; keep "stated, not proved"
+  until then.
+. *Consumer migration*: the estate is split across two zero-job classes, and
+  `rsr-template-repo` is minting new repos into the wrong one.
+
+'''
+═══════════════════════════════════════════════════════════════════════════════
+ PART 1 — PROMPTS FOR THIS REPO (hyperpolymath/cicd-squabbler)
+═══════════════════════════════════════════════════════════════════════════════
+'''
+
+== P-CS-1 — make Rust actually compile and test on pull requests
+
+....
+Repo: hyperpolymath/cicd-squabbler. Task: give this repo a Rust gate that runs
+on every PR, because none exists.
+
+Measured facts you can rely on:
+- The only cargo build in CI is release.yml, and it runs on tag push only.
+  e2e.yml's cargo steps are commented out. rust-ci.yml calls a reusable that
+  dies with zero jobs (issue #141), so no PR has ever compiled this tree.
+- main contains 20,031 lines of Rust and 356 #[test]s, none of which has been
+  executed since the estate transfer on 2026-10-25.
+- A same-owner reusable exists and works: hyperpolymath/cicd-suite's
+  .github/workflows/rust-ci.yml (strict: -D warnings on every compile, doctests,
+  cargo doc, MSRV, cargo-deny, a verdict job that fails a skipped mandatory
+  job). It preserves the contexts "rust-ci / Detect Cargo.toml",
+  "rust-ci / Cargo check + clippy + fmt", "rust-ci / Cargo test".
+- Do NOT try to install Rust in the session sandbox: static.rust-lang.org,
+  index.crates.io, static.crates.io and objects.githubusercontent.com are all
+  unreachable. Write the workflow, push, and let the runner compile.
+
+What to do:
+1. Replace the dead rust-ci.yml call with either (a) a call to cicd-suite's
+   rust-ci.yml at a full SHA, or (b) a self-contained workflow (the pattern
+   echidna used after measuring the same failure). Prefer (a) if the check
+   context names must stay stable; write down which you chose and why.
+2. Expect the first run to FAIL to compile: the merged code has never been
+   built. Known-risky places, in order: crates/squabble-forge/src/rest.rs
+   (check_api_path + the owner-probe branch + the Fake test transport),
+   crates/squabble-core/src/startup.rs (AllowList::admission_unknown and the
+   verified_allowed branch), crates/squabble-fight/src/startup.rs
+   (parse_startup_runs now returns Result via `?` inside a for loop),
+   crates/squabble-cli/src/{fetch,zero_job,fight}.rs (new field plumbed into
+   several literals), verification/squabble-creusot/src/model.rs (u64 widening).
+   Fix forward. Do not delete a test to get green; if a test is wrong, say why
+   in the commit message.
+3. Any new `uses:` must be added to .github/workflows/actions.lock BY HAND
+   (the generator `gh actions-lock` cannot be installed here), keeping the
+   `dependencies:` closure complete — Lock Sync Gate checks clause 3 (every
+   coordinate named by a `uses:` or a dependency record has a record of its
+   own). Verify with scripts/check-lock-sync.sh (needs gawk; absent in the
+   sandbox) or a local reimplementation.
+4. Do not rename an existing required check context. If you replace the
+   reusable, keep the job id and the step names that produce the old contexts.
+
+Acceptance: a PR shows a cargo-backed context that actually ran (jobs > 0),
+`cargo test --workspace --locked` is green, clippy and fmt are green, and
+actions.lock is still in sync. Then, and only then, update STATE.a2ml's
+"build/tests pending a Rust toolchain" line.
+....
+
+== P-CS-2 — restore the marooned required context (`scan / gitleaks`)
+
+....
+Repo: hyperpolymath/cicd-squabbler. Task: make the required context
+`scan / gitleaks` report again — or say, in writing, why this must be an owner
+action instead.
+
+Measured facts:
+- Ruleset Secret-Scan-Floor (id 24308890) requires the context `scan / gitleaks`
+  from integration 15368 (GitHub Actions).
+- The only producer is .github/workflows/secret-scanner.yml (job id `scan`,
+  inside the reusable), which since 2026-10-25T19:49Z is a zero-job
+  startup_failure: its coordinate names metadatastician/standards, and this
+  repo's selected-actions allow-list has no pattern covering that owner.
+- READ is blocked too: GH_TOKEN's App installation has no `administration`
+  scope, so `gh api repos/.../actions/permissions` is 403. Repo permission is
+  admin, so the API restriction is the token's, not the user's.
+- Ruleset bypass_actors lets a repository admin merge anyway (that is how #140
+  and #142 landed). Do not treat that as a fix.
+
+Two admissible routes — pick ONE, and record the choice:
+A. OWNER ACTION (minimal): add `metadatastician/standards/*` (or the full
+   curated superset from hypatia's scripts/ci-health/action-superset.txt) to
+   this repo's selected-actions allow-list. Needs a PAT with Administration:
+   read+write, or the GitHub UI. Verify with
+   GET /repos/{owner}/{repo}/actions/permissions/selected-actions, then watch a
+   run of Secret Scanner produce jobs.
+B. IN-REPO (self-contained): a workflow whose job id is `scan` and whose
+   gitleaks job yields the context `scan / gitleaks`, with no cross-owner
+   `uses:`. Download the gitleaks binary and verify its published sha256 before
+   running it (the estate already prefers this to gitleaks-action); do not add
+   a third-party action that the allow-list may not admit.
+
+Constraints: never add Passed/Skipped to fake the context, never rename
+another required context in the same change (estate doctrine: never rename and
+re-require in one step), and note that hypatia#638 records an off-tree actor
+that periodically wipes selected-actions — so route A may be undone, and route
+B is the one that survives a wipe.
+
+Acceptance: on a fresh PR, `scan / gitleaks` appears and is green (or red for a
+real finding), and a note in docs/ records which route was taken and what would
+undo it.
+....
+
+== P-CS-3 — cut v0.2.0 so `zero-job` and `chains` exist outside this repo
+
+....
+Repo: hyperpolymath/cicd-squabbler. Task: release the work merged since v0.1.0,
+and refresh the consumer action.
+
+Measurements:
+- v0.1.0 was released 2026-10-09. `squabble zero-job`, `squabble chains`, the
+  REST canonical-name resolution and the startup-failure taxonomy all landed
+  AFTER it, so none of them exists in any downloadable binary.
+- .github/actions/squabble/install.sh pins SQUABBLE_TAG=v0.1.0 and
+  SQUABBLE_SHA256=6cbeb4577d83ccf2dea3405a3afb0d34b7fee422af73f2113d413ea7edba026c;
+  squabble-action.yml tests 27 cases against that digest and the build
+  attestation.
+
+Do:
+1. Do NOT tag until P-CS-1 has produced a green compile and test run. A release
+   built from never-compiled sources is the one way to make this worse.
+2. Bump CHANGELOG, STATE.a2ml, and the crate versions together.
+3. Tag v0.2.0 (release.yml triggers on `v*`), confirm the musl build and the
+   attestation, then update SQUABBLE_TAG and SQUABBLE_SHA256 in install.sh and
+   re-run squabble-action.yml.
+4. Release notes must state two behaviour changes that landed after v0.1.0 and
+   are visible to callers: `squabble chains` now reports a moved upstream as
+   BLOCKING (exit 4) rather than a warning, and a REST 404 no longer means
+   "dead" unless the owning account is also gone (so a private upstream stops
+   reddening a consumer's CI). Both are deliberate; say so, or a consumer will
+   read the change as a regression.
+
+Acceptance: `curl`-able release asset, digest + attestation verified by the
+consumer action's own test, and a release note naming both behaviour changes.
+....
+
+== P-CS-4 — decide the Creusot verdict policy, then re-pin
+
+....
+Repo: hyperpolymath/cicd-squabbler (consumer side of hyperpolymath/cicd-suite's
+creusot gate). Task: stop `Creusot Gate` being red for a reason that has nothing
+to do with our contracts, without pretending anything is proved.
+
+Facts:
+- The failing step is the gate's own *Install Creusot v0.14.0 (clone at the tag,
+  ./INSTALL)* — before any crate of ours is touched. The verdict job then fails
+  closed.
+- Our pin is hyperpolymath/cicd-suite@bf7dd95 (2026-10-19); upstream is at
+  c6f5b49 (2026-10-28). actions/creusot-check/check.sh is byte-identical at both,
+  so re-pinning does not fix the install by itself. cicd-suite#43 tracks stale
+  consumer pins; #58/c519c45 generalised "absent tool = not_run/exit 2".
+- The contracts are a DEFAULT feature of verification/squabble-creusot, which is
+  why `prove_args` is empty: the gate appends `prove_args` to its planted
+  control crates too, and `--features creusot` there makes the FALSE control
+  "refuse" for the wrong reason. Keep it empty.
+- Nothing has been proved. Keep docs/CREUSOT.adoc's "stated, not proved".
+
+Do:
+1. Re-pin the gate to current cicd-suite (both the workflows: key and its
+   `dependencies:` record in actions.lock, by hand), and re-run.
+2. If the install still fails, do NOT weaken the gate here. File the upstream
+   prompt (P-AC-1) and, if a red verdict job is blocking the board, prefer
+   making the failure legible (a `not_run` context distinct from `verdict`)
+   over silencing it.
+3. Only when a prove run reaches Why3 for our crate does the wording change:
+   replace "stated, not proved" with the run URL, per obligation, and nothing
+   broader.
+
+Acceptance: either a green prove over our crate with a run URL, or a red that
+names "the prover could not be installed" as the cause, and an upstream issue.
+....
+
+== P-CS-5 — close the review debt and the taxonomy's open edges
+
+....
+Repo: hyperpolymath/cicd-squabbler. Task: work the still-open review threads and
+the two design questions the last session deliberately left open.
+
+1. Codex threads still unresolved on #140: allow-list pattern matching vs the
+   `github_owned_allowed` flag; moves.rs subpath preservation; `zero_job.rs`
+   `--limit` bound. Verify each against the code as merged before changing
+   anything; drop the ones already fixed, with a reason.
+2. Design question A (404 policy): we now probe `users/{owner}` before minting
+   NotFound. That costs one extra REST call per 404 and makes a private upstream
+   `Unverified` rather than blocking. Record it in docs/CHARTER.adoc and in
+   STATE.a2ml — it is a deliberate loss of a blocking signal.
+3. Design question B (moved = blocking): we changed Finding::MovedUpstream from
+   Warning to Blocking on the grounds that Actions does not follow renames for
+   `uses:`. That claim is corroborated by the estate's own measurement
+   (echidna/docmatrix: old-name callers, 0 jobs) — cite it in the code comment,
+   because a future reader will otherwise "fix" it back to a warning.
+4. #100 says classic branch protection is never read. Note that the required
+   context here comes from a RULESET, not classic protection, and that the
+   ruleset API IS readable with this token even when
+   `branches/main/protection` is not (403). Teach the tool the ruleset path
+   before the classic path.
+
+Acceptance: each thread either fixed or answered with evidence; the two design
+decisions written down where the code can be found from.
+....
+
+== P-CS-6 — keep SonarCloud green, and keep the reason
+
+....
+Repo: hyperpolymath/cicd-squabbler. Task: it is green now — do not lose it, and
+make the next failure diagnosable.
+
+Facts: SonarCloud failed on #140 for "Security Rating on New Code = E" while the
+PR was open, and turned green after crates/squabble-forge/src/rest.rs stopped
+building a `gh` argument out of unvalidated data. The check's annotation list is
+empty and the bot posts no inline comment; sonarcloud.io is unreachable from the
+sandbox, so the rule key had to be inferred from the shape of the code.
+
+Do: keep the pattern — no network response or caller-supplied string in argv
+without validation. If the gate goes red again, capture the rule key from the
+SonarCloud UI at the first opportunity and put it in the commit message; that
+is the one piece of evidence this tooling cannot collect itself.
+
+Acceptance: no new E-rating finding, and a written record of how to read the
+next one.
+....
+
+'''
+═══════════════════════════════════════════════════════════════════════════════
+ PART 2 — UPSTREAM PROMPTS (repos this one depends on)
+═══════════════════════════════════════════════════════════════════════════════
+'''
+
+== P-MS-1 — metadatastician/standards: make the transfer survivable for callers
+
+....
+Repo: metadatastician/standards (public; you have admin). Task: callers are
+currently dead if they migrate and dead if they do not — this is measured, not
+theoretical, and it is now the estate's largest CI fault.
+
+Evidence gathered 2026-10-29:
+- hyperpolymath/standards was transferred to metadatastician/standards (repo id
+  1116521501, owner id 297579217). Actions does NOT follow the transfer for
+  reusable `uses:`: callers still writing the old name (echidna runs
+  40522192233 and 40463073576, docmatrix 40579977962, modshells) get conclusion
+  "failure" with ZERO jobs — the "workflow file issue" mode, which creates no
+  check run and therefore no PR entry.
+- Callers that migrated (cicd-squabbler, commit 00d4916 at 2026-10-25T19:48Z) get
+  "startup_failure" with zero jobs instead, because selected-actions
+  `patterns_allowed` is matched against the coordinate AS WRITTEN and the
+  curated patterns name the old owner. verisimdb measured the same thing
+  independently (verisimdb docs/UPSTREAM-PROMPTS.adoc, PR #319: "dead if it
+  migrates and dead if it doesn't").
+- standards#1340 (390 files still name the old owner) and #1369 (allowlist
+  preflight rejects a reusable post-transfer) are the same fault seen from
+  inside this repo.
+
+Ask (in this order, smallest first):
+1. Publish a machine-readable "current canonical coordinate + vetted commit"
+   file (owner, repo, commit, date, and the previous names), and reference it
+   from every reusable's README. Consumers currently infer it from prose.
+2. Make the allowlist data, not prose: ship the exact pattern set a consumer
+   must add (including `metadatastician/standards/*`) and, if a preflight
+   script exists, make it read that file so it cannot disagree with reality.
+3. Add a CI check HERE that samples consumer pins and fails when a pinned
+   commit or owner no longer resolves. The transfer was invisible for four days;
+   that check is the thing that would have made it visible in four minutes.
+4. If you intend to keep the reusables at this owner, say so in an ADR and
+   give consumers a dated migration window; if not, move them somewhere
+   callers already admit and say that instead.
+
+Do NOT, because other repos depend on you for things this repo does not care
+about: rename or remove any existing reusable workflow file or its job ids
+(other repos require those contexts); change the `on: workflow_call` input
+surface without a deprecation path; or drop the old owner name from your
+documentation before #1340's census is done.
+....
+
+== P-MS-2 — metadatastician/standards: make the secret scanner callable, or say it is not
+
+....
+Repo: metadatastician/standards. Task: resolve whether `secret-scanner-reusable.yml`
+is meant to be callable at all, because the estate's Secret-Scan-Floor ruleset
+requires the context `scan / gitleaks` on every protected branch, and there is
+currently no repo in the estate where that call reliably works.
+
+Measured: cicd-squabbler's secret-scanner.yml has produced no jobs since
+2026-10-25T19:49Z; hyperpolymath/cicd-suite's own caller of the same reusable
+(which still names the old owner) also produces zero jobs; unified-dataset-vocab
+last succeeded 2026-10-23, i.e. BEFORE the transfer. So the only evidence of
+this reusable working predates the move.
+
+Ask: either (a) state the supported calling convention explicitly (canonical
+owner + exact pattern to admit, in a file a consumer can read), or (b) publish a
+self-contained scanner recipe — the gitleaks binary, its checksum, and the job
+shape that yields the context `scan / gitleaks` — so a consumer that cannot
+change its Actions settings can still satisfy its own required check without a
+cross-owner call.
+
+Clash to respect: several consumers deliberately avoid third-party actions
+because their allow-lists are narrow; a recipe that requires a Marketplace
+action is worse than no recipe. Also: do not move the context name. Half the
+estate's branch rulesets name `scan / gitleaks`, and a rename would need a
+coordinated re-require across every repo.
+....
+
+== P-MS-3 — metadatastician/standards: RSR `creusot-ready` and the proof story
+
+....
+Repo: metadatastician/standards. Task: #1347 proposes retiring "5.2.1 spark-ready"
+and adding "creusot-ready". This repo (cicd-squabbler) is one of the few with an
+actual Creusot complement, so it is a useful canary — but it is also a warning.
+
+Measured there: verification/squabble-creusot states 6 obligations, none
+discharged; the estate creusot gate cannot even install Creusot in its CI
+(the install step fails before any crate is touched); and the stable mirror
+exists precisely so the statements can be checked without a prover.
+
+Ask: define `creusot-ready` in terms a repo can actually meet today — the
+honest ladder is (i) contracts written and wired to a gate, (ii) gate reachable
+and returning a verdict, (iii) obligations discharged, with the rung recorded
+in a machine-readable field. If the badge requires rung (iii) while the estate
+gate cannot reach rung (ii), every repo will either fail or claim something
+untrue; that is the echidna CREUSOT-SETUP post-mortem repeating.
+
+Clash: this must not force every Rust repo to vendor creusot-std (LGPL, nightly-
+only). The two-workspace arrangement this repo uses — nightly proof crate
+excluded from the stable workspace — should be the documented pattern, not an
+optional nicety, or `cargo audit` starts reading a nightly-only LGPL tree for
+every consumer.
+....
+
+== P-AC-1 — hyperpolymath/cicd-suite: the Creusot gate cannot install its own prover
+
+....
+Repo: hyperpolymath/cicd-suite. Task: fix `creusot-gate.yml` / `actions/creusot-check`
+so a consumer's prove phase fails for a reason about the consumer, or reports
+"not_run" — but never for "we could not install the toolchain" dressed as a
+proof failure.
+
+Measured (consumer: hyperpolymath/cicd-squabbler, run 40791983374 and 40792644765):
+- Job `creusot / Creusot proofs (cargo creusot prove)` fails at step
+  *Install Creusot v0.14.0 (clone at the tag, ./INSTALL)*.
+- `cargo creusot is on PATH` and `Planted controls, then every crate with
+  obligations` are both SKIPPED, and `Creusot verdict` fails closed.
+- So the controls never ran: the gate never proved it can say no, and the
+  verdict is therefore about the installer, not about the consumer.
+- actions/creusot-check/check.sh at bf7dd95 and at current main (c6f5b49) is
+  byte-identical; the recent gate work (c519c45, "absent tool is not_run/exit 2,
+  never a pass"; #58) has not reached this path.
+
+Ask:
+1. Make the install step diagnosable: name the failing sub-step and the network
+   or tool that was missing (opam, why3, solver, nightly, crates.io), so a
+   consumer does not have to guess.
+2. Make "prover unavailable" a distinct outcome from "proof failed": its own
+   context or annotation, exit 2, and a verdict that says NO PROOF WAS PERFORMED
+   rather than a red that reads as a false contract.
+3. Prefer a cached/prebuilt prover (keyed by creusot version + nightly) over a
+   clone-and-./INSTALL per consumer per run; that install is the flaky part.
+4. Provide caller-crate-only prove arguments. Today `prove_args` is appended to
+   the planted control crates too, so a consumer cannot pass `--features X`
+   (the controls do not define it — the false control would then "refuse" for
+   the wrong reason, which is a hollow pass). cicd-squabbler worked around it by
+   making its contract module a default feature; that workaround does not
+   generalise, and other consumers will hit it.
+
+Do NOT: soften the planted controls; drop the "cannot say no ⇒ VOID" rule; or
+make a missing prover report success. A gate that cannot say no must not imply
+yes. Also do not rename existing job ids — consumers require those contexts.
+....
+
+== P-AC-2 — hyperpolymath/cicd-suite: stale pins, and the gate that actually works today
+
+....
+Repo: hyperpolymath/cicd-suite. Task: two things, both about the gap between
+what this repo publishes and what consumers pin.
+
+1. #43 (stale pins) is now load-bearing: cicd-squabbler pins bf7dd95
+   (2026-10-19) while main is c6f5b49 (2026-10-28) — 9 days and several
+   verdict-semantics fixes behind, including "absent tool is not_run/exit 2".
+   Publish the canonical "current gate commit" and open the re-pin PRs, or ship
+   a caller that can be told "use whatever is current" without hand-editing
+   actions.lock in every consumer.
+2. rust-ci.yml is the one gate in this suite that consumers can adopt TODAY
+   without touching their Actions allow-list, because they call it from the
+   same owner (hyperpolymath). cicd-squabbler's Rust never compiles on a PR;
+   adopting rust-ci.yml is its fix (P-CS-1). Make that path first-class:
+   document the contexts it preserves, the inputs it needs for a workspace with
+   an excluded verification crate, and add one canary consumer so a break here
+   is visible here rather than in 30 repos.
+
+Clash: cicd-suite is not cicd-squabbler's private toolbox. Changes must not
+assume a single workspace shape (this repo excludes verification/, others
+exclude .standards-js, others have no cargo at all), and the gates must stay
+usable by the repos that call them from a *different* owner — those are the
+callers that are currently broken by the standings transfer, not by anything in
+this repo.
+....
+
+== P-HY-1 — hyperpolymath/hypatia: the sweep that would heal this has been failing for days
+
+....
+Repo: hyperpolymath/hypatia. Task: the ci-health sweep is the estate's remedy for
+exactly the fault that is blocking merges today, and it does not run.
+
+Measured:
+- ci-health-sweep.yml has failed on every scheduled run since at least
+  2026-10-25 (03:49Z daily; also 2026-10-27T03:23Z via workflow_dispatch), with
+  the job *Run CI-health sweep* failing. It needs `secrets.HYPATIA_DISPATCH_PAT`.
+- Meanwhile 5 workflows of hyperpolymath/cicd-squabbler have been zero-job
+  startup_failure since 2026-10-25T19:49Z, and the required context
+  `scan / gitleaks` cannot be produced, so branch policy blocks every normal
+  merge there.
+- #638 says the sweep heals correctly and something off-tree wipes allowlists
+  back on a cadence.
+
+Ask:
+1. Make the sweep fail loudly and usefully: if the PAT is missing, say so in the
+   job summary and (ideally) in the tracking issue, rather than a red nobody
+   reads. A remediation that silently stops is worse than none.
+2. Extend `detect.sh` with the class this fault actually is: "caller names an
+   owner/repo that no longer exists under that name" (measured: echidna,
+   docmatrix, modshells → failure, 0 jobs) as distinct from
+   "caller's allow-list does not admit the canonical owner" (→ startup_failure,
+   0 jobs). The current B-ALLOWLIST covers the second; the first produces a
+   different conclusion and a different fix (repoint).
+3. Add a check that a required context is *producible at all*: for each ruleset
+   required context, find a workflow that can emit it. A context whose only
+   producer is dead is the exact shape that blocked every merge here for four
+   days while the checks list said "Expected — waiting".
+
+Clash: the estate's superset PUT widens allow-lists. Do not let a repair
+mechanism silently re-add an owner a repository deliberately excluded for
+security reasons — record the pre-existing set, and print what was added, so a
+narrow posture is a decision rather than an accident.
+....
+
+== P-HY-2 — hyperpolymath/hypatia: name the thing that wipes allowlists
+
+....
+Repo: hyperpolymath/hypatia (#638). Task: find and stop the off-tree actor that
+resets `actions/permissions/selected-actions` after the daily sweep heals it.
+
+Why it matters now, specifically: two repos' CI has been dead for four days, the
+only remedy is either an allow-list edit (which this actor may undo) or a
+self-contained workflow (which it cannot). Until the wiper is named, every
+"fix the allow-list" instruction in the estate — including the one in
+cicd-squabbler#141 — is advice with a shelf life.
+
+Ask: identify the writer (a sync script? an org-level settings tool? a per-repo
+"lockdown" workflow? a template sync?), publish its schedule, and make the
+preferred state a file both the writer and the sweep read, so heal and wipe
+converge instead of oscillating. If it is a deliberate lockdown policy, say
+what the policy is and make `detect.sh` treat "policy-narrow allow-list" as a
+known state rather than a failure to remediate.
+
+Clash: if the wiper is a security control, do not disable it to make CI green.
+Change the control's input, not its existence.
+....
+
+'''
+═══════════════════════════════════════════════════════════════════════════════
+ PART 3 — DOWNSTREAM / LATERAL PROMPTS (repos that call the same reusables)
+═══════════════════════════════════════════════════════════════════════════════
+'''
+
+== P-DS-0 — the shared prompt for the "old name" class (use per repo)
+
+....
+Repo: <consumer>. Task: decide, explicitly, which of the two dead states this
+repo is in and fix that one — not the other.
+
+How to tell, from the API alone:
+  gh run list --workflow <wf>.yml --limit 5   # conclusion?
+  gh run view <run-id> --json jobs            # or: gh api .../runs/<id>/jobs
+- conclusion "startup_failure" + 0 jobs  → the coordinate AS WRITTEN is not
+  admitted by this repo's selected-actions allow-list. Fix: admit the canonical
+  owner's pattern (needs administration:write — you may not have it), or rewrite
+  the coordinate to something already admitted, or inline the workflow.
+- conclusion "failure" + 0 jobs           → the coordinate IS admitted but the
+  repo it names no longer exists at that name (the 2026-10-25 transfer from
+  hyperpolymath/standards to metadatastician/standards). Fix: repoint the
+  coordinate to the canonical name AND get it admitted — both, in that order,
+  or you move from one dead state to the other.
+
+Measured on 2026-10-29 in this class: echidna (secret-scanner, old name, 0 jobs),
+docmatrix (rust-ci.yml, old name, 0 jobs), modshells (secret-scanner, 0 jobs).
+unified-dataset-vocab's last success was 2026-10-23 — before the transfer — so
+it is dead now too, it just has not run since.
+
+Constraints: keep every job id (`scan`, `rust-ci`, ...) and its step names —
+other repos' rulesets require those exact contexts, and the estate's doctrine is
+never to rename and re-require in one step. Update the repo's own actions.lock
+if it has one (the `dependencies:` closure must stay complete). If the repo
+carries a `.hypatia-ignore` or a deliberate narrow allow-list, do not widen it
+to fix this: inline instead, and say why.
+....
+
+== P-DS-1 — hyperpolymath/echidna: canonical name, and a Creusot story worth re-reading
+
+....
+Repo: hyperpolymath/echidna. Task: two adjacent things, both of which this repo
+already has half the answer to.
+
+1. CI. secret-scanner.yml and friends still call
+   hyperpolymath/standards/...@<sha>. That name no longer exists (transfer to
+   metadatastician/standards, repo id 1116521501). Measured 2026-10-29: runs
+   40522192233 and 40463073576 both "failure" with 0 jobs. echidna's own
+   rust-ci.yml comments already record the sibling failure mode ("every run in a
+   'workflow file issue' failure with zero jobs") and chose an inlined workflow
+   to sidestep it. Apply the same judgement here: either repoint + get the
+   canonical owner admitted (see P-DS-0), or inline. Do not repoint and stop
+   there — that turns a 0-job "failure" into a 0-job "startup_failure".
+
+2. Creusot. echidna's CREUSOT-SETUP.adoc is the estate's honest post-mortem on
+   this: `cargo install creusot` is wrong, annotations never reached Why3, and
+   an earlier milestone table falsely claimed "done". cicd-squabbler has since
+   added a complement crate that deliberately keeps the proof obligations behind
+   a nightly crate excluded from the stable workspace, a stable mirror that
+   tests the statements without a prover, and an installer that refuses to
+   report ready unless the pinned version and a prover are present. Read
+   cicd-squabbler's docs/CREUSOT.adoc and verification/ before writing a third
+   version; if echidna's own story should change, change it with the same
+   wording rule you already set ("stated, not proved").
+
+Clash: echidna has real Rust services (echidna-wire, echidna-grpc) and needs
+capnproto/protoc that the standards reusable does not install — that is why
+rust-ci.yml is inlined. Do not "simplify" it back to a reusable as part of this.
+....
+
+== P-DS-2 — hyperpolymath/docmatrix: the zero-job Rust lane
+
+....
+Repo: hyperpolymath/docmatrix. Task: rust-ci.yml calls the old standards name and
+produces 0 jobs (measured: run 40579977962, conclusion "failure", no jobs). Until
+that is fixed, docmatrix's Rust is not compiled on any PR either — the same class
+of hole cicd-squabbler had.
+
+Do: pick one of — (a) repoint to metadatastician/standards AND admit the owner
+(needs admin on the repo's Actions settings), (b) adopt
+hyperpolymath/cicd-suite's rust-ci.yml, which is same-owner and works today, or
+(c) inline. Whichever you choose, keep the job id `rust-ci` and the step names so
+any ruleset requiring "rust-ci / Cargo test" still resolves.
+
+Clash: docmatrix is a *root-level multi-language* repo (it already runs CodeQL,
+Hypatia, Dogfood, Governance, Secret Scanner at the root). Do not restructure it
+to fit a Rust template; this is a CI-call-site fix, not an architecture change.
+Also note its Dependabot "github_actions in /" runs are green — the ecosystem is
+alive, only the reusable calls are dead, which is a useful contrast for the
+issue write-up.
+....
+
+== P-DS-3 — hyperpolymath/rsr-template-repo: stop minting new repos into the dead class
+
+....
+Repo: hyperpolymath/rsr-template-repo. Task: every new estate repo is generated
+from here, so this is the highest-leverage single edit in the estate — and the
+most likely to clash with repos that are not CI repos at all.
+
+Facts: the template's workflows presumably call hyperpolymath/standards (old
+name) or metadatastician/standards (canonical, but not admitted by a fresh
+repo's default selected-actions posture). Either way, a freshly-minted repo
+inherits a CI that cannot start. That is why the estate keeps re-discovering this
+fault from scratch.
+
+Do:
+1. Decide the template's stance: canonical name + a documented one-time
+   allow-list step (state it in the generated README, not just in a design doc),
+   or same-owner reusables only, or inlined workflows.
+2. Make the template's default posture safe for a repo that has nothing to
+   protect yet: no required contexts until the workflows that produce them have
+   run at least once. A template that ships a required context it cannot emit is
+   the bug, reproduced N times.
+3. Add a generated-repo smoke test: create a repo from the template in CI, push
+   a trivial commit, and fail if any workflow ends with 0 jobs. That test is
+   the only thing that keeps this fixed.
+
+Clash: the template serves many shapes (Idris, Zig, Elixir, SPARK, Rust, docs-
+only). Do not hard-code a Rust or a Creusot gate into the default set; make them
+opt-in includes, or half the estate gets a red gate for a language it does not
+use. Likewise do not make the secret scanner depend on a cross-owner call — it
+is the one workflow every repo needs and the one that is currently broken
+everywhere.
+....
+
+== P-DS-4 — the remaining consumers (same prompt, different repo)
+
+....
+Repos in the same measured class, each needing the P-DS-0 decision:
+hyperpolymath/modshells (secret-scanner, hypatia-scan, governance, mirror, 0
+jobs), hyperpolymath/typed-wasm (secret-scanner, governance, 0 jobs),
+hyperpolymath/reasonably-good-token-vault (secret-scanner, hypatia-scan,
+governance, 0 jobs), hyperpolymath/unified-dataset-vocab (secret-scanner last
+succeeded 2026-10-23, before the transfer — it is dead but has not noticed),
+hyperpolymath/robot-vacuum-cleaner ("CI/CD Pipeline" failing 13 times).
+
+For each: run the P-DS-0 test, record which of the two classes it is in, and only
+then act. Do not batch them into one change — the two classes need opposite
+fixes, and a blanket repoint moves the "failure" repos into "startup_failure".
+
+Clash: these repos have their own reasons for narrow allow-lists (verified-
+publisher-only, or a deliberate local-only posture). Repointing is not always the
+right fix; inlining is. Ask before widening a security posture on a repo whose
+threat model you have not read.
+....
+
+'''
+═══════════════════════════════════════════════════════════════════════════════
+ PART 4 — CLASHES, CONTINGENCIES, AND WHAT TO WATCH
+═══════════════════════════════════════════════════════════════════════════════
+'''
+
+== Clashes — things that look local and are not
+
+. *The required context is estate-wide, not ours.* `scan / gitleaks` is required
+  by a ruleset in many repos. Any change to its producer must keep the job id
+  `scan` and that exact context string. A rename here breaks branch protection
+  in repos you are not looking at.
+. *hypatia rewrites allow-lists.* The curated superset PUT widens
+  `patterns_allowed`. A hand-narrowed list (a deliberate security posture) will
+  be widened by the sweep, and #638 says something else narrows it back. Do not
+  "fix" a repo by hand-editing a list the sweep owns — either change the
+  superset file or inline the workflow.
+. *cicd-suite's gates are shared.* `prove_args` is appended to the planted
+  control crates as well as the consumer's. Asking cicd-suite for "just pass
+  `--features creusot`" would break every consumer whose controls do not define
+  that feature; the ask has to be *caller-crate-scoped arguments*, or nothing.
+  This repo worked around it (contracts are a default feature); that workaround
+  does not generalise, which is why the upstream ask is still open.
+. *standards is a library, not a service to this repo.* The prompts above ask it
+  for publication, data and a resolvability check — not for anything shaped
+  around cicd-squabbler. If a change only helps this repo, it belongs here.
+. *This repo is a tool other repos run.* Changing `chains` severity (moved =
+  blocking, exit 4) and the 404 policy changes what consumers' CI does when
+  they adopt v0.2.0. Neither is released yet, so now is the moment to write it
+  down — after the release, it is a breaking change.
+. *`rsr-template-repo` multiplies every decision.* A default that assumes Rust,
+  or a required context the template cannot emit, is reproduced in every new
+  repo. Prefer opt-in.
+. *Sonar/CodeRabbit/Codex are third-party reviewers with write access.* Several
+  of their suggestions in #140 were right; a few conflicted (the overflow fix
+  landed twice from two directions). Reconcile before acting, and never let a
+  bot's suggestion be applied unreviewed to a proof obligation.
+
+== Contingencies — what is waiting on what
+
+[cols="2,2,3",options="header"]
+|===
+| This | Unblocks | Note
+
+| P-CS-1 (Rust compiles on PRs)
+| P-CS-3 (release), any claim about the 356 tests, sonar/coverage work
+| Do not tag v0.2.0 before a green test run; the release is the first artefact
+  anyone else will consume.
+
+| P-CS-2 route A (allow-list) or route B (inline scanner)
+| normal merges in this repo; #141 closure
+| Route A may be undone by the wiper (P-HY-2); route B survives it but is a
+  second implementation of a shared rule, so document why.
+
+| P-MS-1 (canonical-owner publication)
+| P-DS-* for every consumer, P-HY-1's "repoint" detector
+| Without a published canonical coordinate + pattern set, every consumer
+  re-derives it from prose, which is how the estate got here.
+
+| P-AC-1 (prover unavailable ≠ proof failed)
+| P-CS-4, P-MS-3's `creusot-ready` rung definition
+| A badge that requires discharged obligations while the gate cannot reach a
+  verdict is a badge nobody can earn honestly.
+
+| P-AC-2 (rust-ci as a same-owner path)
+| P-CS-1 and P-DS-2 option (b)
+| It is the only gate in the suite that works for a consumer without touching
+  Actions settings — worth a canary.
+
+| P-HY-1/P-HY-2
+| every allow-list instruction in this document
+| Until the sweep runs and the wiper is named, "add the pattern" is advice with
+  a shelf life; say so wherever you give it.
+|===
+
+== What I could not measure, and what would change the advice
+
+* *Whether the allow-list gap is the whole cause* — cannot read
+  `actions/permissions` (403, no `administration` scope). The inference rests on
+  three independent measurements (this repo's own 19:48/19:49 correlation, the
+  old-name 0-job class, and verisimdb's independent write-up). A single
+  authenticated GET of `selected-actions` would settle it in one call.
+* *Why the Creusot install fails* — run logs are on
+  `results-receiver.actions.githubusercontent.com`, which this sandbox cannot
+  reach. The step name is the only evidence; P-AC-1's ask is to make that step
+  say more.
+* *What SonarCloud objected to on #140* — `sonarcloud.io` unreachable and the
+  check carries no annotation. It is green now, after the argv-validation
+  change, which is strong but circumstantial evidence of the rule.
+* *Whether any of the 356 tests pass* — no compiler, no crate registry. Nothing
+  in this document should be read as a claim that they do.
