@@ -13,8 +13,9 @@
 //! * [`model`] — the invariants as ordinary Rust, plus `#[test]`s that fail if
 //!   the real `squabble-core` stops agreeing with them. This half compiles and
 //!   runs on **stable** Rust and needs no Creusot installation.
-//! * `contracts` (`--features creusot`) — the same statements as Creusot
-//!   contracts, compiled only when `cargo creusot` translates the crate. It has
+//! * `contracts` — the same statements as Creusot contracts, compiled by
+//!   default so a prove run cannot omit them (see the `creusot` feature note in
+//!   `Cargo.toml`; the stable half builds with `--no-default-features`). It has
 //!   a **literal** `#[requires]`/`#[ensures]` pair per obligation, which is what
 //!   the estate gate counts.
 //!

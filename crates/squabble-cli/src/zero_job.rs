@@ -176,6 +176,7 @@ fn probe_allow_list(slug: &str, notes: &mut Vec<String>) -> Option<AllowList> {
         Ok(p) if p.allowed_actions == "selected" => Some(AllowList {
             patterns: p.patterns_allowed,
             github_owned_allowed: p.github_owned_allowed,
+            verified_allowed: p.verified_allowed,
         }),
         Ok(p) => {
             notes.push(format!(
@@ -467,6 +468,7 @@ mod tests {
         let allow = AllowList {
             patterns: vec!["actions/*".into()],
             github_owned_allowed: true,
+            verified_allowed: false,
         };
         let report = collect(
             "hyperpolymath/hypatia",
@@ -496,6 +498,7 @@ mod tests {
         let allow = AllowList {
             patterns: vec!["actions/*".into()],
             github_owned_allowed: true,
+            verified_allowed: false,
         };
         let report = collect(
             "hyperpolymath/hypatia",

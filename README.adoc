@@ -31,8 +31,10 @@ posture that caused it rather than to the reusable's owner or a security scan
 reusable-workflow re-pin — these need the GitHub ruleset API / a target SHA) and
 the GitHub App *webhook* leg (pending the owner's hosting decision). Zero-job
 `startup_failure` runs — no job, therefore no check run, therefore nothing in a
-PR check list — are now first-class: `squabble zero-job` attributes each observed
-run to a moved coordinate or an allow-list gap, and `squabble chains` compares
+PR check list — are now first-class: `squabble zero-job` **attempts to attribute**
+each observed run to a moved coordinate or an allow-list gap, and reports
+`Unattributed` — with the probe failure quoted, and exit `4` — when the evidence
+does not support a class; `squabble chains` compares
 canonical upstream names through REST so a move is named *before* a run proves
 it. Both are diagnosis only; `squabble ≠ bypass` still holds. See
 `docs/CHARTER.adoc` for the design and open owner decisions.
@@ -90,7 +92,10 @@ classes are modelled, each with its own move:
 | `AllowListAdmissionRequired`
 | The coordinate (or its canonical target) is refused by the caller's
   `allowed_actions=selected` allow-list. The report names the exact minimal
-  `owner/repo@*` pattern to admit; no workflow edit can make the run start.
+  `owner/repo@*` pattern to admit; no workflow edit can admit *this coordinate*
+  (a different coordinate may already be admitted, and under `verified_allowed`
+  an uncovered action is reported `Unattributed` rather than refused, because
+  creator status cannot be resolved here).
 |===
 
 [source,sh]

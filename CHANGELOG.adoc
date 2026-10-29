@@ -110,6 +110,31 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
 
 ==== Fixed
 
+* A REST `404` no longer mints a blocking dead-upstream finding on its own.
+  GitHub answers `404` in place of `403` for a repository the token may not see,
+  so absence is established only when the *owner* probe also 404s; otherwise the
+  coordinate is `Unverified` with the reason, and a private upstream can no
+  longer redden `chains` with exit `4`.
+* `Finding::MovedUpstream` is **blocking**: the REST redirect resolves the name,
+  it does not repair the reference, and Actions does not follow redirects for
+  `uses:` — so a moved coordinate fails as written.
+* `parse_startup_runs` refuses a `startup_failure` run with no usable `id`
+  instead of dropping it, which could otherwise let `zero-job` report that no
+  failure was observed.
+* The Creusot obligations add in `u64`, so `passed + skipped` is provable for
+  every pair of `u32` counts (Creusot checks overflow), with boundary tests in
+  the stable mirror; the mirror also gains `after_diagnosis`/`after_admission`
+  and tests over both values of their event, so `verify-mirror` covers the
+  contract inputs rather than a subset of them.
+* An uncovered *action* under `verified_allowed` is reported `Unattributed`
+  rather than `AllowListAdmissionRequired`: verified Marketplace creators are
+  admitted without a pattern and creator status is not resolvable here, so the
+  admission is unknown, not refused.
+* `scripts/install-toolchain.sh` checks the installed `cargo creusot` version
+  against the pin instead of treating any `cargo creusot` as ready, and the dev
+  container no longer pipes a remote installer into a shell either — it verifies
+  the published digest first, as the host installer now does.
+
 * `squabble-forge` REST: an API path is now validated before it becomes an
   argument to `gh` — empty, over-long, option-looking, upward-traversing, or any
   path carrying a byte outside `[A-Za-z0-9._-/=@+~:]` (so whitespace, `;`, `&&`,

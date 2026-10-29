@@ -164,8 +164,29 @@ rustup toolchain install "$creusot_nightly" --profile minimal \
 [ "$with_creusot" = true ] || { say "done (Creusot skipped by --no-creusot)"; exit 0; }
 
 # --------------------------------------------------------------- creusot ----
+# "cargo creusot exists" is not "the pinned Creusot is installed". A different
+# release, or one whose Why3/solver stack is missing, would be used against this
+# repository's pinned nightly and `creusot-std`, and the mismatch surfaces as a
+# failed proof rather than as a wrong toolchain. So the version is checked, and a
+# mismatch is reported instead of being reported as ready.
+creusot_installed=""
 if cargo creusot --help >/dev/null 2>&1; then
-  say "Creusot already present: $(cargo creusot --version 2>/dev/null | head -1)"
+  creusot_installed="$(cargo creusot --version 2>/dev/null | head -1)"
+fi
+if [ -n "$creusot_installed" ] && printf '%s' "$creusot_installed" | grep -qF "$creusot_version"; then
+  say "Creusot already present and matching the pin: $creusot_installed"
+  if ! have why3; then
+    say "  warning: why3 is not on PATH, so translation may succeed with no prover."
+    say "  The obligations stay STATED, NOT PROVED until a prover answers."
+  fi
+elif [ -n "$creusot_installed" ]; then
+  say ""
+  say "Creusot $(printf '%s' "$creusot_installed") is installed, but this repository"
+  say "pins $creusot_version (see verification/squabble-creusot/rust-toolchain.toml"
+  say "and .github/workflows/creusot.yml). A mismatched verifier proves a different"
+  say "thing than the one declared. Remove it and re-run, or set CREUSOT_VERSION to"
+  say "the version you intend to use AND update the pins — all three together."
+  exit 2
 else
   have opam || {
     say ""
@@ -209,5 +230,7 @@ say ""
 say "ready. Prove the obligations (this is the only step that changes"
 say "'stated' into 'proved', and it has not been run for this repository yet):"
 say "  cd verification/squabble-creusot && cargo creusot prove"
-say "Stable-Rust mirror of the same statements:"
-say "  cargo test --manifest-path verification/squabble-creusot/Cargo.toml"
+say "Stable-Rust mirror of the same statements (the contracts are a default"
+say "feature, so the stable half is built without it):"
+say "  cargo test --manifest-path verification/squabble-creusot/Cargo.toml \\"
+say "              --no-default-features"

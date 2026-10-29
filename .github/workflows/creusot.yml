@@ -44,7 +44,13 @@ jobs:
       # A creusot-std dependency that annotates nothing would be a hollow
       # dependency: prove nothing, claim nothing. Fail rather than warn.
       enforce_hollow: true
-      # The contracts live behind the crate's `creusot` feature, so the prove
-      # phase must enable it — otherwise it discharges an empty module and
-      # reports success over nothing.
-      prove_args: "--features creusot"
+      # `prove_args` is deliberately EMPTY and must stay that way. The gate
+      # appends it to `cargo creusot prove` for the caller's crates *and* for its
+      # two planted control crates, which define no such feature: passing
+      # `--features creusot` here turns both controls into compile errors — the
+      # false control then "refuses" for the wrong reason (a hollow pass) and the
+      # true control fails, so the gate can never reach a verdict.
+      # The contracts are therefore compiled by default in
+      # verification/squabble-creusot/Cargo.toml (`default = ["creusot"]`), and
+      # the stable half is built with `--no-default-features`.
+      prove_args: ""

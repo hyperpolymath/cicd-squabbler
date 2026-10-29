@@ -369,15 +369,17 @@ verify-install:
 
 # Stable-Rust mirror of every Creusot obligation (the real engine's tests too)
 verify-mirror:
-    cargo test --manifest-path verification/squabble-creusot/Cargo.toml
+    cargo test --manifest-path verification/squabble-creusot/Cargo.toml --no-default-features
 
 # Discharge the obligations. This is the ONLY step that turns "stated" into
 # "proved"; until it has run on a real toolchain, the contracts are stated only.
-# `--features creusot` is REQUIRED: the contracts live behind that feature, so a
-# plain `cargo creusot prove` would prove an empty module and report success
-# over nothing.
+# No `--features` flag here on purpose: the `creusot` feature is a DEFAULT of the
+# crate (see its Cargo.toml), so the contract-bearing module is compiled without
+# being asked. A flag would be needed only where features can be scoped per
+# crate — which the estate gate cannot do (it shares one argument variable with
+# its planted controls).
 verify-creusot:
-    cd verification/squabble-creusot && cargo creusot prove --features creusot
+    cd verification/squabble-creusot && cargo creusot prove
 
 # The estate gate, verbatim: detect → theatre (T1 claims, T2 hollow, T3 trusted)
 # → prove. Fetches the pinned script from hyperpolymath/cicd-suite rather than

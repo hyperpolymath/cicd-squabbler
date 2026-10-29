@@ -33,6 +33,22 @@ pub fn has_evidence(passed: u32, total: u32) -> bool {
     total > 0 && passed == total
 }
 
+/// The statement after a diagnosis: the diagnosis is free, and acceptance is
+/// decided by the realised runs alone. Mirrors `contracts::after_diagnosis`,
+/// whose postcondition does not mention `diagnosed`.
+pub fn after_diagnosis(passed: u32, skipped: u32, total: u32, diagnosed: bool) -> bool {
+    let _ = diagnosed;
+    accepted(passed, skipped, total)
+}
+
+/// The statement after an admission: admission only lets a check *start*. It
+/// cannot turn a missing run into a green, so acceptance is unchanged — mirrors
+/// `contracts::after_admission`.
+pub fn after_admission(passed: u32, skipped: u32, total: u32, admitted: bool) -> bool {
+    let _ = admitted;
+    accepted(passed, skipped, total)
+}
+
 /// The caller's admission decision: a coordinate may start when a policy
 /// pattern covers it, or when it is GitHub-owned and the posture says so.
 pub fn admits(covered: bool, github_owned: bool) -> bool {
@@ -126,6 +142,44 @@ mod tests {
                 expected,
                 "passed={passed}, skipped={skipped}, total={total}"
             );
+        }
+    }
+
+    /// The two post-event statements are free in their event: for **both**
+    /// values of `diagnosed` and of `admitted`, the answer equals plain
+    /// acceptance over the same counts. That is the contracts' postcondition —
+    /// neither a diagnosis nor an admission appears in it — checked on the
+    /// stable half, which `verify-mirror` runs.
+    #[test]
+    fn diagnosis_and_admission_are_free_in_their_event() {
+        let cases = [
+            (1u32, 0u32, 1u32),
+            (1, 1, 2),
+            (0, 2, 2),
+            (2, 0, 3),
+            (0, 0, 1),
+            (1, 0, 0),
+            (u32::MAX, 0, u32::MAX),
+            (u32::MAX, 1, u32::MAX),
+        ];
+        for (passed, skipped, total) in cases {
+            let base = accepted(passed, skipped, total);
+            for diagnosed in [false, true] {
+                assert_eq!(
+                    after_diagnosis(passed, skipped, total, diagnosed),
+                    base,
+                    "a diagnosis changed acceptance: {passed}/{skipped}/{total}, \
+                     diagnosed={diagnosed}"
+                );
+            }
+            for admitted in [false, true] {
+                assert_eq!(
+                    after_admission(passed, skipped, total, admitted),
+                    base,
+                    "an admission changed acceptance: {passed}/{skipped}/{total}, \
+                     admitted={admitted}"
+                );
+            }
         }
     }
 

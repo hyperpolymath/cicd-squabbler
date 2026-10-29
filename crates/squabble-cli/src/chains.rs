@@ -15,14 +15,13 @@
 //!
 //! Every upstream coordinate is also resolved through REST (`repos/{o}/{n}`,
 //! redirects followed) and its canonical `full_name` compared with the name as
-//! written. A difference is a [`Finding::MovedUpstream`] — a **warning**,
-//! because a redirect that still works is a risk rather than a proven failure;
-//! `squabble zero-job` makes the blocking claim only for runs that actually
-//! died. The class is worth naming early all the same: a reusable coordinate
-//! under a moved owner can fail as a zero-job `startup_failure` ("workflow was
-//! not found") that no PR check list shows. Names are compared, never pins: a
-//! moved owner is invisible to pin resolution. The same canonicalisation groups
-//! pin skew, so two spellings of one upstream cannot hide a split.
+//! written. A difference is a [`Finding::MovedUpstream`] — **blocking**: the
+//! REST redirect resolves the *name*, it does not repair the reference, and
+//! Actions does not follow redirects for `uses:`, so a moved coordinate fails as
+//! written (for a reusable workflow, a zero-job `startup_failure` that no PR
+//! check list shows). Names are compared, never pins: a moved owner is
+//! invisible to pin resolution. The same canonicalisation groups pin skew, so
+//! two spellings of one upstream cannot hide a split.
 //! `--no-canonical` skips the REST reads and says so; it is a deliberate blind
 //! spot, not a clean bill. A dead upstream found by REST is blocking, exactly
 //! as it is when `--follow` finds it.
@@ -612,9 +611,9 @@ mod tests {
             },
         )]);
         let r = collect(&args_for(&["me/moved-app"], 0), &canned(), &rest);
-        // A still-working redirect is a warning, not a proven failure; the
-        // blocking claim belongs to an observed zero-job run (`zero-job`).
-        assert!(!r.has_blocking(), "{}", narrate(&r));
+        // Blocking: the name resolved, but the reference as written is what
+        // Actions executes, and it does not redirect `uses:`.
+        assert!(r.has_blocking(), "{}", narrate(&r));
         let (written, canonical, consumers) = r
             .findings
             .iter()

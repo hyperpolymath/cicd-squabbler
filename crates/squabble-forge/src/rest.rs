@@ -17,11 +17,13 @@
 //! `Location` even for the error responses `gh` exits non-zero on, so a 404 is
 //! distinguishable from "no JSON came back".
 //!
-//! Fail-closed: HTTP `404` maps to [`CanonicalResolution::NotFound`], anything
-//! else that did not produce a name maps to
+//! Fail-closed: anything that did not produce a name maps to
 //! [`CanonicalResolution::Unverified`] with the reason. Nothing is inferred.
 //! A redirect to `/repositories/<id>` (GitHub's form for renames) carries no
-//! name at all, so it is `Unverified` — not a guess.
+//! name at all, so it is `Unverified` — not a guess. And a `404` is `Unverified`
+//! too, because GitHub returns `404` in place of `403` for a repository the
+//! token may not see: `NotFound` is minted only when the owner probe shows the
+//! account is gone as well.
 
 use serde_json::Value;
 use squabble_core::chains::RepoId;
@@ -195,13 +197,24 @@ fn slug_from_location(location: &str) -> Option<String> {
 
 /// Turn one repository response into a canonical resolution for `requested`.
 ///
-/// A 404 gives `NotFound`. Otherwise `full_name` takes precedence over a
-/// `Location` naming a repo, and names are compared case-insensitively.
-/// Without either name, returns `Unverified`; invalid JSON does not prevent
-/// using a name from `Location`.
+/// A 404 is **not** `NotFound`: GitHub answers 404 instead of 403 for a
+/// repository the token may not see, deliberately, so that the response cannot
+/// be used to confirm that a private repository exists. A single 404 therefore
+/// establishes nothing about the coordinate — see [`resolve_canonical`], which
+/// probes the owner before concluding that a repo is gone.
+///
+/// Otherwise `full_name` takes precedence over a `Location` naming a repo, and
+/// names are compared case-insensitively. Without either name, returns
+/// `Unverified`; invalid JSON does not prevent using a name from `Location`.
 pub fn canonical_resolution(requested: &RepoId, resp: &RestResponse) -> CanonicalResolution {
     if resp.status == 404 {
-        return CanonicalResolution::NotFound;
+        return CanonicalResolution::Unverified {
+            reason: format!(
+                "HTTP 404 for `{requested}`: GitHub returns 404 both for a repository that does \
+                 not exist and for one this token cannot see, so a single 404 does not establish \
+                 absence"
+            ),
+        };
     }
     if let Ok(v) = serde_json::from_str::<Value>(resp.body.trim()) {
         if let Some(full) = v.get("full_name").and_then(Value::as_str) {
@@ -247,8 +260,11 @@ fn split_slug(repo: &RepoId) -> Option<(&str, &str)> {
 /// resolutions keyed by the written name and the number of attempted calls.
 /// Invalid slugs become `Unverified` without a call.
 ///
-/// Transport errors become `Unverified` with their reason; only a parsed HTTP
-/// `404` response becomes `NotFound`. Processing continues after either result.
+/// Transport errors become `Unverified` with their reason. A parsed HTTP `404`
+/// costs one extra read of the owner: if the account is gone too the coordinate
+/// is dead for everyone (`NotFound`), and otherwise the repository is private to
+/// this token or deleted and stays `Unverified` — a blocking dead-upstream
+/// finding may not rest on a 404 alone. Processing continues after every result.
 pub fn resolve_canonical(
     transport: &dyn RestTransport,
     repos: &[RepoId],
@@ -270,6 +286,31 @@ pub fn resolve_canonical(
         };
         calls += 1;
         let resolution = match transport.get(&format!("repos/{owner}/{name}")) {
+            // A 404 may be an access refusal rather than an absence, so one
+            // extra read decides: if the *account* is gone too, the coordinate
+            // cannot resolve for anyone and `NotFound` is established. If the
+            // account is there, the repository is either private to this token
+            // or genuinely deleted, and the two are indistinguishable here —
+            // so it stays `Unverified` rather than becoming a blocking finding.
+            Ok(resp) if resp.status == 404 => {
+                calls += 1;
+                match transport.get(&format!("users/{owner}")) {
+                    Ok(owner_resp) if owner_resp.status == 404 => CanonicalResolution::NotFound,
+                    Ok(_) => CanonicalResolution::Unverified {
+                        reason: format!(
+                            "HTTP 404 for `{repo}` while the account `{owner}` exists: the \
+                             repository is private to this token or deleted, and the two are \
+                             indistinguishable from here, so its absence is not established"
+                        ),
+                    },
+                    Err(e) => CanonicalResolution::Unverified {
+                        reason: format!(
+                            "HTTP 404 for `{repo}`; the owner probe for `{owner}` failed, so \
+                             absence is not established: {e}"
+                        ),
+                    },
+                }
+            }
             Ok(resp) => canonical_resolution(repo, &resp),
             Err(e) => resolution_from_error(&e),
         };
@@ -350,18 +391,78 @@ mod tests {
     }
 
     #[test]
-    fn a_404_is_not_found_not_unverified() {
-        assert_eq!(
-            canonical_resolution(
-                &r("gone/repo"),
-                &RestResponse {
+    fn a_404_alone_does_not_establish_absence() {
+        // GitHub answers 404 instead of 403 for a repository the token may not
+        // see, so the pure mapping must not claim `NotFound`.
+        match canonical_resolution(
+            &r("gone/repo"),
+            &RestResponse {
+                status: 404,
+                location: None,
+                body: "{\"message\":\"Not Found\"}".into(),
+            },
+        ) {
+            CanonicalResolution::Unverified { reason } => {
+                assert!(reason.contains("does not establish absence"), "{reason}");
+            }
+            other => panic!("404 must stay unverified, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_404_with_a_live_owner_stays_unverified_rather_than_dead() {
+        // The account exists, so the repository is either private to this token
+        // or deleted; a blocking dead-upstream finding may not rest on that.
+        let rest = Fake(vec![
+            (
+                "repos/me/private",
+                Ok(RestResponse {
                     status: 404,
                     location: None,
-                    body: "{\"message\":\"Not Found\"}".into(),
-                }
+                    body: String::new(),
+                }),
             ),
-            CanonicalResolution::NotFound
-        );
+            (
+                "users/me",
+                Ok(RestResponse {
+                    status: 200,
+                    location: None,
+                    body: "{\"login\":\"me\"}".into(),
+                }),
+            ),
+        ]);
+        let (out, calls) = resolve_canonical(&rest, &[r("me/private")]);
+        assert_eq!(calls, 2);
+        match out.get(&r("me/private")) {
+            Some(CanonicalResolution::Unverified { reason }) => {
+                assert!(reason.contains("account `me` exists"), "{reason}");
+            }
+            other => panic!("a visible account must not make the repo `NotFound`: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_404_on_the_owner_too_establishes_a_dead_coordinate() {
+        let rest = Fake(vec![
+            (
+                "repos/ghost/repo",
+                Ok(RestResponse {
+                    status: 404,
+                    location: None,
+                    body: String::new(),
+                }),
+            ),
+            (
+                "users/ghost",
+                Ok(RestResponse {
+                    status: 404,
+                    location: None,
+                    body: String::new(),
+                }),
+            ),
+        ]);
+        let (out, _) = resolve_canonical(&rest, &[r("ghost/repo")]);
+        assert_eq!(out.get(&r("ghost/repo")), Some(&CanonicalResolution::NotFound));
     }
 
     #[test]
@@ -435,6 +536,15 @@ mod tests {
                     body: String::new(),
                 }),
             ),
+            // the owner probe: the account is gone too, so absence is established
+            (
+                "users/gone",
+                Ok(RestResponse {
+                    status: 404,
+                    location: None,
+                    body: String::new(),
+                }),
+            ),
             ("repos/rate/limited", Err("gh: API rate limit exceeded")),
             (
                 "repos/new/lib",
@@ -455,7 +565,8 @@ mod tests {
                 r("old/lib"), // duplicate: not re-called
             ],
         );
-        assert_eq!(calls, 4);
+        // four repositories, plus one owner probe for the 404
+        assert_eq!(calls, 5);
         assert_eq!(
             out.get(&r("old/lib")),
             Some(&CanonicalResolution::Moved {

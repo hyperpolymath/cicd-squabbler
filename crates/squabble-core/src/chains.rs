@@ -14,15 +14,18 @@
 //!
 //! * [`Finding::Cycle`] — repos whose CI depends on each other in a loop, so
 //!   no landing order exists. *Blocking.*
-//! * [`Finding::DeadUpstream`] — a target repo was probed and does not exist
-//!   (deleted or renamed away). A dead `uses:` produces no check run at all,
-//!   so the board reads green while the job never ran. *Blocking.*
+//! * [`Finding::DeadUpstream`] — a target repo is established as gone: the probe
+//!   returned 404 **and** the owning account does not exist either. A bare 404
+//!   is not enough (GitHub answers 404 for repositories the token may not see),
+//!   so an access-limited probe stays a note rather than a finding. A dead
+//!   `uses:` produces no check run at all, so the board reads green while the
+//!   job never ran. *Blocking.*
 //! * [`Finding::MovedUpstream`] — a referenced owner/repo resolves to a
-//!   *different* canonical name (renamed or transferred). A reusable coordinate
-//!   under a moved owner can die as a zero-job `startup_failure` ("workflow was
-//!   not found") and no PR check list shows it. *Warning*: a redirect that still
-//!   works is a risk, not an observed failure — the blocking claim belongs to
-//!   `squabble zero-job`, which reports runs that actually died.
+//!   *different* canonical name (renamed or transferred). *Blocking*: the
+//!   redirect that resolves the name is an API fact, not a repair — Actions does
+//!   not follow redirects for `uses:`, so the reference fails as written, and
+//!   for a reusable workflow it dies as a zero-job `startup_failure` that no PR
+//!   check list shows.
 //! * [`Finding::Diamond`] — one consumer's CI receives the same upstream at two
 //!   different pins, at least one of them through a reusable workflow. *Warning.*
 //! * [`Finding::PinSkew`] — one upstream is pinned at several refs across the
@@ -683,9 +686,11 @@ impl Finding {
                 canonical,
                 consumers,
             } => format!(
-                "moved upstream `{written}` → canonical `{canonical}`: {} reference(s) rely on a \
-                 redirect; a lapsed redirect is a zero-job `startup_failure` (\"workflow was not \
-                 found\") that no PR check list shows",
+                "moved upstream `{written}` → canonical `{canonical}`: {} reference(s) still name \
+                 the old coordinate. Actions does not redirect `uses:`, so the reference fails as \
+                 written — for a reusable workflow, a zero-job `startup_failure` (\"workflow was \
+                 not found\") that no PR check list shows. Repoint it; the pin is carried \
+                 unchanged.",
                 consumers.len()
             ),
             Finding::Diamond {
@@ -1327,9 +1332,9 @@ mod tests {
             SHA_A,
         )]);
         let rep = analyse(&g, None);
-        // Predicted, not observed: a working redirect is a risk, so this is a
-        // warning. The observed zero-job failure is blocking in `zero-job`.
-        assert!(!rep.has_blocking(), "{:?}", rep.findings);
+        // Blocking: Actions does not redirect `uses:`, so the reference fails as
+        // written whatever the API's redirect says about the name.
+        assert!(rep.has_blocking(), "{:?}", rep.findings);
         match rep
             .findings
             .iter()
@@ -1346,8 +1351,8 @@ mod tests {
                 assert_eq!(consumers.len(), 1);
                 assert_eq!(
                     rep.findings[0].severity(),
-                    Severity::Warning,
-                    "a predicted move never fails the run on its own"
+                    Severity::Blocking,
+                    "a moved coordinate fails as written — Actions does not redirect `uses:`"
                 );
             }
             other => panic!("{other:?}"),

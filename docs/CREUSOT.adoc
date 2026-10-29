@@ -21,8 +21,12 @@ what it means, and — plainly — what has *not* happened yet.
 
 | Stable-Rust mirror (`src/model.rs`)
 | written, not yet run
-| The same statements as ordinary functions, with `#[test]`s that compare them
-  to the real `squabble-core`. Needs only a stable toolchain.
+| The same statements as ordinary functions — one mirror function per contract
+  (`accepted`, `has_evidence`, `after_diagnosis`, `after_admission`, `admits`,
+  `requires_admission`) — with `#[test]`s that compare them to the real
+  `squabble-core`, that check the post-event statements over *both* values of
+  `diagnosed` and of `admitted`, and that pin the arithmetic at the `u32`
+  boundaries. Needs only a stable toolchain.
 
 | `cargo creusot prove`
 | **never run**
@@ -69,6 +73,16 @@ Admission::
 `requires_admission` is exactly the complement of `admits`: no third answer, and
 never a `true` invented for an unknown. `after_admission` states that admission
 changes nothing about acceptance — it only lets a check start.
+
+Counts are widened, not bounded::
+Creusot checks arithmetic overflow, so a postcondition containing
+`passed + skipped` is unprovable while the sum can wrap — `passed = u32::MAX,
+skipped = 1` satisfies `total > 0`. Both halves therefore add in `u64`
+(`passed as u64 + skipped as u64 == total as u64`), which is exact for every pair
+of `u32` inputs: no arbitrary bound is imposed on a statement about gates, and
+the model keeps the real evaluator's behaviour at the boundaries. The mirror
+carries a `#[test]` over those boundaries (`u32::MAX`, `u32::MAX - 1 + 1`, and
+several pairs that must *not* read as accepted).
 
 The pin::
 A repoint carries the pin verbatim. The string-level statement lives in the
@@ -263,8 +277,15 @@ support. **No obligation has been discharged.**
   `Cargo.toml` keeps it out of the stable `--locked` build and `cargo audit`,
   which read one lockfile for the whole workspace (the failure echidna measured
   and recorded in its `CREUSOT-SETUP.adoc`);
-* optional even inside the verification crate, behind the `creusot` feature, so
-  the crate still builds and tests on stable Rust without it;
+* a **default** feature of the verification crate, not an opt-in one: the
+  contract-bearing module is compiled whenever that crate is built, so a prove
+  run cannot discharge an empty module while the gate's source scan counts ten
+  contracts. The gate cannot be given `--features creusot` instead — it hands one
+  shared argument variable to its planted control crates too, and those do not
+  define the feature, which would turn both controls into compile errors (a
+  false control "refusing" for the wrong reason is exactly the hollow pass the
+  controls exist to prevent). The stable half therefore builds with
+  `--no-default-features`;
 * never linked into `squabble` or published (`publish = false`).
 
 The licence question is flagged for the owner rather than decided here: an

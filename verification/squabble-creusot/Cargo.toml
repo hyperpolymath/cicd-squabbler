@@ -22,10 +22,25 @@ publish = false
 [workspace]
 
 [features]
-default = []
-# Enables the contract-bearing module. Off by default so the crate also
-# compiles on stable Rust (where `model` carries the same statements as
-# ordinary functions plus `#[test]`s).
+# ON by default, deliberately. `cargo creusot prove` with an empty feature set
+# compiles `src/lib.rs`'s cfg-gated module *out*, so a prove run over this crate
+# would discharge nothing while the estate gate's source-level scan still counted
+# ten contracts — a verdict about a build that omits the thing being judged.
+#
+# The obvious alternative does not work: `prove_args: --features creusot` reaches
+# `cargo creusot prove` through the gate's *shared* argument variable, which the
+# gate also passes to its two planted control crates (see cicd-suite
+# `actions/creusot-check/check.sh`, `plant creusot-control-*`). Those crates do
+# not define the feature, so the flag turns both controls into compile errors —
+# which would make the FALSE control "refused" for the wrong reason (a hollow
+# pass) and the TRUE control fail. Defaulting the feature keeps the flag out of
+# `prove_args` entirely, so the controls are unaffected.
+#
+# Cost: the stable half of this crate (`src/model.rs` plus its `#[test]`s) is now
+# built with `--no-default-features`:
+#   cargo test --manifest-path verification/squabble-creusot/Cargo.toml \
+#              --no-default-features
+default = ["creusot"]
 creusot = ["dep:creusot-std"]
 
 [dependencies]

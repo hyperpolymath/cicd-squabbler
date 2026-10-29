@@ -392,6 +392,10 @@ pub struct ActionsPolicy {
     pub github_owned_allowed: bool,
     /// `patterns_allowed` (meaningful only under `selected`).
     pub patterns_allowed: Vec<String>,
+    /// `verified_allowed`: under `selected`, actions from verified Marketplace
+    /// creators are admitted without a pattern. Only meaningful under
+    /// `selected`; `false` elsewhere because no pattern list applies.
+    pub verified_allowed: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -406,6 +410,8 @@ struct SelectedActionsResponse {
     #[serde(default)]
     github_owned_allowed: bool,
     #[serde(default)]
+    verified_allowed: bool,
+    #[serde(default)]
     patterns_allowed: Vec<String>,
 }
 
@@ -416,24 +422,30 @@ fn parse_policy(perms_json: &str, selected_json: Option<&str>) -> Result<Actions
     let perms: PermissionsResponse = serde_json::from_str(perms_json)
         .map_err(|e| format!("could not parse actions/permissions response: {e}"))?;
     let allowed_actions = perms.allowed_actions.unwrap_or_default();
-    let (github_owned_allowed, patterns_allowed) = if allowed_actions == "selected" {
+    let (github_owned_allowed, verified_allowed, patterns_allowed) =
+        if allowed_actions == "selected" {
         let sel_json = selected_json.ok_or_else(|| {
             "allowed_actions=selected but no selected-actions payload".to_string()
         })?;
         let sel: SelectedActionsResponse = serde_json::from_str(sel_json)
             .map_err(|e| format!("could not parse selected-actions response: {e}"))?;
-        (sel.github_owned_allowed, sel.patterns_allowed)
+        (
+            sel.github_owned_allowed,
+            sel.verified_allowed,
+            sel.patterns_allowed,
+        )
     } else {
         // Under `all` GitHub-owned refs pass (so does everything else); under
         // `local_only` nothing external does. Either way there is no pattern
         // list to reconcile — mode 1 is scoped to `selected` (issue #15).
-        (allowed_actions == "all", Vec::new())
+        (allowed_actions == "all", false, Vec::new())
     };
     Ok(ActionsPolicy {
         allowed_actions,
         sha_pinning_required: perms.sha_pinning_required,
         github_owned_allowed,
         patterns_allowed,
+        verified_allowed,
     })
 }
 

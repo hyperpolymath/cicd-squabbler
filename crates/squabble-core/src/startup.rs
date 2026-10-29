@@ -67,6 +67,15 @@ pub struct AllowList {
     /// without an explicit pattern.
     #[serde(default)]
     pub github_owned_allowed: bool,
+    /// `verified_allowed`: under `selected`, an action published by a verified
+    /// GitHub Marketplace creator is admitted **even without a matching
+    /// pattern**. That makes an uncovered coordinate's admission *unknown*
+    /// rather than *refused* for ordinary actions, and this tool cannot resolve
+    /// creator status, so it must say "unknown" instead of prescribing a policy
+    /// change. Reusable workflows are unaffected: a `workflow_call` file is not
+    /// a Marketplace action and is admitted by name only.
+    #[serde(default)]
+    pub verified_allowed: bool,
 }
 
 impl AllowList {
@@ -96,6 +105,15 @@ impl AllowList {
     /// selected-actions allow-list — never a broader `owner/*` than needed.
     pub fn missing_pattern(&self, owner_repo: &str) -> Option<String> {
         (!self.covers(owner_repo)).then(|| format!("{owner_repo}@*"))
+    }
+
+    /// Is this coordinate's admission unknown because the posture also admits
+    /// verified Marketplace creators? Only true for an uncovered coordinate,
+    /// under `verified_allowed`, that is an *action* — a bare pattern list
+    /// cannot decide those, and prescribing a pattern would be a claim the
+    /// facts do not support.
+    pub fn admission_unknown(&self, owner_repo: &str, is_action: bool) -> bool {
+        is_action && self.verified_allowed && !self.covers(owner_repo)
     }
 
     /// Whether there are no explicit patterns. GitHub-owned coordinates may
@@ -376,6 +394,12 @@ pub fn attribute_zero_job(
     let canonical = resolution.canonical().map(str::to_string);
     let effective = canonical.clone().unwrap_or_else(|| written_repo.clone());
     let required_pattern = allow_list.and_then(|a| a.missing_pattern(&effective));
+    // An uncovered *action* under `verified_allowed` may still be admitted as a
+    // verified Marketplace creator. Creator status is not resolvable from here,
+    // so the admission is unknown: leave it unattributed rather than instructing
+    // the owner to change a policy that may already admit it.
+    let admission_unknown = allow_list
+        .is_some_and(|a| a.admission_unknown(&effective, kind == EdgeKind::Action));
 
     // A dead coordinate has no canonical target to repoint to. That is a dead
     // upstream (chains' blocking finding), not an admission fix — say so and
@@ -437,6 +461,28 @@ pub fn attribute_zero_job(
                 sequencing,
             };
         }
+    }
+
+    // (b0) Uncovered, but the posture admits verified Marketplace creators and
+    // this is an action: admission is unknown, not refused.
+    if admission_unknown {
+        return ZeroJobAttribution {
+            repo: repo.to_string(),
+            workflow: workflow.to_string(),
+            coordinate: written.to_string(),
+            canonical,
+            required_allow_list_pattern: None,
+            class: StartupFailureClass::Unattributed,
+            evidence: format!(
+                "`{written}` is not covered by any allow-list pattern, but the caller's \
+                 `selected` posture also sets `verified_allowed`, which admits actions from \
+                 verified Marketplace creators without one. Whether this coordinate is \
+                 verified is not resolvable from here, so its admission is unknown — the \
+                 cause is outside this taxonomy, and no policy change should be made on a \
+                 guess."
+            ),
+            sequencing: Vec::new(),
+        };
     }
 
     // (b) The coordinate is not admitted by the caller's selected allow-list.
@@ -837,10 +883,58 @@ mod tests {
         let no_gh = AllowList {
             patterns: vec![],
             github_owned_allowed: false,
+            verified_allowed: false,
         };
         assert!(!no_gh.covers("actions/checkout"));
         assert!(a.covers("actions/checkout"));
         assert_eq!(no_gh.missing_pattern("actions/checkout").as_deref(), Some("actions/checkout@*"));
+    }
+
+    #[test]
+    fn a_verified_creator_posture_leaves_an_uncovered_action_unattributed() {
+        // `verified_allowed` admits actions from verified Marketplace creators
+        // without a pattern, and creator status is not resolvable here — so the
+        // admission is unknown, not refused, and no policy change is prescribed.
+        let verified = AllowList {
+            patterns: vec!["actions/*".into()],
+            github_owned_allowed: true,
+            verified_allowed: true,
+        };
+        let action = attribute_zero_job(
+            CALLER,
+            WF,
+            "owner/thing@8f2ee50841e216cd8c192eeb68953118190f105c",
+            EdgeKind::Action,
+            &unverified_resolution(),
+            Some(&verified),
+        );
+        assert_eq!(action.class, StartupFailureClass::Unattributed);
+        assert_eq!(action.required_allow_list_pattern, None);
+        assert!(action.evidence.contains("verified_allowed"));
+        assert!(
+            action.sequencing.is_empty(),
+            "an unknown admission must not be turned into instructions"
+        );
+
+        // A reusable workflow is a `workflow_call` file, not a Marketplace
+        // action: `verified_allowed` cannot admit it, so a pattern is still the
+        // exact requirement.
+        let reusable = attribute_zero_job(
+            CALLER,
+            WF,
+            "owner/thing/.github/workflows/x.yml@8f2ee50841e216cd8c192eeb68953118190f105c",
+            EdgeKind::ReusableWorkflow,
+            &unverified_resolution(),
+            Some(&verified),
+        );
+        assert_eq!(
+            reusable.class,
+            StartupFailureClass::AllowListAdmissionRequired
+        );
+        assert_eq!(
+            reusable.required_allow_list_pattern.as_deref(),
+            Some("owner/thing@*")
+        );
     }
 
     #[test]
@@ -884,6 +978,12 @@ mod tests {
     fn moved_resolution() -> CanonicalResolution {
         CanonicalResolution::Moved {
             canonical: "new/stds".into(),
+        }
+    }
+
+    fn unverified_resolution() -> CanonicalResolution {
+        CanonicalResolution::Unverified {
+            reason: "canonical name was not resolved".into(),
         }
     }
 

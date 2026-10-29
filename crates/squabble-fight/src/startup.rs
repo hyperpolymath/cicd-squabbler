@@ -180,38 +180,51 @@ pub fn parse_startup_runs(body: &str) -> Result<Vec<ZeroJobRun>, String> {
         .get("workflow_runs")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| "actions/runs response has no `workflow_runs` array".to_string())?;
-    Ok(runs
-        .iter()
-        .filter_map(|r| {
-            if !r
-                .get("conclusion")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|c| c.eq_ignore_ascii_case("startup_failure"))
-            {
-                return None;
-            }
-            let id = r.get("id").and_then(serde_json::Value::as_u64)?;
-            let path = r
-                .get("path")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
-            // Drop a `@ref` suffix before taking the filename: `.github/
-            // workflows/ci.yml@refs/heads/main` must yield `ci.yml`, not
-            // `main`. The ref is not evidence of which file ran.
-            let path = path.split('@').next().unwrap_or(path);
-            let workflow_file = path.rsplit('/').next().unwrap_or(path).to_string();
-            let workflow_name = r
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string);
-            Some(ZeroJobRun {
-                id,
-                workflow_file,
-                workflow_name,
-                jobs: None,
-            })
-        })
-        .collect())
+    let mut out = Vec::new();
+    for r in runs {
+        if !r
+            .get("conclusion")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|c| c.eq_ignore_ascii_case("startup_failure"))
+        {
+            continue;
+        }
+        // A startup failure with no usable id cannot be reported, and dropping
+        // it would let the command exit 0 saying it observed none. Fail closed.
+        let id = r
+            .get("id")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| {
+                format!(
+                    "a `startup_failure` run has no unsigned integer `id`, so it cannot be \
+                     reported: refusing to skip it and claim no failure was observed{}",
+                    r.get("path")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|p| format!(" (path `{p}`)"))
+                        .unwrap_or_default()
+                )
+            })?;
+        let path = r
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        // Drop a `@ref` suffix before taking the filename: `.github/
+        // workflows/ci.yml@refs/heads/main` must yield `ci.yml`, not
+        // `main`. The ref is not evidence of which file ran.
+        let path = path.split('@').next().unwrap_or(path);
+        let workflow_file = path.rsplit('/').next().unwrap_or(path).to_string();
+        let workflow_name = r
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        out.push(ZeroJobRun {
+            id,
+            workflow_file,
+            workflow_name,
+            jobs: None,
+        });
+    }
+    Ok(out)
 }
 
 /// `total_count` from a `GET .../runs/{id}/jobs` response.
@@ -313,6 +326,7 @@ jobs:
         let allow = AllowList {
             patterns: vec!["actions/*".into()],
             github_owned_allowed: true,
+            verified_allowed: false,
         };
         let out = attribute_run(
             CALLER,
@@ -340,6 +354,7 @@ jobs:
         let allow = AllowList {
             patterns: vec!["actions/*".into()],
             github_owned_allowed: true,
+            verified_allowed: false,
         };
         let out = attribute_run(
             CALLER,
@@ -363,6 +378,7 @@ jobs:
         let allow = AllowList {
             patterns: vec!["actions/*".into()],
             github_owned_allowed: true,
+            verified_allowed: false,
         };
         let out = attribute_run(
             CALLER,

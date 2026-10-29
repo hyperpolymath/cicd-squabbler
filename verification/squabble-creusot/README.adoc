@@ -11,7 +11,9 @@ engine's load-bearing invariants to a prover instead of only testing them.
   them with the real `squabble-core`. Runs on **stable** Rust; no Creusot
   installation needed.
 * `src/contracts.rs` — the same statements as `#[requires]`/`#[ensures]`
-  contracts, compiled only under `--features creusot` by `cargo creusot prove`.
+  contracts, compiled by default (`default = ["creusot"]`) so that a prove run
+  cannot silently discharge an empty module; the stable half is built with
+  `--no-default-features`.
 
 [source,sh]
 ----
