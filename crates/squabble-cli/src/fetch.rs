@@ -424,22 +424,22 @@ fn parse_policy(perms_json: &str, selected_json: Option<&str>) -> Result<Actions
     let allowed_actions = perms.allowed_actions.unwrap_or_default();
     let (github_owned_allowed, verified_allowed, patterns_allowed) =
         if allowed_actions == "selected" {
-        let sel_json = selected_json.ok_or_else(|| {
-            "allowed_actions=selected but no selected-actions payload".to_string()
-        })?;
-        let sel: SelectedActionsResponse = serde_json::from_str(sel_json)
-            .map_err(|e| format!("could not parse selected-actions response: {e}"))?;
-        (
-            sel.github_owned_allowed,
-            sel.verified_allowed,
-            sel.patterns_allowed,
-        )
-    } else {
-        // Under `all` GitHub-owned refs pass (so does everything else); under
-        // `local_only` nothing external does. Either way there is no pattern
-        // list to reconcile — mode 1 is scoped to `selected` (issue #15).
-        (allowed_actions == "all", false, Vec::new())
-    };
+            let sel_json = selected_json.ok_or_else(|| {
+                "allowed_actions=selected but no selected-actions payload".to_string()
+            })?;
+            let sel: SelectedActionsResponse = serde_json::from_str(sel_json)
+                .map_err(|e| format!("could not parse selected-actions response: {e}"))?;
+            (
+                sel.github_owned_allowed,
+                sel.verified_allowed,
+                sel.patterns_allowed,
+            )
+        } else {
+            // Under `all` GitHub-owned refs pass (so does everything else); under
+            // `local_only` nothing external does. Either way there is no pattern
+            // list to reconcile — mode 1 is scoped to `selected` (issue #15).
+            (allowed_actions == "all", false, Vec::new())
+        };
     Ok(ActionsPolicy {
         allowed_actions,
         sha_pinning_required: perms.sha_pinning_required,

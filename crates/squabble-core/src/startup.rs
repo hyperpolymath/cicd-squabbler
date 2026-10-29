@@ -398,8 +398,8 @@ pub fn attribute_zero_job(
     // verified Marketplace creator. Creator status is not resolvable from here,
     // so the admission is unknown: leave it unattributed rather than instructing
     // the owner to change a policy that may already admit it.
-    let admission_unknown = allow_list
-        .is_some_and(|a| a.admission_unknown(&effective, kind == EdgeKind::Action));
+    let admission_unknown =
+        allow_list.is_some_and(|a| a.admission_unknown(&effective, kind == EdgeKind::Action));
 
     // A dead coordinate has no canonical target to repoint to. That is a dead
     // upstream (chains' blocking finding), not an admission fix — say so and
@@ -649,9 +649,8 @@ mod tests {
 
     #[test]
     fn a_moved_reusable_is_a_first_class_class_with_a_same_pin_repoint() {
-        let written = format!(
-            "hyperpolymath/standards-old/.github/workflows/governance-reusable.yml@{SHA}"
-        );
+        let written =
+            format!("hyperpolymath/standards-old/.github/workflows/governance-reusable.yml@{SHA}");
         let a = attribute_zero_job(
             CALLER,
             WF,
@@ -688,17 +687,17 @@ mod tests {
         let raw = format!("old/stds/.github/workflows/gov.yml@{SHA}");
         let c = Coordinate::parse(&raw).expect("parse");
         assert_eq!(c.owner_repo, "old/stds");
-        assert_eq!(
-            c.path.as_deref(),
-            Some(".github/workflows/gov.yml")
-        );
+        assert_eq!(c.path.as_deref(), Some(".github/workflows/gov.yml"));
         assert_eq!(
             c.rewritten("new/stds"),
             format!("new/stds/.github/workflows/gov.yml@{SHA}")
         );
         // A tag pin is carried just as literally — never resolved on the way.
         let tag = Coordinate::parse("old/stds/.github/workflows/gov.yml@v2").unwrap();
-        assert_eq!(tag.rewritten("new/stds"), "new/stds/.github/workflows/gov.yml@v2");
+        assert_eq!(
+            tag.rewritten("new/stds"),
+            "new/stds/.github/workflows/gov.yml@v2"
+        );
     }
 
     #[test]
@@ -750,10 +749,7 @@ mod tests {
             Some(&allow(&[])),
         );
         assert_eq!(a.class, StartupFailureClass::AllowListAdmissionRequired);
-        assert!(a
-            .sequencing
-            .first()
-            .is_some_and(|s| s.contains("EMPTY")));
+        assert!(a.sequencing.first().is_some_and(|s| s.contains("EMPTY")));
         assert!(a.required_allow_list_pattern.is_some());
     }
 
@@ -770,10 +766,7 @@ mod tests {
         );
         // Repoint first: the workflow cannot even be found under the old name.
         assert_eq!(a.class, StartupFailureClass::MovedCoordinate);
-        assert_eq!(
-            a.required_allow_list_pattern.as_deref(),
-            Some("new/stds@*")
-        );
+        assert_eq!(a.required_allow_list_pattern.as_deref(), Some("new/stds@*"));
         assert!(a.sequencing[0].contains("repoint"));
         assert!(a.sequencing[1].contains("new/stds@*"));
         assert!(matches!(
@@ -810,7 +803,10 @@ mod tests {
             Some(&allow(&["actions/*"])),
         );
         assert_eq!(a.class, StartupFailureClass::AllowListAdmissionRequired);
-        assert_eq!(a.required_allow_list_pattern.as_deref(), Some("new/action@*"));
+        assert_eq!(
+            a.required_allow_list_pattern.as_deref(),
+            Some("new/action@*")
+        );
     }
 
     #[test]
@@ -888,7 +884,10 @@ mod tests {
         };
         assert!(!no_gh.covers("actions/checkout"));
         assert!(a.covers("actions/checkout"));
-        assert_eq!(no_gh.missing_pattern("actions/checkout").as_deref(), Some("actions/checkout@*"));
+        assert_eq!(
+            no_gh.missing_pattern("actions/checkout").as_deref(),
+            Some("actions/checkout@*")
+        );
     }
 
     #[test]
