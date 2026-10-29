@@ -1,0 +1,294 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= The Creusot complement: Rust deductive verification
+:toc: left
+:toclevels: 3
+
+[.lead]
+The estate requires Rust that carries deductive-verification obligations, the
+Rust twin of the SPARK proofs in `spark/`. This page records what exists here,
+what it means, and — plainly — what has *not* happened yet.
+
+== Status: stated, not proved
+
+[cols="2,1,3"]
+|===
+| Item | State | Meaning
+
+| Contracts in `verification/squabble-creusot`
+| written
+| Six obligations state the engine's load-bearing invariants to Creusot.
+
+| Stable-Rust mirror (`src/model.rs`)
+| written, not yet run
+| The same statements as ordinary functions — one mirror function per contract
+  (`accepted`, `has_evidence`, `after_diagnosis`, `after_admission`, `admits`,
+  `requires_admission`) — with `#[test]`s that compare them to the real
+  `squabble-core`, that check the post-event statements over *both* values of
+  `diagnosed` and of `admitted`, and that pin the arithmetic at the `u32`
+  boundaries. Needs only a stable toolchain.
+
+| `cargo creusot prove`
+| **never run**
+| No obligation has reached Why3. No run has discharged anything.
+
+| Estate gate (`Creusot Gate` workflow)
+| wired
+| Calls `hyperpolymath/cicd-suite`'s `creusot-gate.yml`, phase-verified locally
+  (see <<_what_was_actually_checked>>). It cannot pass until a runner installs
+  the toolchain and the obligations discharge.
+
+| Rust CI on this repository
+| **not running at all**
+| `Rust CI` concludes `startup_failure` with **zero jobs** on `main` and on
+  branches, so nothing here has been compiled in CI either. That is the class
+  `squabble zero-job` exists to name (see `README.adoc`); until it is fixed, no
+  Rust in this repository is built by CI.
+|===
+
+The honest phrase is **stated, not proved**. Do not upgrade it until a `prove`
+run discharges every obligation on a real toolchain; the estate gate fails a
+claim of proof that has no contracts behind it, and that gate is right to.
+
+== What the obligations say
+
+`verification/squabble-creusot` restates four invariants that the engine's
+correctness rests on:
+
+Acceptance::
+`Green` ⇔ the required set is non-empty ∧ every requirement is satisfied
+(passed or skipped). The non-emptiness clause is load-bearing: a branch with no
+required checks is unprotected, not won, so `Gate::evaluate` reports `Blocked`.
+
+Evidence::
+A gate satisfied only by skips is `Green` by the ruleset and evidence-free in
+fact. `has_evidence` states the stronger claim a *real* green makes.
+
+No diagnosis is a green::
+Whatever `MissingCause` is attached to a requirement, acceptance depends only on
+the realised runs. `after_diagnosis` takes the diagnosis as a free variable and
+the postcondition does not mention it.
+
+Admission::
+`requires_admission` is exactly the complement of `admits`: no third answer, and
+never a `true` invented for an unknown. `after_admission` states that admission
+changes nothing about acceptance — it only lets a check start.
+
+Counts are widened, not bounded::
+Creusot checks arithmetic overflow, so a postcondition containing
+`passed + skipped` is unprovable while the sum can wrap — `passed = u32::MAX,
+skipped = 1` satisfies `total > 0`. Both halves therefore add in `u64`
+(`passed as u64 + skipped as u64 == total as u64`), which is exact for every pair
+of `u32` inputs: no arbitrary bound is imposed on a statement about gates, and
+the model keeps the real evaluator's behaviour at the boundaries. The mirror
+carries a `#[test]` over those boundaries (`u32::MAX`, `u32::MAX - 1 + 1`, and
+several pairs that must *not* read as accepted).
+
+The pin::
+A repoint carries the pin verbatim. The string-level statement lives in the
+stable mirror (`#test a_repoint_carries_the_pin_verbatim`), where it is checked
+against `squabble_core::startup::Coordinate`; the contracts stay on scalars
+because that is what discharges quickly and reads clearly in Why3.
+
+== The three pins that must move together
+
+[cols="2,2"]
+|===
+| Pin | Where
+
+| `nightly-2026-08-03`
+| `verification/squabble-creusot/rust-toolchain.toml` and `rust_nightly:` in
+  `.github/workflows/creusot.yml`
+
+| Creusot `v0.14.0`
+| `creusot_version:` in `.github/workflows/creusot.yml` (installed by the gate's
+  `./INSTALL`)
+
+| `creusot-std = "0.14"`
+| `verification/squabble-creusot/Cargo.toml`
+|===
+
+The nightly is not a preference: Creusot is built against exactly one nightly
+per release (upstream's `rust-toolchain` at the tag), and a mismatch fails at
+translation time rather than at build time. Move all three, or none.
+
+== Installing the toolchain
+
+[source,sh]
+----
+just verify-status            # what is present; installs nothing
+just verify-install           # stable + Creusot's nightly + Creusot itself
+scripts/install-toolchain.sh --no-creusot   # toolchains only (no opam needed)
+----
+
+Creusot is **not** installed with `cargo install creusot`. Upstream ships an
+`INSTALL` script that provisions Why3 and `why3find` through opam; `cargo
+install` produces a `cargo creusot` that cannot reach a prover — a gate that
+cannot say *no* must report VOID, never green, and the estate gate enforces
+exactly that by proving a planted false contract before it proves yours.
+
+If `opam` is absent the installer stops with exit `2` and says so. That is not a
+failure of the repository; nothing about the status of the obligations changes
+until the prover exists.
+
+The installer bootstraps nothing by piping a network response into a shell.
+rustup comes from the official `rustup-init` binary, and the installer fetches
+the published SHA-256 from the same origin over TLS and verifies it before
+executing anything (a mismatch, a malformed digest, or a missing digest is a
+refusal, not a warning). Creusot is cloned at the **commit** its release tag
+pointed to, and that commit is verified after checkout before `./INSTALL` runs;
+a version this script has no commit for is refused rather than cloned from a
+moving tag. Both behaviours are exercised: six cases over the digest helper
+(accepted, binary-marker line, tampered, malformed, missing, content mismatch).
+
+=== Four layers, and what each one needs
+
+The toolchain is not one download. It is four, and a build environment that can
+reach only some of them gets useless half-answers, so the installer reports
+which layer is missing rather than "Rust unavailable":
+
+[cols="1,2,2",options="header"]
+|===
+| Layer | Needed for | Supplied by
+
+| manager (`rustup`)
+| getting everything else
+| `sh.rustup.rs`, or (where that is blocked) the `rustup` wheel on PyPI
+
+| toolchain
+| compiling and testing the workspace at all
+| `static.rust-lang.org` — `stable` plus Creusot's pinned nightly with
+  `rustc-dev` and `llvm-tools`
+
+| `cargo creusot`
+| translating Rust into Why3 goals
+| creusot's own `./INSTALL` at the pinned tag
+
+| Why3 + an SMT solver
+| discharging those goals
+| `opam` (Why3, `why3find`) plus a solver such as Z3 or Alt-Ergo
+|===
+
+Layers 3 and 4 are not optional for a verdict: `cargo creusot` without Why3 and
+a solver translates and then has nowhere to send the goals. A translation-only
+pipeline reports the same outcome for a true statement and a false one, which is
+exactly why the estate gate refuses to treat it as a verdict.
+
+=== Measured: an environment that can reach only some layers (2026-10-28)
+
+Run in a sandbox whose egress allow-list is `github.com`, `api.github.com`,
+`codeload.github.com`, `registry.npmjs.org`, `pypi.org` and
+`files.pythonhosted.org`:
+
+[source,text]
+----
+$ ./scripts/install-toolchain.sh
+installing rustup (verified rustup-init binary; no pipe-to-shell)
+curl: (35) OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to static.rust-lang.org:443
+could not download https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init
+  — is https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu reachable?
+# exit 1
+----
+
+The manager *is* obtainable from an allow-listed channel — `pip install rustup`
+(from the PyPI wheel `rustup-1.29.0.1`) yields a working `rustup 1.29.0` — so
+the failure was re-measured one layer down, with the manager present:
+
+[source,text]
+----
+$ rustup toolchain install nightly-2026-08-03 --profile minimal \
+    --component rustc-dev,llvm-tools,rustfmt
+info: syncing channel updates for nightly-2026-08-03-x86_64-unknown-linux-gnu
+error: could not download file from
+  'https://static.rust-lang.org/dist/2026-08-03/channel-rust-nightly.toml.sha256':
+  client error (Connect): tls handshake eof
+# and, for the stable channel, the same:
+error: could not download file from
+  'https://static.rust-lang.org/dist/channel-rust-stable.toml.sha256':
+  client error (Connect): tls handshake eof
+----
+
+Alternatives were checked, not assumed:
+
+[source,text]
+----
+$ curl -sS -o /dev/null -w '%{http_code}' --max-time 12 <url>
+https://raw.githubusercontent.com                   000
+https://rsproxy.cn                                 000
+https://mirrors.ustc.edu.cn/rust-static             000
+https://github.com/rust-lang/rust-dist              404
+$ gh api repos/rust-lang/rust/releases/latest --jq '.tag_name, (.assets|length)'
+1.99.1
+0                     # rust-lang/rust publishes no binary assets, so GitHub
+                      # is not a substitute distribution server
+----
+
+Also absent, and not installable here: `opam` (Why3 provider), `why3`, `z3`,
+and any container runtime (`docker`, `podman`, `nix`) that could carry a
+prebuilt image. `apt-get update` cannot write `/var/lib/apt/lists` and the
+Debian mirrors are not on the allow-list. `why3` does not exist on PyPI or npm
+(HTTP 404), so layer 4 cannot be improvised from the reachable channels either.
+
+**What this means for a verdict: nothing, which is the point.** With no
+toolchain, `just verify-status` reports every layer MISSING and exits `2`; the
+estate gate's prove phase exits `2` with NO PROOF WAS PERFORMED; and the status
+of the obligations is unchanged — STATED, NOT PROVED. What must *not* happen,
+and did not, is an installer that reports success because it skipped a layer.
+Run `just verify-install` on a host with dist access to move any of this
+forward.
+
+== Running the obligations
+
+[source,sh]
+----
+# Stable mirror of every statement (needs only stable Rust)
+just verify-mirror
+
+# Discharge the obligations — the only step that turns "stated" into "proved"
+just verify-creusot
+
+# The estate gate, verbatim, at the pinned cicd-suite commit
+just verify-gate $(grep -oE 'cicd-suite/\.github/workflows/creusot-gate\.yml@[0-9a-f]{40}' \
+    .github/workflows/creusot.yml | head -1 | sed 's/.*@//')
+----
+
+== What was actually checked
+
+Run against this tree with the estate script
+(`cicd-suite/actions/creusot-check/check.sh`), tracked files only:
+
+[source,text]
+----
+$ CREUSOT_GATE_PHASE=detect  ... -> obligations=true  claims=false  contract_count=10
+$ CREUSOT_GATE_PHASE=theatre ... -> no theatre found (T1, T2, T3 clean)
+$ CREUSOT_GATE_PHASE=prove   ... -> exit 2: 'cargo creusot' is not available
+                                    — NO PROOF WAS PERFORMED.
+----
+
+So: the wiring is exercised end to end, the anti-theatre checks pass honestly,
+and the prove phase fails closed rather than reporting a verdict it cannot
+support. **No obligation has been discharged.**
+
+== Why a separate crate, and the licence position
+
+`creusot-std` is nightly-only and carries `LGPL-2.1-or-later`. It is therefore
+
+* **not** a dependency of the root workspace — `exclude = ["verification"]` in
+  `Cargo.toml` keeps it out of the stable `--locked` build and `cargo audit`,
+  which read one lockfile for the whole workspace (the failure echidna measured
+  and recorded in its `CREUSOT-SETUP.adoc`);
+* a **default** feature of the verification crate, not an opt-in one: the
+  contract-bearing module is compiled whenever that crate is built, so a prove
+  run cannot discharge an empty module while the gate's source scan counts ten
+  contracts. The gate cannot be given `--features creusot` instead — it hands one
+  shared argument variable to its planted control crates too, and those do not
+  define the feature, which would turn both controls into compile errors (a
+  false control "refusing" for the wrong reason is exactly the hollow pass the
+  controls exist to prevent). The stable half therefore builds with
+  `--no-default-features`;
+* never linked into `squabble` or published (`publish = false`).
+
+The licence question is flagged for the owner rather than decided here: an
+LGPL-2.1-or-later *verification-only*, non-distributed dependency is not
+obviously a problem, but `standards`' licence policy decides that, not this
+document.

@@ -14,9 +14,18 @@
 //!
 //! * [`Finding::Cycle`] — repos whose CI depends on each other in a loop, so
 //!   no landing order exists. *Blocking.*
-//! * [`Finding::DeadUpstream`] — a target repo was probed and does not exist
-//!   (deleted or renamed away). A dead `uses:` produces no check run at all,
-//!   so the board reads green while the job never ran. *Blocking.*
+//! * [`Finding::DeadUpstream`] — a target repo is established as gone: the probe
+//!   returned 404 **and** the owning account does not exist either. A bare 404
+//!   is not enough (GitHub answers 404 for repositories the token may not see),
+//!   so an access-limited probe stays a note rather than a finding. A dead
+//!   `uses:` produces no check run at all, so the board reads green while the
+//!   job never ran. *Blocking.*
+//! * [`Finding::MovedUpstream`] — a referenced owner/repo resolves to a
+//!   *different* canonical name (renamed or transferred). *Blocking*: the
+//!   redirect that resolves the name is an API fact, not a repair — Actions does
+//!   not follow redirects for `uses:`, so the reference fails as written, and
+//!   for a reusable workflow it dies as a zero-job `startup_failure` that no PR
+//!   check list shows.
 //! * [`Finding::Diamond`] — one consumer's CI receives the same upstream at two
 //!   different pins, at least one of them through a reusable workflow. *Warning.*
 //! * [`Finding::PinSkew`] — one upstream is pinned at several refs across the
@@ -41,6 +50,9 @@
 //! the max-plus semiring. Today every hop weighs 1, so it measures chain
 //! depth. Once `retro` records CI durations, the same function with measured
 //! weights gives time-to-green along the slowest chain.
+//!
+//! Pin skew is grouped by **canonical** name, so the old and new spellings of
+//! one upstream cannot masquerade as unrelated dependencies and hide a split.
 //!
 //! # Why the SPARK theorem is untouched
 //!
@@ -236,6 +248,23 @@ pub struct RepoSnapshot {
     /// Caveats the source hit while reading (truncated or binary blobs, …).
     #[serde(default)]
     pub notes: Vec<String>,
+    /// The canonical `owner/repo` the source resolved `repo` to, when it could
+    /// tell. `Some` and different from `repo` means the name relied on a
+    /// redirect: GitHub served the requested name, but the resource lives
+    /// elsewhere now. Comparing *names* (not pins) is the only way to see this.
+    #[serde(default)]
+    pub canonical: Option<String>,
+}
+
+impl RepoSnapshot {
+    /// The canonical identity, defaulting to the requested one when the source
+    /// could not tell.
+    pub fn canonical_id(&self) -> RepoId {
+        self.canonical
+            .as_deref()
+            .map(|c| RepoId::new(c))
+            .unwrap_or_else(|| self.repo.clone())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -250,6 +279,11 @@ pub struct ChainGraph {
     /// Source caveats carried through to the report verbatim.
     #[serde(default)]
     pub notes: Vec<String>,
+    /// Written name → canonical name, recorded only when a resolver observed a
+    /// redirect (REST `full_name` comparison). Absence means "not resolved",
+    /// never "canonical".
+    #[serde(default)]
+    pub canonical: BTreeMap<RepoId, RepoId>,
 }
 
 impl ChainGraph {
@@ -266,6 +300,28 @@ impl ChainGraph {
                 self.scans.insert(repo, status);
             }
         }
+    }
+
+    /// Record that `written` resolved to `canonical`. A self-resolution is not
+    /// recorded at all, so [`Self::canonical_of`]'s default is the honest
+    /// "nothing observed".
+    pub fn record_canonical(&mut self, written: RepoId, canonical: RepoId) {
+        if written != canonical {
+            self.canonical.insert(written, canonical);
+        }
+    }
+
+    /// The canonical name for `repo`, or `repo` itself when no resolver spoke.
+    pub fn canonical_of(&self, repo: &RepoId) -> RepoId {
+        self.canonical
+            .get(repo)
+            .cloned()
+            .unwrap_or_else(|| repo.clone())
+    }
+
+    /// The canonical name when the resolver observed a move.
+    pub fn moved_to(&self, repo: &RepoId) -> Option<&RepoId> {
+        self.canonical.get(repo)
     }
 
     pub fn add_edges(&mut self, edges: impl IntoIterator<Item = Edge>) {
@@ -568,6 +624,25 @@ pub enum Finding {
         target: RepoId,
         consumers: Vec<Edge>,
     },
+    /// A referenced owner/repo resolves to a *different* canonical name. The
+    /// reference works only through a redirect, and a reusable coordinate
+    /// under a moved owner can fail at startup with zero jobs — invisible in
+    /// PR check lists.
+    ///
+    /// **Warning, deliberately.** A redirect that still works is a risk, not
+    /// an observed failure, and `chains` refuses to overclaim: the blocking
+    /// class is an *observed* zero-job run (`squabble zero-job`, exit 4), where
+    /// the failure is a fact rather than a prediction. Today's redirect is
+    /// tomorrow's lapsed redirect (or a re-registered old name), which is why
+    /// the move is named now rather than after CI goes quiet.
+    MovedUpstream {
+        /// The coordinate as written in the consumer.
+        written: RepoId,
+        /// The canonical `owner/repo` the resolver observed.
+        canonical: RepoId,
+        /// Every referencing edge from a scanned consumer.
+        consumers: Vec<Edge>,
+    },
     Diamond {
         consumer: RepoId,
         target: RepoId,
@@ -584,12 +659,14 @@ pub enum Finding {
 }
 
 impl Finding {
+    /// Cycles and dead upstreams block; all other findings are warnings.
     pub fn severity(&self) -> Severity {
         match self {
             Finding::Cycle { .. } | Finding::DeadUpstream { .. } => Severity::Blocking,
-            Finding::Diamond { .. } | Finding::PinSkew { .. } | Finding::MutablePins { .. } => {
-                Severity::Warning
-            }
+            Finding::MovedUpstream { .. }
+            | Finding::Diamond { .. }
+            | Finding::PinSkew { .. }
+            | Finding::MutablePins { .. } => Severity::Warning,
         }
     }
 
@@ -602,6 +679,18 @@ impl Finding {
             ),
             Finding::DeadUpstream { target, consumers } => format!(
                 "dead upstream `{target}`: {} reference(s) cannot resolve, so their jobs never run",
+                consumers.len()
+            ),
+            Finding::MovedUpstream {
+                written,
+                canonical,
+                consumers,
+            } => format!(
+                "moved upstream `{written}` → canonical `{canonical}`: {} reference(s) still name \
+                 the old coordinate. Actions does not redirect `uses:`, so the reference fails as \
+                 written — for a reusable workflow, a zero-job `startup_failure` (\"workflow was \
+                 not found\") that no PR check list shows. Repoint it; the pin is carried \
+                 unchanged.",
                 consumers.len()
             ),
             Finding::Diamond {
@@ -657,6 +746,12 @@ pub struct SourceCost {
     pub points_remaining: Option<u64>,
     #[serde(default)]
     pub resets_at: Option<String>,
+    /// REST calls made to resolve canonical names (one per upstream
+    /// coordinate). Separate from `queries` because REST spends no GraphQL
+    /// points — and because an unread canonical name must be visible, not
+    /// folded into a budget.
+    #[serde(default)]
+    pub rest_calls: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -676,6 +771,12 @@ pub struct ChainsReport {
     /// Source caveats, verbatim (no-overclaim: partial reads are said aloud).
     #[serde(default)]
     pub notes: Vec<String>,
+    /// Written name → canonical name, for every upstream coordinate a REST
+    /// read resolved to a different `full_name`. Empty means either "no move
+    /// observed" or "no resolver ran" — the `--no-canonical` flag and unresolved
+    /// notes are what tell the two apart.
+    #[serde(default)]
+    pub canonical: BTreeMap<RepoId, RepoId>,
     #[serde(default)]
     pub cost: Option<SourceCost>,
 }
@@ -692,6 +793,8 @@ impl ChainsReport {
 ///
 /// Mutable-pin and skew findings are reported only for edges whose consumer
 /// was actually scanned, so a frontier repo is never blamed on hearsay.
+/// Moved-upstream warnings also require a scanned consumer. Diamond and skew
+/// findings group targets by their recorded canonical names.
 pub fn analyse(graph: &ChainGraph, cost: Option<SourceCost>) -> ChainsReport {
     let mut findings = Vec::new();
 
@@ -711,7 +814,33 @@ pub fn analyse(graph: &ChainGraph, cost: Option<SourceCost>) -> ChainsReport {
         findings.push(Finding::DeadUpstream { target, consumers });
     }
 
+    // Moved upstreams: the name as written resolves to a different canonical
+    // repo. Reported before any run proves it, because a reusable coordinate
+    // under a moved owner dies as a zero-job `startup_failure` that no PR check
+    // list shows. Only edges from scanned consumers count: a frontier repo is
+    // never blamed on hearsay (same rule as the warnings below).
+    let mut moved: BTreeMap<RepoId, (RepoId, Vec<Edge>)> = BTreeMap::new();
+    for e in graph.edges.iter().filter(|e| graph.is_scanned(&e.from)) {
+        if let Some(canonical) = graph.moved_to(&e.to) {
+            moved
+                .entry(e.to.clone())
+                .or_insert_with(|| (canonical.clone(), Vec::new()))
+                .1
+                .push(e.clone());
+        }
+    }
+    for (written, (canonical, mut consumers)) in moved {
+        consumers.sort();
+        findings.push(Finding::MovedUpstream {
+            written,
+            canonical,
+            consumers,
+        });
+    }
+
     // Diamonds: >1 distinct pin into one consumer, at least one transitive.
+    // Targets are grouped by canonical name so the two spellings of a moved
+    // upstream cannot masquerade as unrelated dependencies.
     let consumers: BTreeSet<RepoId> = graph
         .edges
         .iter()
@@ -721,7 +850,10 @@ pub fn analyse(graph: &ChainGraph, cost: Option<SourceCost>) -> ChainsReport {
     for c in &consumers {
         let mut by_target: BTreeMap<RepoId, Vec<Route>> = BTreeMap::new();
         for r in graph.routes_into(c) {
-            by_target.entry(r.target.clone()).or_default().push(r);
+            by_target
+                .entry(graph.canonical_of(&r.target))
+                .or_default()
+                .push(r);
         }
         for (target, mut routes) in by_target {
             if &target == c {
@@ -744,8 +876,11 @@ pub fn analyse(graph: &ChainGraph, cost: Option<SourceCost>) -> ChainsReport {
     // Pin skew across scanned consumers.
     let mut by_target: BTreeMap<RepoId, BTreeMap<Pin, Vec<Edge>>> = BTreeMap::new();
     for e in graph.edges.iter().filter(|e| graph.is_scanned(&e.from)) {
+        // Canonical grouping: skew across the old and new spellings of one
+        // upstream is still one upstream at two pins — exactly the condition
+        // that must be visible before a run proves it.
         by_target
-            .entry(e.to.clone())
+            .entry(graph.canonical_of(&e.to))
             .or_default()
             .entry(e.pin.clone())
             .or_default()
@@ -829,6 +964,7 @@ pub fn analyse(graph: &ChainGraph, cost: Option<SourceCost>) -> ChainsReport {
         landing_order,
         critical_chain,
         notes: graph.notes.clone(),
+        canonical: graph.canonical.clone(),
         cost,
     }
 }
@@ -1183,6 +1319,116 @@ mod tests {
     }
 
     #[test]
+    fn a_moved_upstream_is_flagged_as_a_warning_naming_canonical_and_written() {
+        let mut g = ChainGraph::new();
+        g.record_scan(r("me/app"), scanned(None));
+        g.record_canonical(r("old/stds"), r("hyperpolymath/standards"));
+        g.add_edges([edge(
+            "me/app",
+            "gov.yml",
+            "old/stds",
+            EdgeKind::ReusableWorkflow,
+            Some(".github/workflows/gov.yml"),
+            SHA_A,
+        )]);
+        let rep = analyse(&g, None);
+        // Blocking: Actions does not redirect `uses:`, so the reference fails as
+        // written whatever the API's redirect says about the name.
+        assert!(rep.has_blocking(), "{:?}", rep.findings);
+        match rep
+            .findings
+            .iter()
+            .find(|f| matches!(f, Finding::MovedUpstream { .. }))
+            .expect("moved finding")
+        {
+            Finding::MovedUpstream {
+                written,
+                canonical,
+                consumers,
+            } => {
+                assert_eq!(written, &r("old/stds"));
+                assert_eq!(canonical, &r("hyperpolymath/standards"));
+                assert_eq!(consumers.len(), 1);
+                assert_eq!(
+                    rep.findings[0].severity(),
+                    Severity::Blocking,
+                    "a moved coordinate fails as written — Actions does not redirect `uses:`"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            rep.canonical.get(&r("old/stds")),
+            Some(&r("hyperpolymath/standards"))
+        );
+        assert!(rep
+            .findings
+            .iter()
+            .find(|f| matches!(f, Finding::MovedUpstream { .. }))
+            .unwrap()
+            .describe()
+            .contains("zero-job"));
+    }
+
+    #[test]
+    fn a_canonical_resolution_is_not_a_move() {
+        let mut g = ChainGraph::new();
+        g.record_scan(r("me/app"), scanned(None));
+        g.record_canonical(r("actions/checkout"), r("Actions/Checkout"));
+        assert!(g.canonical.is_empty());
+        g.add_edges([action("me/app", "actions/checkout", SHA_A)]);
+        let rep = analyse(&g, None);
+        assert!(!rep.has_blocking());
+        assert!(rep.canonical.is_empty());
+    }
+
+    #[test]
+    fn a_frontier_consumer_is_never_blamed_for_a_move() {
+        let mut g = ChainGraph::new();
+        g.record_canonical(r("old/stds"), r("new/stds"));
+        g.add_edges([action("them/x", "old/stds", SHA_A)]);
+        let rep = analyse(&g, None);
+        assert!(rep
+            .findings
+            .iter()
+            .all(|f| !matches!(f, Finding::MovedUpstream { .. })));
+    }
+
+    #[test]
+    fn pin_skew_groups_by_canonical_name_across_a_move() {
+        // One upstream, two spellings, two pins: still one skew finding — the
+        // whole point of resolving names rather than just pins.
+        let mut g = ChainGraph::new();
+        g.record_scan(r("me/a"), scanned(None));
+        g.record_scan(r("me/b"), scanned(None));
+        g.record_canonical(r("old/lib"), r("new/lib"));
+        g.add_edges([
+            action("me/a", "old/lib", SHA_A),
+            action("me/b", "new/lib", SHA_B),
+        ]);
+        let rep = analyse(&g, None);
+        let (target, pins) = rep
+            .findings
+            .iter()
+            .find_map(|f| match f {
+                Finding::PinSkew { target, pins } => Some((target, pins)),
+                _ => None,
+            })
+            .expect("skew");
+        assert_eq!(target, &r("new/lib"));
+        assert_eq!(pins.len(), 2);
+        // The written spelling is still visible on each edge — nothing lost.
+        assert!(pins
+            .iter()
+            .flat_map(|p| p.consumers.iter())
+            .any(|e| e.to == r("old/lib")));
+        assert!(pins
+            .iter()
+            .flat_map(|p| p.consumers.iter())
+            .any(|e| e.to == r("new/lib")));
+    }
+
+    #[test]
     fn report_round_trips_through_json() {
         let rep = analyse(
             &diamond_graph(Some(SHA_A)),
@@ -1191,6 +1437,7 @@ mod tests {
                 points_used: 1,
                 points_remaining: Some(4999),
                 resets_at: None,
+                rest_calls: 3,
             }),
         );
         let json = serde_json::to_string(&rep).unwrap();

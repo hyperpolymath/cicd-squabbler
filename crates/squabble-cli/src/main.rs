@@ -16,8 +16,10 @@
 //!
 //! - `0` — success.
 //! - `2` — a genuine failure: bad usage, `gh` failed, unparseable input.
-//! - `4` — **blocking chain finding** (`squabble chains`): a dependency cycle
-//!   or a dead upstream. Like `3`, a reportable finding, not a tool failure.
+//! - `4` — **blocking finding** (`squabble chains` or `squabble zero-job`): a
+//!   dependency cycle, a dead upstream, or any observed zero-job run (a moved
+//!   upstream in `chains` is a warning). Like `3`, a reportable finding, not a
+//!   tool failure.
 //! - `5` — **not done** (`squabble verify-satisfied`): agent items remain on
 //!   the PR (unresolved threads, a failing required check, automerge unarmed…).
 //! - `6` — **incomplete board** (`squabble board`): rendered and published, but
@@ -42,10 +44,13 @@ mod fetch;
 mod fight;
 mod inbox;
 mod verify;
+mod zero_job;
 
 use squabble_core::{diagnose, gate::Gate};
 use std::process::ExitCode;
 
+/// Dispatch the requested command and return its exit code. Print the version
+/// for `--version`/`-V`, or usage with exit `2` for an unrecognised command.
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
@@ -65,6 +70,7 @@ fn main() -> ExitCode {
         },
         Some("fight") => fight::run(&args[2..]),
         Some("chains") => chains::run(&args[2..]),
+        Some("zero-job") => zero_job::run(&args[2..]),
         Some("verify-satisfied") => verify::run(&args[2..]),
         Some("board") => board::run(&args[2..]),
         Some("inbox-sweep") => inbox::run(&args[2..]),
@@ -85,12 +91,14 @@ fn main() -> ExitCode {
                  squabble {}\n  \
                  squabble {}\n  \
                  squabble {}\n  \
+                 squabble {}\n  \
                  squabble --version\n\n\
                  EXIT CODES:\n  \
-                 0 ok · 2 failure · 3 no `required_status_checks` rule on the base branch · 4 chains: blocking finding · 5 verify-satisfied: agent items remain · 6 board or inbox-sweep: incomplete\n",
+                 0 ok · 2 failure · 3 no `required_status_checks` rule on the base branch · 4 chains/zero-job: blocking finding · 5 verify-satisfied: agent items remain · 6 board or inbox-sweep: incomplete\n",
                 env!("CARGO_PKG_VERSION"),
                 fight::USAGE.trim_start_matches("usage: squabble "),
                 chains::USAGE.trim_start_matches("usage: squabble "),
+                zero_job::USAGE.trim_start_matches("usage: squabble "),
                 board::USAGE.trim_start_matches("usage: squabble "),
                 inbox::USAGE.trim_start_matches("usage: squabble "),
                 verify::USAGE.trim_start_matches("usage: squabble ")

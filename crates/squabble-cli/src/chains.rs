@@ -13,20 +13,35 @@
 //! (their own CI is not their consumers' CI); reusable-workflow upstreams
 //! contribute the edges of exactly the files that are called.
 //!
+//! Every upstream coordinate is also resolved through REST (`repos/{o}/{n}`,
+//! redirects followed) and its canonical `full_name` compared with the name as
+//! written. A difference is a [`Finding::MovedUpstream`] — **blocking**: the
+//! REST redirect resolves the *name*, it does not repair the reference, and
+//! Actions does not follow redirects for `uses:`, so a moved coordinate fails as
+//! written (for a reusable workflow, a zero-job `startup_failure` that no PR
+//! check list shows). Names are compared, never pins: a moved owner is
+//! invisible to pin resolution. The same canonicalisation groups pin skew, so
+//! two spellings of one upstream cannot hide a split.
+//! `--no-canonical` skips the REST reads and says so; it is a deliberate blind
+//! spot, not a clean bill. A dead upstream found by REST is blocking, exactly
+//! as it is when `--follow` finds it.
+//!
 //! Nothing is written anywhere. Exit `0` = no blocking finding, `4` = at
-//! least one blocking finding (a cycle or a dead upstream), `2` = usage or
-//! tool failure, including a run where no repository could be read at all.
+//! least one blocking finding (a cycle or a dead upstream). A moved upstream
+//! is a warning. Exit `2` = usage or tool failure, including a run where no
+//! repository could be read at all.
 
 use squabble_core::chains::{
     analyse, ChainsReport, Finding, RepoId, RepoSnapshot, ScanStatus, Severity, SourceCost,
 };
 use squabble_fight::chains::{graph_from_snapshots, snapshot_local, upstream_roles, Role};
+use squabble_forge::rest::{resolve_canonical, GhRest, RestTransport};
 use squabble_forge::{fetch_workflows, GhTransport, GraphQlTransport, DEFAULT_BATCH};
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::ExitCode;
 
-pub(crate) const USAGE: &str =
-    "usage: squabble chains <path[=owner/repo] | gh:owner/repo>... [--follow N] [--batch N] [--json]";
+pub(crate) const USAGE: &str = "usage: squabble chains <path[=owner/repo] | gh:owner/repo>... [--follow N] [--batch N] [--no-canonical] [--json]";
 
 /// Exit code when the report carries at least one blocking finding.
 pub(crate) const BLOCKING_EXIT: u8 = 4;
@@ -41,19 +56,27 @@ struct Args {
     follow: u32,
     batch: usize,
     json: bool,
+    /// Skip the REST canonical-name resolution. Off by default: the moved-name
+    /// class is invisible everywhere else.
+    no_canonical: bool,
 }
 
+/// Parse sources and scan options, defaulting to no upstream traversal and
+/// canonical-name checks enabled. Returns an error for missing sources,
+/// unknown flags or invalid numeric options.
 fn parse_args(rest: &[String]) -> Result<Args, String> {
     let mut a = Args {
         sources: Vec::new(),
         follow: 0,
         batch: DEFAULT_BATCH,
         json: false,
+        no_canonical: false,
     };
     let mut it = rest.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--json" => a.json = true,
+            "--no-canonical" => a.no_canonical = true,
             "--follow" => {
                 a.follow = it
                     .next()
@@ -87,6 +110,9 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
     Ok(a)
 }
 
+/// Read sources and print a chain report as text or JSON. Returns `4` for a
+/// blocking finding, `2` for usage, serialisation or wholly unreadable sources,
+/// and `0` otherwise; warnings alone do not fail the command.
 pub fn run(rest: &[String]) -> ExitCode {
     let args = match parse_args(rest) {
         Ok(a) => a,
@@ -95,7 +121,7 @@ pub fn run(rest: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let report = collect(&args, &GhTransport);
+    let report = collect(&args, &GhTransport, &GhRest);
     if args.json {
         match serde_json::to_string_pretty(&report) {
             Ok(j) => println!("{j}"),
@@ -129,7 +155,13 @@ fn exit_for(report: &ChainsReport) -> ExitCode {
 }
 
 /// Gather snapshots from every source, follow upstreams, and analyse.
-fn collect(args: &Args, transport: &dyn GraphQlTransport) -> ChainsReport {
+/// Unless disabled, resolve upstream names through REST, recording dead
+/// targets and moves. Unverified resolutions become report notes.
+fn collect(
+    args: &Args,
+    transport: &dyn GraphQlTransport,
+    rest: &dyn RestTransport,
+) -> ChainsReport {
     let mut subjects: Vec<RepoSnapshot> = Vec::new();
     let mut remote: Vec<RepoId> = Vec::new();
     for s in &args.sources {
@@ -179,7 +211,52 @@ fn collect(args: &Args, transport: &dyn GraphQlTransport) -> ChainsReport {
         .iter()
         .map(|s| (s, Role::Subject))
         .chain(upstreams.iter().map(|(s, r)| (s, r.clone())));
-    analyse(&graph_from_snapshots(pairs), cost)
+    let mut graph = graph_from_snapshots(pairs);
+
+    // Canonical-name resolution: names, not pins. Every upstream coordinate the
+    // graph mentions is read once through REST; a different `full_name` is a
+    // move, and a 404 is a dead upstream even without --follow. Unavailable
+    // reads are notes, never conclusions.
+    if !args.no_canonical {
+        let targets: Vec<RepoId> = graph
+            .edges
+            .iter()
+            .map(|e| e.to.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .filter(|r| !graph.canonical.contains_key(r))
+            .collect();
+        let (resolved, calls) = resolve_canonical(rest, &targets);
+        for (written, resolution) in resolved {
+            match resolution {
+                squabble_core::startup::CanonicalResolution::Moved { canonical } => {
+                    graph.record_canonical(written, RepoId::new(canonical));
+                }
+                squabble_core::startup::CanonicalResolution::NotFound => {
+                    // Probed by REST: a dead upstream is a finding even when
+                    // --follow never read it.
+                    graph.record_scan(written, ScanStatus::NotFound);
+                }
+                squabble_core::startup::CanonicalResolution::Canonical => {}
+                squabble_core::startup::CanonicalResolution::Unverified { reason } => {
+                    graph
+                        .notes
+                        .push(format!("canonical name for `{written}` unverified: {reason}"));
+                }
+            }
+        }
+        if calls > 0 {
+            cost.get_or_insert_with(SourceCost::default).rest_calls += calls;
+        }
+    } else {
+        graph.notes.push(
+            "--no-canonical: upstream names were NOT checked for renames/transfers, so a moved \
+             owner and any dead upstream it hides are invisible"
+                .to_string(),
+        );
+    }
+
+    analyse(&graph, cost)
 }
 
 /// Human-readable report. Blocking first; every repo's scan status is shown
@@ -204,6 +281,14 @@ fn narrate(r: &ChainsReport) -> String {
             ScanStatus::Unavailable { reason } => format!("unavailable — {reason}"),
         };
         o.push_str(&format!("  {repo}: {line}\n"));
+    }
+    if !r.canonical.is_empty() {
+        o.push_str("\ncanonical names (REST, redirects followed — names compared, pins untouched):\n");
+        for (written, canonical) in &r.canonical {
+            o.push_str(&format!(
+                "  {written} → {canonical} (MOVED — repoint, same pin)\n"
+            ));
+        }
     }
     if !r.findings.is_empty() {
         o.push_str("\nfindings:\n");
@@ -266,17 +351,27 @@ fn narrate(r: &ChainsReport) -> String {
                 .map(|p| format!(", {p} remaining"))
                 .unwrap_or_default()
         ));
+        if c.rest_calls > 0 {
+            o.push_str(&format!(
+                "REST: {} canonical-name read(s) (no GraphQL points spent)\n",
+                c.rest_calls
+            ));
+        }
     }
     o
 }
 
+/// Format a finding's reference locations, routes or pin consumers for the
+/// text report. Cycles have no additional detail lines.
 fn details(f: &Finding) -> Vec<String> {
     let at = |e: &squabble_core::chains::Edge| {
         format!("{}:{} @{}", e.from, e.file, short(e.pin.as_str()))
     };
     match f {
         Finding::Cycle { .. } => Vec::new(),
-        Finding::DeadUpstream { consumers, .. } => consumers.iter().map(at).collect(),
+        Finding::DeadUpstream { consumers, .. } | Finding::MovedUpstream { consumers, .. } => {
+            consumers.iter().map(at).collect()
+        }
         Finding::Diamond { routes, .. } => routes
             .iter()
             .map(|r| {
@@ -331,6 +426,8 @@ fn short(p: &str) -> &str {
 mod tests {
     use super::*;
     use serde_json::{json, Value};
+    use squabble_core::startup::CanonicalResolution;
+    use squabble_forge::rest::RestResponse;
 
     /// A fake GraphQL endpoint serving canned repos by slug.
     /// (slug, Some(files) | None = NOT_FOUND), files as (name, text).
@@ -375,10 +472,53 @@ mod tests {
 
     const APP: &str = "jobs:\n  gov:\n    uses: me/standards/.github/workflows/gov.yml@1111111111111111111111111111111111111111\n  b:\n    steps:\n      - uses: me/dead-action@v1\n      - uses: actions/checkout@v4\n";
     const GOV: &str = "jobs:\n  x:\n    steps:\n      - uses: actions/checkout@v5\n";
+    const MOVED_APP: &str = "jobs:\n  gov:\n    uses: old/stds/.github/workflows/gov.yml@2222222222222222222222222222222222222222\n";
+    const SKEW_A: &str = "jobs:\n  a:\n    steps:\n      - uses: old/lib@1111111111111111111111111111111111111111\n";
+    const SKEW_B: &str = "jobs:\n  b:\n    steps:\n      - uses: new/lib@2222222222222222222222222222222222222222\n";
+
+    /// A REST fake: resolves every requested name as canonical unless the test
+    /// declares a move or a 404 for it.
+    struct CanonicalRest(Vec<(&'static str, CanonicalResolution)>);
+    impl RestTransport for CanonicalRest {
+        fn get(&self, path: &str) -> Result<RestResponse, String> {
+            let slug = path
+                .strip_prefix("repos/")
+                .ok_or_else(|| format!("unexpected path {path}"))?;
+            let found = self
+                .0
+                .iter()
+                .find(|(s, _)| s.eq_ignore_ascii_case(slug))
+                .map(|(_, r)| r);
+            match found {
+                Some(CanonicalResolution::Moved { canonical }) => Ok(RestResponse {
+                    status: 200,
+                    location: None,
+                    body: json!({"full_name": canonical}).to_string(),
+                }),
+                Some(CanonicalResolution::NotFound) => Ok(RestResponse {
+                    status: 404,
+                    location: None,
+                    body: "{}".into(),
+                }),
+                _ => Ok(RestResponse {
+                    status: 200,
+                    location: None,
+                    body: json!({"full_name": slug}).to_string(),
+                }),
+            }
+        }
+    }
+
+    fn all_canonical() -> CanonicalRest {
+        CanonicalRest(Vec::new())
+    }
 
     fn canned() -> Canned {
         Canned(vec![
             ("me/app", Some(vec![("ci.yml", APP)])),
+            ("me/moved-app", Some(vec![("gov.yml", MOVED_APP)])),
+            ("me/skew-a", Some(vec![("ci.yml", SKEW_A)])),
+            ("me/skew-b", Some(vec![("ci.yml", SKEW_B)])),
             (
                 "me/standards",
                 Some(vec![
@@ -397,24 +537,32 @@ mod tests {
     }
 
     fn args(follow: u32) -> Args {
+        args_for(&["me/app"], follow)
+    }
+
+    fn args_for(slugs: &[&str], follow: u32) -> Args {
         Args {
-            sources: vec![Source::GraphQl(RepoId::new("me/app"))],
+            sources: slugs
+                .iter()
+                .map(|s| Source::GraphQl(RepoId::new(*s)))
+                .collect(),
             follow,
             batch: 2,
             json: false,
+            no_canonical: false,
         }
     }
 
     #[test]
     fn without_follow_upstreams_stay_on_the_frontier() {
-        let r = collect(&args(0), &canned());
+        let r = collect(&args(0), &canned(), &all_canonical());
         assert!(!r.has_blocking());
         assert_eq!(r.frontier.len(), 3);
     }
 
     #[test]
     fn follow_finds_dead_upstream_and_diamond_without_importing_action_ci() {
-        let r = collect(&args(1), &canned());
+        let r = collect(&args(1), &canned(), &all_canonical());
         assert!(r.has_blocking(), "{}", narrate(&r));
         assert!(r.findings.iter().any(|f| matches!(f, Finding::DeadUpstream { target, .. } if target == &RepoId::new("me/dead-action"))));
         assert!(r.findings.iter().any(|f| matches!(f, Finding::Diamond { target, .. } if target == &RepoId::new("actions/checkout"))));
@@ -428,7 +576,7 @@ mod tests {
 
     #[test]
     fn narration_names_every_scan_status() {
-        let r = collect(&args(1), &canned());
+        let r = collect(&args(1), &canned(), &all_canonical());
         let text = narrate(&r);
         assert!(text.contains("me/dead-action: NOT FOUND"));
         assert!(text.contains("[BLOCKING] dead upstream"));
@@ -443,12 +591,132 @@ mod tests {
                 Err("no gh".into())
             }
         }
-        let r = collect(&args(0), &Down);
+        let r = collect(&args(0), &Down, &all_canonical());
         assert_eq!(exit_for(&r), ExitCode::from(2));
-        let ok = collect(&args(0), &canned());
+        let ok = collect(&args(0), &canned(), &all_canonical());
         assert_eq!(exit_for(&ok), ExitCode::SUCCESS);
-        let blocking = collect(&args(1), &canned());
+        let blocking = collect(&args(1), &canned(), &all_canonical());
         assert_eq!(exit_for(&blocking), ExitCode::from(BLOCKING_EXIT));
+    }
+
+    #[test]
+    fn a_moved_owner_is_flagged_before_any_run_proves_it() {
+        // REST follows the redirect and reports the canonical full_name; the
+        // coordinate as written is what the workflow uses, and that is the
+        // zero-job startup class.
+        let rest = CanonicalRest(vec![(
+            "old/stds",
+            CanonicalResolution::Moved {
+                canonical: "hyperpolymath/standards".into(),
+            },
+        )]);
+        let r = collect(&args_for(&["me/moved-app"], 0), &canned(), &rest);
+        // Blocking: the name resolved, but the reference as written is what
+        // Actions executes, and it does not redirect `uses:`.
+        assert!(r.has_blocking(), "{}", narrate(&r));
+        let (written, canonical, consumers) = r
+            .findings
+            .iter()
+            .find_map(|f| match f {
+                Finding::MovedUpstream {
+                    written,
+                    canonical,
+                    consumers,
+                } => Some((written, canonical, consumers)),
+                _ => None,
+            })
+            .expect("moved finding");
+        assert_eq!(written, &RepoId::new("old/stds"));
+        assert_eq!(canonical, &RepoId::new("hyperpolymath/standards"));
+        assert_eq!(consumers.len(), 1);
+        assert_eq!(
+            r.canonical.get(&RepoId::new("old/stds")),
+            Some(&RepoId::new("hyperpolymath/standards"))
+        );
+        let c = r.cost.as_ref().expect("cost");
+        assert_eq!(c.rest_calls, 1, "one REST read for the one coordinate");
+        assert_eq!(c.queries, 1, "GraphQL still reads only the subject");
+
+        let text = narrate(&r);
+        assert!(text.contains("MOVED — repoint, same pin"), "{text}");
+        assert!(text.contains("moved upstream `old/stds`"), "{text}");
+        assert!(
+            text.contains("zero-job `startup_failure`"),
+            "the finding must name the invisible class: {text}"
+        );
+        assert_eq!(exit_for(&r), ExitCode::SUCCESS);
+        assert!(r.findings.iter().any(|f| f.severity() == Severity::Warning));
+    }
+
+    #[test]
+    fn a_dead_upstream_is_found_by_rest_even_without_follow() {
+        let rest = CanonicalRest(vec![("me/dead-action", CanonicalResolution::NotFound)]);
+        let r = collect(&args(0), &canned(), &rest);
+        assert!(r.has_blocking(), "{}", narrate(&r));
+        assert!(r.findings.iter().any(|f| matches!(
+            f,
+            Finding::DeadUpstream { target, .. } if target == &RepoId::new("me/dead-action")
+        )));
+        // It was probed, so it is no longer claimed as an unprobed frontier.
+        assert!(!r.frontier.contains(&RepoId::new("me/dead-action")));
+    }
+
+    #[test]
+    fn pin_skew_groups_by_canonical_name_so_a_move_cannot_hide_it() {
+        let rest = CanonicalRest(vec![(
+            "old/lib",
+            CanonicalResolution::Moved {
+                canonical: "new/lib".into(),
+            },
+        )]);
+        let r = collect(&args_for(&["me/skew-a", "me/skew-b"], 0), &canned(), &rest);
+        let (target, pins) = r
+            .findings
+            .iter()
+            .find_map(|f| match f {
+                Finding::PinSkew { target, pins } => Some((target, pins)),
+                _ => None,
+            })
+            .expect("skew across the moved spelling");
+        assert_eq!(target, &RepoId::new("new/lib"));
+        assert_eq!(pins.len(), 2);
+    }
+
+    #[test]
+    fn no_canonical_is_a_stated_blind_spot_not_a_clean_bill() {
+        let mut a = args_for(&["me/moved-app"], 0);
+        a.no_canonical = true;
+        let rest = CanonicalRest(vec![(
+            "old/stds",
+            CanonicalResolution::Moved {
+                canonical: "hyperpolymath/standards".into(),
+            },
+        )]);
+        let r = collect(&a, &canned(), &rest);
+        assert!(!r.has_blocking());
+        assert!(r.canonical.is_empty());
+        assert!(
+            r.notes.iter().any(|n| n.contains("--no-canonical")),
+            "{:?}",
+            r.notes
+        );
+        assert!(r.cost.is_none() || r.cost.as_ref().unwrap().rest_calls == 0);
+    }
+
+    #[test]
+    fn an_unverified_name_is_a_note_not_a_conclusion() {
+        struct Broken;
+        impl RestTransport for Broken {
+            fn get(&self, _: &str) -> Result<RestResponse, String> {
+                Err("rate limited".into())
+            }
+        }
+        let r = collect(&args(0), &canned(), &Broken);
+        assert!(!r.has_blocking());
+        assert!(r
+            .notes
+            .iter()
+            .any(|n| n.contains("unverified") && n.contains("rate limited")));
     }
 
     #[test]
@@ -464,6 +732,10 @@ mod tests {
         assert_eq!(a.sources.len(), 2);
         assert_eq!(a.follow, 2);
         assert!(a.json);
+        assert!(!a.no_canonical);
+        assert!(parse_args(&["--no-canonical".into(), "gh:me/y".into()])
+            .unwrap()
+            .no_canonical);
         assert!(parse_args(&[]).is_err());
         assert!(parse_args(&["--batch".into(), "0".into(), "x".into()]).is_err());
         assert!(parse_args(&["--nope".into()]).is_err());

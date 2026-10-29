@@ -134,6 +134,36 @@ and weaken no check. Without either mode's evidence, or with the probe
 unavailable, classification degrades to the pre-#15 attribution (OwnedUpstream
 / Escalate), never to an invented cause (fail-closed, no-silent-skip).
 
+. *Zero-job `startup_failure` from a name or an admission* → the same
+  jobs=0 invisible class, but caused by the *coordinate* rather than by a pin
+  posture. Two first-class modes, each with its own move:
++
+--
+Moved coordinate:: a reusable coordinate names an owner/repo that has been
+  renamed or transferred. GitHub resolves reusables before any job exists,
+  answers "workflow was not found", and creates zero jobs. Winning move:
+  `RepointToCanonical` — rewrite to the canonical `owner/repo` and **carry the
+  same pin**. Repointing is not re-pinning; no pin is resolved on the way, so
+  the revision the caller chose is exactly the revision that runs.
+Allow-list admission required:: the coordinate (after any move, its canonical
+  target) is refused by the caller's `allowed_actions=selected` allow-list.
+  Winning move: `AllowListAdmissionRequired`, naming the minimal
+  `owner/repo@*` pattern to admit. No workflow edit can make the run start.
+--
++
+Sequencing matters and is reported: repoint first, then admit the canonical
+pattern if the run is still refused — an admission for the *old* name does not
+cover the canonical one. `squabble chains` resolves every upstream coordinate's
+canonical `full_name` through REST (redirects followed; names compared, never
+pins) and flags moved upstreams and canonical-grouped pin skew *before* a run
+proves it; `squabble zero-job` reports per-run attribution (repo, workflow,
+coordinate as written, canonical target, required allow-list pattern).
++
+Both moves only let a required check *start*. `squabble ≠ bypass` holds: the
+green still has to come from the check genuinely running and passing, and
+neither move is a path to green by itself — they are diagnosis and sequencing
+advice, and nothing more.
+
 == Outcome contract
 
 GREEN:: Landed via a permitted (arena) strategy on a legitimately satisfied gate.

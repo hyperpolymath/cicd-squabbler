@@ -174,6 +174,57 @@ pub enum Move {
     /// [`Move::ReconcileActionsPolicy`] this is a legitimate non-bypass
     /// settings move — checks do not get weaker, they get *possible*.
     SetActionsAllowedAll,
+
+    /// Move 13 — *zero-job `startup_failure`, moved-name mode*: a reusable
+    /// coordinate under an owner/repo that has been renamed or transferred.
+    /// GitHub resolves reusable workflows before any job exists, answers
+    /// "workflow was not found", and the run dies with **zero jobs** — no
+    /// check run, so no PR check list shows it.
+    ///
+    /// The winning move is [`Self::RepointToCanonical`]: rewrite the
+    /// coordinate to the canonical `owner/repo`, **carrying the same pin**.
+    /// `pin` is recorded verbatim (a SHA stays a SHA, a tag stays a tag) and is
+    /// never re-resolved: repointing is not re-pinning, and silently changing
+    /// the revision would be a different, unreviewed act. The subpath is
+    /// preserved by the attribution that produces this move.
+    ///
+    /// Non-bypass: the coordinate still names a real workflow at the revision
+    /// the caller already chose; nothing is dropped or weakened, and the green
+    /// still has to come from the workflow genuinely running.
+    RepointToCanonical {
+        /// The coordinate exactly as written, e.g. `old/repo/.github/workflows/x.yml@sha`.
+        written: String,
+        /// The canonical `owner/repo` observed through a redirect.
+        canonical: String,
+        /// The pin carried unchanged, recorded for auditability.
+        pin: String,
+    },
+
+    /// Move 14 — *zero-job `startup_failure`, admission mode*: the coordinate
+    /// (or, after a move, its canonical target) is refused by the caller's
+    /// `allowed_actions=selected` allow-list. The run is refused at startup
+    /// with zero jobs, so nothing reports on the PR.
+    ///
+    /// The winning move admits the minimal `owner/repo@*` pattern
+    /// (`pattern` is the exact string an owner adds). It only lets the
+    /// required check *start*: no required context is dropped and no check is
+    /// weakened, so `squabble ≠ bypass` holds. Repository settings are the
+    /// owner's realm; the squabbler names the pattern and never edits settings
+    /// itself.
+    ///
+    /// Distinct from [`Self::ReconcileActionsPolicy`] (mode-1 coverage gap
+    /// measured from the workflow's own `uses:` list): this move is the
+    /// zero-job attribution of a *canonical* coordinate, so its payload names
+    /// both the coordinate as written and the canonical target the pattern must
+    /// cover.
+    AllowListAdmissionRequired {
+        /// The coordinate exactly as written.
+        written: String,
+        /// The canonical `owner/repo` the pattern must admit.
+        canonical: String,
+        /// The minimal pattern to add, `owner/repo@*`.
+        pattern: String,
+    },
 }
 
 /// A specialist group the squabbler can summon when a gate is out of its lane.
@@ -446,6 +497,24 @@ impl Move {
                  estate default posture makes it moot without weakening any check"
                     .to_string()
             }
+            Move::RepointToCanonical {
+                written,
+                canonical,
+                pin,
+            } => format!(
+                "repoint `{written}` to canonical `{canonical}@{pin}` — SAME pin, carried \
+                 unchanged; a moved reusable coordinate dies as a zero-job `startup_failure` \
+                 (\"workflow was not found\") that no PR check list shows"
+            ),
+            Move::AllowListAdmissionRequired {
+                written,
+                canonical,
+                pattern,
+            } => format!(
+                "admit `{pattern}` to the caller's selected-actions allow-list so the canonical \
+                 `{canonical}` behind `{written}` can start — the run is refused at startup \
+                 (jobs=0) until it is admitted"
+            ),
         }
     }
 
@@ -531,6 +600,20 @@ mod tests {
                 add_patterns: vec!["hyperpolymath/standards@*".into()],
             },
             Move::SetActionsAllowedAll,
+            // Moves 13–14: the zero-job startup-failure classes. Repoint keeps
+            // the pin; admission only lets the check start. Neither drops a
+            // required context nor weakens a check.
+            Move::RepointToCanonical {
+                written: "old/stds/.github/workflows/gov.yml@8f2ee50841e216cd8c192eeb68953118190f105c"
+                    .into(),
+                canonical: "hyperpolymath/standards".into(),
+                pin: "8f2ee50841e216cd8c192eeb68953118190f105c".into(),
+            },
+            Move::AllowListAdmissionRequired {
+                written: "hyperpolymath/standards/.github/workflows/gov.yml@v1".into(),
+                canonical: "hyperpolymath/standards".into(),
+                pattern: "hyperpolymath/standards@*".into(),
+            },
         ];
         assert!(moves.iter().all(Move::is_legitimate));
     }
@@ -645,5 +728,40 @@ mod tests {
             json.contains("\"kind\":\"set-actions-allowed-all\""),
             "{json}"
         );
+    }
+
+    #[test]
+    fn zero_job_moves_round_trip_with_their_distinct_wire_names() {
+        let repoint = Move::RepointToCanonical {
+            written: "old/stds/.github/workflows/gov.yml@v2".into(),
+            canonical: "hyperpolymath/standards".into(),
+            pin: "v2".into(),
+        };
+        let admission = Move::AllowListAdmissionRequired {
+            written: "hyperpolymath/standards/.github/workflows/gov.yml@v2".into(),
+            canonical: "hyperpolymath/standards".into(),
+            pattern: "hyperpolymath/standards@*".into(),
+        };
+        for m in [repoint, admission] {
+            let json = serde_json::to_string(&m).expect("serialise");
+            let back: Move = serde_json::from_str(&json).expect("deserialise");
+            assert_eq!(m, back);
+        }
+        let json = serde_json::to_string(&Move::RepointToCanonical {
+            written: "old/x@v1".into(),
+            canonical: "new/x".into(),
+            pin: "v1".into(),
+        })
+        .unwrap();
+        assert!(json.contains("\"kind\":\"repoint-to-canonical\""));
+        assert!(!json.contains("SAME pin"), "describe text is not wire data");
+        let described = Move::AllowListAdmissionRequired {
+            written: "old/x@v1".into(),
+            canonical: "new/x".into(),
+            pattern: "new/x@*".into(),
+        }
+        .describe();
+        assert!(described.contains("new/x@*"));
+        assert!(described.contains("jobs=0"));
     }
 }

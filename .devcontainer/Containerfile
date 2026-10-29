@@ -17,18 +17,67 @@ RUN apk update && apk add --no-cache \
     openssh-client \
     ca-certificates \
     build-base \
-    posix-libc-utils \
+    busybox \
     shadow \
+    posix-libc-utils \
     && rm -rf /var/cache/apk/*
 
 # Create non-root dev user (matches devcontainer.json remoteUser)
 RUN groupadd -g 1000 nonroot || true \
     && useradd -m -u 1000 -g 1000 -s /bin/bash nonroot || true
 
+# ---------------------------------------------------------------------------
+# Rust: the toolchain this repository is written in.
+#
+# The image previously shipped no Rust at all, so `cargo build` was impossible
+# in the dev container. Both toolchains are installed here:
+#   * stable          — builds/tests the workspace (root `rust-version = 1.85`);
+#   * Creusot's nightly — used only below `verification/`, pinned by
+#     verification/squabble-creusot/rust-toolchain.toml.
+#
+# Creusot's *prover* stack (opam + Why3 + an SMT solver) is deliberately NOT
+# baked in: it is a several-hundred-megabyte OCaml build that most sessions do
+# not need, and this image is rebuilt daily. Run `just verify-install` on first
+# boot to add it; until then the Creusot obligations are STATED, NOT PROVED
+# (docs/CREUSOT.adoc).
+# ---------------------------------------------------------------------------
+USER nonroot
+# No RUSTUP_TOOLCHAIN override: cargo must honour
+# verification/squabble-creusot/rust-toolchain.toml (Creusot's nightly) inside
+# that directory while defaulting to stable everywhere else.
+ENV HOME=/home/nonroot \
+    CARGO_HOME=/home/nonroot/.cargo \
+    RUSTUP_HOME=/home/nonroot/.rustup
+
+# The installer binary is downloaded, its published SHA-256 fetched from the
+# same origin and verified, and only then executed. Nothing is piped into a
+# shell: a compromised or truncated download must fail the build, not run.
+RUN set -eux; \
+    target="$(uname -m)-unknown-linux-gnu"; \
+    dist="https://static.rust-lang.org/rustup/dist/${target}"; \
+    tmp="$(mktemp -d)"; \
+    curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+         -o "$tmp/rustup-init" "$dist/rustup-init"; \
+    curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+         -o "$tmp/rustup-init.sha256" "$dist/rustup-init.sha256"; \
+    want="$(awk 'NR==1 {print $1}' "$tmp/rustup-init.sha256")"; \
+    got="$(sha256sum "$tmp/rustup-init" | awk '{print $1}')"; \
+    [ -n "$want" ] && [ "$want" = "$got" ] \
+      || { echo "rustup-init failed verification: want '$want' got '$got'" >&2; exit 1; }; \
+    chmod 0755 "$tmp/rustup-init"; \
+    "$tmp/rustup-init" -y --no-modify-path --default-toolchain stable --profile minimal; \
+    rm -rf "$tmp"; \
+    . /home/nonroot/.cargo/env; \
+    rustup component add rustfmt clippy; \
+    rustup toolchain install nightly-2026-08-03 --profile minimal \
+         -c rustfmt -c rustc-dev -c llvm-tools; \
+    cargo --version; rustc --version; \
+    rm -rf /home/nonroot/.rustup/downloads
+
+ENV PATH="/home/nonroot/.cargo/bin:${PATH}"
+
 # Set workspace directory
 WORKDIR /workspaces/cicd-squabbler
 
 # Default shell
 ENV SHELL=/bin/bash
-
-USER nonroot

@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= squabble-creusot — the Creusot complement
+
+The Rust twin of `spark/`: a parallel verification artefact that states the
+engine's load-bearing invariants to a prover instead of only testing them.
+
+**Status: stated, not proved.** No obligation has been discharged.
+
+* `src/model.rs` — the invariants as ordinary Rust, plus `#[test]`s that compare
+  them with the real `squabble-core`. Runs on **stable** Rust; no Creusot
+  installation needed.
+* `src/contracts.rs` — the same statements as `#[requires]`/`#[ensures]`
+  contracts, compiled by default (`default = ["creusot"]`) so that a prove run
+  cannot silently discharge an empty module; the stable half is built with
+  `--no-default-features`.
+
+[source,sh]
+----
+just verify-mirror     # stable: does the model still match the engine?
+just verify-creusot    # the prover: do the obligations discharge?
+----
+
+Own workspace (see `Cargo.toml`), own `rust-toolchain.toml` pinning the nightly
+that Creusot v0.14.0 is built against, and `publish = false`. It is deliberately
+outside the root workspace so the stable `--locked` build never resolves
+`creusot-std`.
+
+Pin trio — move together: `rust-toolchain.toml` `nightly-2026-08-03`,
+`creusot-std = "0.14"` here, and the `creusot_version`/`rust_nightly` inputs in
+`.github/workflows/creusot.yml`.
+
+Full rationale, status and the licence note: `../../docs/CREUSOT.adoc`.

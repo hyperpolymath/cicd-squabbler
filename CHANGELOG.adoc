@@ -33,6 +33,20 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
   refresh with `just graphql-schema-refresh`). Records `rateLimit` cost; an
   exhausted budget marks the remaining repos unavailable rather than guessing.
   Truncated or binary blobs and renamed repos are reported as notes.
+* `scripts/install-toolchain.sh` no longer pipes a network response into a
+  shell. rustup is bootstrapped from the official `rustup-init` binary whose
+  published SHA-256 is fetched over TLS from the same origin and verified before
+  execution; a tampered, malformed or missing digest is a refusal. Creusot is
+  cloned at the commit its tag pointed to and the checkout is verified before
+  `./INSTALL` runs; a version with no pinned commit is refused instead of being
+  cloned from a moving tag.
+* `docs/CREUSOT.adoc` — the toolchain split into the four layers that actually
+  gate a verdict (manager, toolchain, `cargo creusot`, Why3 + solver), and a
+  measured account of an environment that reaches only some of them: the
+  `rustup` wheel on PyPI installs from an allow-listed channel, every dist
+  server still refuses (`tls handshake eof`), and `rust-lang/rust` publishes no
+  binary assets, so GitHub cannot stand in for one. Records what the status of
+  the obligations is in that environment — unchanged — rather than a skip.
 * fetch: `PinWorkflowActions`, `ReconcileActionsPolicy` and
   `SetActionsAllowedAll` moves, plus the Actions-policy why-probe
   (`actions/permissions` + `.../selected-actions`) that fires when a required
@@ -43,8 +57,90 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
   before any run refuses to start.
 * ADR 0002 (`docs/decisions/`), the spec for representing vacuous greens in
   the `Outcome` contract — the spec-first remainder of issue #58.
+* Zero-job `startup_failure` taxonomy (`squabble_core::startup`), with two
+  first-class classes and *distinct* moves: a **moved coordinate** (a reusable
+  owner/repo renamed or transferred — GitHub answers "workflow was not found"
+  and creates no job) → `RepointToCanonical`, which carries the **same pin**;
+  and **allow-list admission required** (the canonical coordinate is refused by
+  the caller's `selected` actions allow-list; measured on `hypatia` run
+  40451601571) → `AllowListAdmissionRequired`, naming the exact minimal
+  `owner/repo@*` pattern. Both are invisible in PR check lists because zero jobs
+  means zero check runs. Neither is a bypass: each only lets a check *start*.
+  Two new `MissingCause` variants carry the same distinction to a stuck gate.
+* `squabble zero-job <path[=owner/repo]>` — attribute every observed zero-job
+  run: repo, workflow, coordinate as written, canonical target, required
+  allow-list pattern, and the move with its sequencing. Exit `4` on any observed
+  zero-job run, attributed or not; exit `0` only for the scanned window. This is
+  a diagnosis surface — it edits no settings and declares nothing green. It is
+  outside `squabble-contract/1.0.0`, whose four-subcommand surface and exit-code
+  meanings are unchanged.
+* `squabble chains` now resolves each upstream coordinate's canonical
+  `full_name` through REST (`repos/{o}/{n}`, redirects followed) and compares
+  **names, not pins**, flagging moved upstreams and grouping pin skew by the
+  canonical name so two spellings of one upstream cannot hide a split. A dead
+  upstream is found by REST even without `--follow`; `--no-canonical` skips the
+  reads and records the blind spot. A moved upstream is a *warning* — a working
+  redirect is a risk, not an observed failure — while the observed zero-job run
+  is blocking in `zero-job`. `chains` exit semantics are unchanged, so the
+  frozen `squabble-contract/1.0.0` remains accurate. `SourceCost` records the
+  REST calls made.
+* The Creusot complement for Rust, the twin of `spark/`:
+  `verification/squabble-creusot` states six obligations over the engine's
+  load-bearing invariants (acceptance, evidence, "no diagnosis is a green",
+  admission, and admission-not-green) and mirrors every one as a stable-Rust
+  `#[test]` against the real `squabble-core`, so drift is caught without a
+  prover. The crate is its own workspace with its own
+  `rust-toolchain.toml` (Creusot v0.14.0's `nightly-2026-08-03`) and
+  `publish = false`, keeping the nightly-only LGPL proof library out of the
+  stable `--locked` build and `cargo audit`. `.github/workflows/creusot.yml`
+  calls the estate gate (`hyperpolymath/cicd-suite`'s `creusot-gate.yml`) with
+  `enforce_hollow: true`, and `scripts/install-toolchain.sh` plus `just
+  verify-{status,install,mirror,creusot,gate}` install and run the toolchain,
+  Creusot included via upstream's `./INSTALL` (not `cargo install`).
+  **Stated, not proved**: no obligation has been discharged — the authoring
+  environment has no Rust toolchain at all, and this repository's `Rust CI`
+  currently ends as a zero-job `startup_failure`, so CI has not compiled the
+  workspace either. The estate gate's detect/theatre phases were run against
+  this tree (obligations=true, claims=false, 10 contract attributes, T1/T2/T3
+  clean) and its prove phase correctly reported "NO PROOF WAS PERFORMED".
+* The dev container now installs the Rust toolchains it was missing (stable for
+  the workspace, Creusot's pinned nightly for `verification/`), and
+  `devcontainer.json` reports toolchain status on first boot. Creusot's prover
+  stack (opam + Why3 + SMT) stays opt-in via `just verify-install`.
 
 ==== Fixed
+
+* A REST `404` no longer mints a blocking dead-upstream finding on its own.
+  GitHub answers `404` in place of `403` for a repository the token may not see,
+  so absence is established only when the *owner* probe also 404s; otherwise the
+  coordinate is `Unverified` with the reason, and a private upstream can no
+  longer redden `chains` with exit `4`.
+* `Finding::MovedUpstream` is **blocking**: the REST redirect resolves the name,
+  it does not repair the reference, and Actions does not follow redirects for
+  `uses:` — so a moved coordinate fails as written.
+* `parse_startup_runs` refuses a `startup_failure` run with no usable `id`
+  instead of dropping it, which could otherwise let `zero-job` report that no
+  failure was observed.
+* The Creusot obligations add in `u64`, so `passed + skipped` is provable for
+  every pair of `u32` counts (Creusot checks overflow), with boundary tests in
+  the stable mirror; the mirror also gains `after_diagnosis`/`after_admission`
+  and tests over both values of their event, so `verify-mirror` covers the
+  contract inputs rather than a subset of them.
+* An uncovered *action* under `verified_allowed` is reported `Unattributed`
+  rather than `AllowListAdmissionRequired`: verified Marketplace creators are
+  admitted without a pattern and creator status is not resolvable here, so the
+  admission is unknown, not refused.
+* `scripts/install-toolchain.sh` checks the installed `cargo creusot` version
+  against the pin instead of treating any `cargo creusot` as ready, and the dev
+  container no longer pipes a remote installer into a shell either — it verifies
+  the published digest first, as the host installer now does.
+
+* `squabble-forge` REST: an API path is now validated before it becomes an
+  argument to `gh` — empty, over-long, option-looking, upward-traversing, or any
+  path carrying a byte outside `[A-Za-z0-9._-/=@+~:]` (so whitespace, `;`, `&&`,
+  backticks, `$()` and newlines) is refused, and `--` ends `gh`'s option list.
+  Paths are built from repository slugs that originate in workflow YAML, so this
+  was untrusted data reaching argv. Six new cases cover the refusals.
 
 * verify-satisfied: a PR with an unsigned or unverified commit no longer
   reads as done when the base requires signed commits. GitHub blocks that

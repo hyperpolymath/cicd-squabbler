@@ -104,12 +104,18 @@ pub enum Role {
 
 /// Fold snapshots into a graph. Each snapshot's scan status is always
 /// recorded; its edges are added according to its [`Role`].
+/// Canonical-name changes and source notes are retained even when a snapshot
+/// was not scanned; only scanned snapshots contribute edges.
 pub fn graph_from_snapshots<'a>(
     snapshots: impl IntoIterator<Item = (&'a RepoSnapshot, Role)>,
 ) -> ChainGraph {
     let mut g = ChainGraph::new();
     for (snap, role) in snapshots {
         g.record_scan(snap.repo.clone(), snap.status.clone());
+        let canonical = snap.canonical_id();
+        if canonical != snap.repo {
+            g.record_canonical(snap.repo.clone(), canonical);
+        }
         for n in &snap.notes {
             g.notes.push(format!("{}: {n}", snap.repo));
         }
@@ -153,8 +159,10 @@ pub fn upstream_roles(graph: &ChainGraph) -> Vec<(RepoId, Role)> {
 // ---------------------------------------------------------------------------
 
 /// Read a local checkout. `slug` overrides identity; otherwise it is taken
-/// from the `origin` remote in `.git/config`. Never errors: an unreadable
-/// root becomes [`ScanStatus::Unavailable`] with the reason.
+/// from the `origin` remote in `.git/config`. Missing identity or a root that
+/// is not a directory becomes [`ScanStatus::Unavailable`]. Unreadable workflow
+/// directories yield no files; unreadable files are skipped with notes.
+/// Canonical names are not resolved locally.
 pub fn snapshot_local(root: &Path, slug: Option<&str>) -> RepoSnapshot {
     let repo = match slug.map(str::to_string).or_else(|| origin_slug(root)) {
         Some(s) => RepoId::new(s),
@@ -173,6 +181,7 @@ pub fn snapshot_local(root: &Path, slug: Option<&str>) -> RepoSnapshot {
                 },
                 files: Vec::new(),
                 notes: Vec::new(),
+                canonical: None,
             };
         }
     };
@@ -184,6 +193,7 @@ pub fn snapshot_local(root: &Path, slug: Option<&str>) -> RepoSnapshot {
             },
             files: Vec::new(),
             notes: Vec::new(),
+            canonical: None,
         };
     }
 
@@ -217,6 +227,9 @@ pub fn snapshot_local(root: &Path, slug: Option<&str>) -> RepoSnapshot {
         },
         files,
         notes,
+        // A checkout cannot tell whether its own name moved; that needs the
+        // forge. Leaving this `None` is the honest answer, not "canonical".
+        canonical: None,
     }
 }
 
@@ -357,6 +370,7 @@ jobs:
             },
             files,
             notes: Vec::new(),
+            canonical: None,
         }
     }
 
@@ -407,6 +421,29 @@ jobs:
     }
 
     #[test]
+    fn snapshot_canonical_names_are_recorded_as_moves() {
+        // The GraphQL source compares `nameWithOwner`, so a snapshot can carry
+        // the canonical name even though the local source cannot.
+        let app = snap(
+            "me/app",
+            vec![wf(
+                "gov.yml",
+                "jobs:\n  gov:\n    uses: old/stds/.github/workflows/gov.yml@8f2ee50841e216cd8c192eeb68953118190f105c\n",
+            )],
+        );
+        let mut upstream = snap("old/stds", Vec::new());
+        upstream.canonical = Some("new/stds".into());
+        let g = graph_from_snapshots([
+            (&app, Role::Subject),
+            (&upstream, Role::Upstream(BTreeSet::new())),
+        ]);
+        assert_eq!(
+            g.moved_to(&RepoId::new("old/stds")),
+            Some(&RepoId::new("new/stds"))
+        );
+    }
+
+    #[test]
     fn failed_snapshots_record_status_and_add_no_edges() {
         let s = RepoSnapshot {
             repo: RepoId::new("me/x"),
@@ -415,6 +452,7 @@ jobs:
             },
             files: vec![wf("ci.yml", CALLER)],
             notes: vec!["partial".into()],
+            canonical: None,
         };
         let g = graph_from_snapshots([(&s, Role::Subject)]);
         assert!(g.edges.is_empty());

@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+[package]
+name = "squabble-creusot"
+version = "0.1.0"
+edition = "2021"
+description = "Creusot contracts for the squabbler's load-bearing invariants — stated, not yet discharged"
+license = "MPL-2.0"
+authors = ["Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>"]
+repository = "https://github.com/hyperpolymath/cicd-squabbler"
+rust-version = "1.85"
+# Verification-only: never published, never a runtime dependency of `squabble`.
+publish = false
+
+# Its own workspace root, deliberately. `creusot-std` is nightly-only and
+# `creusot-std`/`creusot-contracts` pull an LGPL-2.1-or-later tree; putting
+# either into the root workspace would drag it into the stable `--locked`
+# build and `cargo audit`, which read one Cargo.lock for the whole workspace
+# (the failure mode echidna measured and recorded in its CREUSOT-SETUP.adoc).
+# Cargo therefore refuses to include this package in the root workspace, and
+# `cargo test --workspace` at the root stays stable-only.
+[workspace]
+
+[features]
+# ON by default, deliberately. `cargo creusot prove` with an empty feature set
+# compiles `src/lib.rs`'s cfg-gated module *out*, so a prove run over this crate
+# would discharge nothing while the estate gate's source-level scan still counted
+# ten contracts — a verdict about a build that omits the thing being judged.
+#
+# The obvious alternative does not work: `prove_args: --features creusot` reaches
+# `cargo creusot prove` through the gate's *shared* argument variable, which the
+# gate also passes to its two planted control crates (see cicd-suite
+# `actions/creusot-check/check.sh`, `plant creusot-control-*`). Those crates do
+# not define the feature, so the flag turns both controls into compile errors —
+# which would make the FALSE control "refused" for the wrong reason (a hollow
+# pass) and the TRUE control fail. Defaulting the feature keeps the flag out of
+# `prove_args` entirely, so the controls are unaffected.
+#
+# Cost: the stable half of this crate (`src/model.rs` plus its `#[test]`s) is now
+# built with `--no-default-features`:
+#   cargo test --manifest-path verification/squabble-creusot/Cargo.toml \
+#              --no-default-features
+default = ["creusot"]
+creusot = ["dep:creusot-std"]
+
+[dependencies]
+# The proof library ("creusot-contracts" before v0.9.0). Optional: stable
+# builds resolve none of it. Version pairs with the Creusot release named in
+# rust-toolchain.toml and in .github/workflows/creusot.yml — move all three
+# together.
+creusot-std = { version = "0.14", optional = true }
+
+[dev-dependencies]
+# Only for the stable-Rust mirror tests, which check that the model in
+# `src/model.rs` agrees with the real implementation in `squabble-core`.
+squabble-core = { path = "../../crates/squabble-core" }

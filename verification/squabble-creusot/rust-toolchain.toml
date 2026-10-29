@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# The nightly Creusot v0.14.0 is built against — copied verbatim from
+# creusot-rs/creusot's `rust-toolchain` at tag v0.14.0, components included,
+# because `cargo creusot` needs rustc's internal libraries (`rustc-dev`) and
+# `llvm-tools` to translate a crate into Creusot's IR.
+#
+# A floating `nightly` here does not work and must not be reintroduced: Creusot
+# pins one nightly per release, and a mismatch fails at translation time rather
+# than at build time. Move this pin, `creusot-std` in Cargo.toml and
+# `rust_nightly` in .github/workflows/creusot.yml as one change.
+#
+# This file governs EVERY cargo invocation below `verification/` only. The root
+# workspace keeps building on stable (`rust-version = "1.85"`).
+[toolchain]
+channel = "nightly-2026-08-03"
+components = ["rustfmt", "rustc-dev", "llvm-tools"]

@@ -1,0 +1,215 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+= Zero-job startup failures: the callee's owner is not admitted
+:toc: left
+:icons: font
+
+*Date:* 2026-10-28
+*Class:* `B-ALLOWLIST` (see `hyperpolymath/hypatia` `scripts/ci-health/`)
+*Effect:* every pull request in this repository is unmergeable through the
+normal path, because the required `scan / gitleaks` context can never be
+created.
+
+== Symptom
+
+Six workflows in `.github/workflows/` end their runs before any job exists:
+`startup_failure`, zero jobs, no logs, and — because a check run is only
+created when a job exists — *no entry at all* in a pull request's check list.
+A seventh, `standards-pipeline.yml`, reports `failure` with zero jobs.
+
+The remaining workflows, which use only `actions/*` steps, pass on every run.
+
+Because `scan / gitleaks` is a required status check on `main`, and because it
+is produced by one of the zero-job workflows, it does not fail — it never
+happens. Branch protection therefore reports "waiting for status to be
+reported" forever.
+
+== Discriminator: same owner versus different owner
+
+`creusot.yml` calls a reusable workflow too, and it runs. The only variable
+that tracks the outcome is the callee's owner.
+
+[cols="3,4,2,3",options="header"]
+|===
+| Caller | Callee (as written, pinned) | Owner of callee | Latest run
+
+| `creusot.yml`
+| `hyperpolymath/cicd-suite/.github/workflows/creusot-gate.yml@bf7dd95cf49733019343ff485c2f45c6b261839c`
+| `hyperpolymath` (User), *same* as caller
+| jobs exist — `creusot / Detect Creusot obligations` ✅,
+  `creusot / Creusot theatre gate` ✅, `creusot / Creusot proofs` running
+
+| `secret-scanner.yml`
+| `metadatastician/standards/.github/workflows/secret-scanner-reusable.yml@8e48b1caade08a552646adeab66558ac43b4360d`
+| `metadatastician` (Organization), *different*
+| `startup_failure`, 0 jobs
+
+| `rust-ci.yml`
+| `…/rust-ci-reusable.yml@8e48b1ca…`
+| different
+| `startup_failure`, 0 jobs
+
+| `governance.yml`
+| `…/governance-reusable.yml@8e48b1ca…`
+| different
+| `startup_failure`, 0 jobs
+
+| `hypatia-scan.yml`
+| `…/hypatia-scan-reusable.yml@8e48b1ca…`
+| different
+| `startup_failure`, 0 jobs
+
+| `mirror.yml`
+| `…/mirror-reusable.yml@8e48b1ca…`
+| different
+| `startup_failure`, 0 jobs
+
+| `scorecard.yml`
+| `…/scorecard-reusable.yml@8e48b1ca…`
+| different
+| `startup_failure`, 0 jobs
+
+| `standards-pipeline.yml`
+| `…/ci-pipeline.yml@8e48b1ca…`
+| different
+| `failure`, 0 jobs
+|===
+
+All seven use the same pin, the same caller account, the same event and the same
+`permissions:` shape. `hyperpolymath/standards` is not a working alternative:
+it now resolves to `metadatastician/standards` —
+
+[source,text]
+----
+$ gh api --include repos/hyperpolymath/standards
+HTTP/2.0 200 OK
+{"full_name":"metadatastician/standards","id":1116521501,"owner":{"login":"metadatastician","type":"Organization"}}
+----
+
+— which is why `hyperpolymath/docmatrix`, still calling the old name, fails the
+same way.
+
+== Ruled out
+
+* *The pinned files exist.* All seven reusables resolve at
+  `8e48b1caade08a552646adeab66558ac43b4360d` (1.5–25 kB each) and declare
+  `on: workflow_call`.
+* *The lockfile is clean.* `Lock Sync Gate` passes; `actions.lock` is in sync
+  and transitively closed.
+* *The callers are well-formed.* `Workflow Security Linter` and the estate
+  actionlint pass; nothing is on a tag or branch ref.
+* *Not a missing input or secret.* No caller passes an undeclared input, and
+  the caller-declared secrets match what `mirror-reusable.yml` declares.
+* *Not billing.* No job annotation in this repository reads "payments have
+  failed".
+
+== The class, from the estate's own detector
+
+`hyperpolymath/hypatia`'s `scripts/ci-health/README.adoc` names this class
+`B-ALLOWLIST` and calls it "the root cause of estate startup_failure":
+
+____
+`allowed_actions: selected` with `patterns_allowed` that does not cover the
+curated superset … every uncovered `hyperpolymath/*` reusable + non-verified
+third-party action is blocked at parse → `startup_failure` (zero jobs, no
+logs). Hits public repos too.
+____
+
+* `detect.sh` fires on exactly that condition, reading
+  `repos/{owner}/{repo}/actions/permissions` and `…/selected-actions`.
+* `remediate.sh <repo> B-ALLOWLIST false` PUTs `hyperpolymath/*` plus every line
+  of `action-superset.txt` as `owner/repo@*`, then reads the setting back and
+  fails if the sorted set does not match.
+* `action-superset.txt` already carries the cross-owner callee lines, including
+  all thirteen `metadatastician/standards/.github/workflows/*.yml` entries. The
+  superset was updated for the 2026-10-25 move; this repository's own allow-list
+  evidently was not.
+* That README also records the constraint that made this hard to see: "The API
+  NEVER exposes the `startup_failure` reason; the GitHub web-UI red banner
+  does." The banner on any run above names the refused coordinate.
+
+== Attribution, per run
+
+The shape `squabble zero-job` produces. Every row is
+`hyperpolymath/cicd-squabbler`, canonical target `metadatastician/standards`.
+
+[cols="2,5",options="header"]
+|===
+| Workflow | Required allow-list pattern
+
+| `secret-scanner.yml`
+| `metadatastician/standards/.github/workflows/secret-scanner-reusable.yml@*`
+
+| `rust-ci.yml`
+| `metadatastician/standards/.github/workflows/rust-ci-reusable.yml@*`
+
+| `governance.yml`
+| `metadatastician/standards/.github/workflows/governance-reusable.yml@*`
+
+| `hypatia-scan.yml`
+| `metadatastician/standards/.github/workflows/hypatia-scan-reusable.yml@*`
+
+| `mirror.yml`
+| `metadatastician/standards/.github/workflows/mirror-reusable.yml@*`
+
+| `scorecard.yml`
+| `metadatastician/standards/.github/workflows/scorecard-reusable.yml@*`
+
+| `standards-pipeline.yml`
+| `metadatastician/standards/.github/workflows/ci-pipeline.yml@*`
+|===
+
+When the posture cannot be read, `squabble` reports `Unattributed` with the
+probe failure quoted rather than inventing a cause. Every
+`actions/permissions*` endpoint answers the token used here with
+`403 Resource not accessible by integration`; `administration: read` is what
+would settle it.
+
+== Repair
+
+Preferred — the estate's own remediator, dry-run first:
+
+[source,sh]
+----
+scripts/ci-health/detect.sh cicd-squabbler              # expect B-ALLOWLIST, missing N/M
+scripts/ci-health/remediate.sh cicd-squabbler B-ALLOWLIST true
+scripts/ci-health/remediate.sh cicd-squabbler B-ALLOWLIST false
+----
+
+Or minimally, admitting only the callee owner:
+
+[source,sh]
+----
+gh api -X PUT repos/hyperpolymath/cicd-squabbler/actions/permissions/selected-actions --input - <<'JSON'
+{"github_owned_allowed": true, "verified_allowed": true,
+ "patterns_allowed": ["hyperpolymath/*", "metadatastician/standards/*"]}
+JSON
+----
+
+Keep `sha_pinning_required: true`; every caller here is already pinned to a full
+SHA, so the pinning posture does not change. Note that the third-party actions
+the reusables use (`dtolnay/rust-toolchain`, `gitleaks/gitleaks-action`,
+`Swatinem/rust-cache`, `ossf/scorecard-action`,
+`SonarSource/sonarcloud-github-action`, …) are resolved against the *caller's*
+list as well — so if runs still refuse after the callee owner is admitted, apply
+the full curated superset rather than widening by hand.
+
+Confirm with:
+
+[source,sh]
+----
+gh run list --workflow secret-scanner.yml --limit 3   # jobs > 0, context appears
+----
+
+== Why this cannot be fixed in YAML
+
+The call is correct, the pin is correct, and the callee exists and accepts
+`workflow_call`. The refusal happens before the workflow is parsed — which is
+why there are no jobs, no logs and no check run, and why a required context
+from such a workflow is not *failing* but *never created*. No change to a
+calling file, and no change in this tool, can produce that context; only the
+repository's Actions access setting can.
+
+That asymmetry is also the reason `squabble` reports it rather than repairing
+it: naming the class and the required pattern is diagnosis, and diagnosis is not
+a green.
