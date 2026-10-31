@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+= Read-only estate gate census
+
+The gate census inventories named Squabbler workflow files and probes the
+corresponding GitHub Actions run and readable repository rulesets. It is
+standalone: it does not call Hypatia and does not mutate GitHub repositories.
+
+== Running
+
+[source,shell]
+----
+bash scripts/estate-gate-census.sh --repo example/project
+bash scripts/estate-gate-census.sh --owner example --output /tmp/squabble-census.jsonl
+bash tests/estate_gate_census_test.sh
+----
+
+The owner form uses paginated `gh repo list --limit 10000`, excluding
+archived repositories and forks. Provide a `gh` identity with read access
+to the repositories, workflow runs and rulesets, plus `jq`.
+
+== Reading results
+
+Each output line is JSON. `filename_absent` means no workflow *filename*
+matches Squabble; it **does not** establish that no embedded integration
+exists in an unrelated workflow file. `named_workflow_found` establishes
+only that a candidate workflow exists. `run.status` is the latest
+default-branch run status; `startup_failure` with `zero_jobs` is explicitly
+not green. A successful run is not evidence that its job is required.
+
+`policy.rulesets` distinguishes `required_by_ruleset`,
+`not_in_readable_rulesets` and `unknown`. Required-check comparison uses
+the **actual emitted job name**, not the guessed name of a workflow file.
+`policy.bypass` contains the effective-looking bypass actors from the
+matching repository ruleset. Classic branch protection is not inspected
+and is always marked `not_inspected`; an apparent absence from readable
+rulesets must not be promoted into an assertion of absent enforcement.
+GitHub access errors always produce an unknown state rather than a pass.
+
+== Known limits
+
+This is a bounded inventory instrument, not an authorisation to amend
+branch protections, grant workflow access, merge pull requests or enable
+autonomous repairs. It checks named workflow files rather than searching
+every workflow body, uses the first page of each Actions job/ruleset query,
+and inspects default-branch runs rather than all pull-request events.
+For an estate-wide enforcement decision, follow up with full pagination,
+classic-branch-protection reads using Administration:read, PR-event
+producibility checks, check-source identity and a separate human-reviewed
+ruleset diff. No filename or status count substitutes for those checks.
+
+The command exits nonzero if it cannot enumerate a requested owner;
+per-repository access failure is retained as an `unknown` row to allow
+the inventory to proceed and show gaps explicitly.
