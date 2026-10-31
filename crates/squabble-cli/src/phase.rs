@@ -91,6 +91,17 @@ fn parse_job(text: &str) -> Result<(Option<CheckRun>, Vec<StepOutcome>), String>
     let v: serde_json::Value =
         serde_json::from_str(text).map_err(|e| format!("not valid JSON: {e}"))?;
 
+    if let serde_json::Value::Object(o) = &v {
+        let is_job = !o.is_empty()
+            && (o.get("status").map_or(false, |s| s.is_string())
+                || o.get("conclusion").map_or(false, |s| s.is_string()));
+        if !o.is_empty() && !is_job {
+            return Err("not a jobs-API job object (no `status` or `conclusion`)".to_string());
+        }
+    } else if !v.is_null() {
+        return Err("expected a JSON object or null".to_string());
+    }
+
     let no_job = match &v {
         serde_json::Value::Null => true,
         serde_json::Value::Object(o) => o.is_empty(),
