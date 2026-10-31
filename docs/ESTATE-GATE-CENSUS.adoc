@@ -28,7 +28,7 @@ default-branch run status; `startup_failure` with `zero_jobs` is explicitly
 not green. A successful run is not evidence that its job is required.
 
 `policy.rulesets` distinguishes `required_by_ruleset`,
-`not_in_readable_rulesets` and `unknown`. Required-check comparison uses
+`not_matched_in_readable_first_page` and `unknown`. Required-check comparison uses
 the **actual emitted job name**, not the guessed name of a workflow file.
 `policy.bypass` contains the effective-looking bypass actors from the
 matching repository ruleset. Classic branch protection is not inspected
@@ -42,7 +42,9 @@ This is a bounded inventory instrument, not an authorisation to amend
 branch protections, grant workflow access, merge pull requests or enable
 autonomous repairs. It checks named workflow files rather than searching
 every workflow body, uses the first page of each Actions job/ruleset query,
-and inspects default-branch runs rather than all pull-request events.
+and inspects default-branch runs rather than all pull-request events. A
+full first page of rulesets or a missing emitted job name is not a
+verified absence of required checks.
 For an estate-wide enforcement decision, follow up with full pagination,
 classic-branch-protection reads using Administration:read, PR-event
 producibility checks, check-source identity and a separate human-reviewed
