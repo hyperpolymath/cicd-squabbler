@@ -112,7 +112,7 @@ run_case() {
   local name="$1" path="$2" want="$3"; shift 3
   local out="$WORK/out-$name"
   rm -rf "$out"
-  PATH="$path" "$SCRIPT" --no-install --out "$out" "$@" >"$WORK/stdout-$name" 2>&1
+  PATH="$path" CARGO_HOME="$WORK/no-cargo-home" "$SCRIPT" --no-install --out "$out" "$@" >"$WORK/stdout-$name" 2>&1
   local rc=$?
   LAST_RC=$rc
   LAST_OUT="$out"
