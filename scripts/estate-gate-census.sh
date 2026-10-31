@@ -53,6 +53,8 @@ sort -u "$tmp" | while IFS= read -r repo; do
   rules="$(api "repos/$repo/rulesets?includes_parents=true")" || rules=""
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
+    role=gate_candidate
+    if [[ "$name" == *squabble-action* ]]; then role=action_selftest; fi
     rid=""; status=unknown; job=""; job_status=unknown
     runs="$(api "repos/$repo/actions/workflows/$name/runs?branch=$ref&per_page=10")" || runs=""
     if [[ -n "$runs" ]] && jq -e '.workflow_runs|type=="array"' <<<"$runs" >/dev/null; then
@@ -89,7 +91,7 @@ sort -u "$tmp" | while IFS= read -r repo; do
     fi
     emit "$(jq -nc --arg r "$repo" --arg wf "$name" --arg id "$rid" \
       --arg state "$status" --arg job "$job" --arg js "$job_status" \
-      --arg req "$required" --arg by "$bypass" \
-      '{repo:$r,state:"named_workflow_found",workflow:$wf,run:{id:$id,status:$state,job:$job,job_conclusion:$js},policy:{rulesets:$req,bypass:$by,classic_protection:"not_inspected"}}')"
+      --arg req "$required" --arg by "$bypass" --arg role "$role" \
+      '{repo:$r,state:"named_workflow_found",role:$role,workflow:$wf,run:{id:$id,status:$state,job:$job,job_conclusion:$js},policy:{rulesets:$req,bypass:$by,classic_protection:"not_inspected"}}')"
   done <<<"$names"
 done
