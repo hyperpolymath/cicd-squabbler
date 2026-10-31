@@ -23,9 +23,14 @@ labelled:
   `hyperpolymath/hypatia`, `hyperpolymath/reposystem`,
   `hyperpolymath/gitbot-fleet`, `hyperpolymath/proven-tests-and-benches`.
 . *NOT verified here.* This authoring environment has **no Rust toolchain**
-  (`cargo`/`rustc` absent; `static.rust-lang.org` is unreachable), so the Rust
-  added in §10 has **not been compiled or executed**, and no `squabble` binary
-  was run against live GitHub. Everything the *existing* code does is read, not
+  (`cargo`/`rustc` absent; `static.rust-lang.org` and GitHub release assets are
+  both unreachable), so nothing in §10 was **executed** here, and no `squabble`
+  binary was run against live GitHub. What CI has since established (PR #145,
+  commit `b2b9f82`): `rust-ci`'s `Cargo check --workspace --all-targets --locked`
+  **passes**, so the new modules and their test code type-check; `Cargo fmt`
+  **fails**, which stops the job before `clippy` and before `Cargo test`, so the
+  31 new unit tests are type-checked but still **not executed**. The formatting
+  difference is real and is *not* fixed here — see §10.3. Everything the *existing* code does is read, not
   observed. Measurements quoted from earlier estate work are attributed to the
   document that recorded them.
 ====
@@ -580,9 +585,25 @@ class; payload without steps is absence of evidence; non-JSON is a tool failure
 |===
 
 *Honesty:* these were written without a Rust toolchain in the authoring
-environment. They have not been compiled or run. `just test` must be run on a
-host with a toolchain before this change is claimed as verified; if any assertion
-is wrong, the assertion is the thing to change, not the class.
+environment. They type-check on CI (`Cargo check --all-targets`, green on PR
+#145) but have **not been executed**: `Cargo fmt` fails first and the `Cargo
+test` job never starts. `just test` (or `just local-verify`) must be run on a host
+with a toolchain before this change is claimed as verified; if any assertion is
+wrong, the assertion is the thing to change, not the class.
+
+The `fmt` failure is worth recording as its own lesson. It cannot be repaired
+from this environment: `static.rust-lang.org` and GitHub release assets are
+blocked, and the only formatter reachable here is rustfmt compiled to wasm
+(`@scalar/rust-fmt`), which reproduces **26 of the 33** Rust files on `main`
+byte-for-byte and differs on the other 7 — it keeps long method chains inline
+where this repository's rustfmt breaks them at the dots, and verticalises macro
+arguments where this repository's keeps them inline. That calibration is what
+makes it unusable as an oracle rather than merely inconvenient. Three layouts
+were still fixed from evidence it agreed with (a 111-column signature, two
+asserts over the width the repo's own `chains.rs` keeps vertical, one chain
+broken the way the repo's `startup.rs` breaks it); the residual difference needs
+one real `cargo fmt --all` and is deliberately left visible rather than guessed
+away.
 
 === 10.4 Executable check — run, not asserted
 

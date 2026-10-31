@@ -21,8 +21,9 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
   single failure in the run to be recognised at all. `--only <ids>` runs a subset
   (deselected steps are recorded `SKIP`, never `PASS`) and `--check` reports the
   toolchain and the plan without running a step or writing a ledger. Written
-  because the new modules below were authored without a reachable Rust toolchain,
-  so their tests have never been compiled.
+  because the new modules below were authored without a reachable Rust toolchain.
+  They type-check on CI but have not been executed: `Cargo fmt` fails first, and
+  the `Cargo test` job does not start. Run `cargo fmt --all`, then `just test`.
 * `tests/local_verify_test.sh` — 31 planted controls for the harness above: no
   toolchain (`VOID`, exit 2), all-green (exit 0), a planted compile error (its
   diagnostic and `file:line` extracted), a fmt diff, a failing assertion (both
@@ -153,9 +154,11 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
   verify-{status,install,mirror,creusot,gate}` install and run the toolchain,
   Creusot included via upstream's `./INSTALL` (not `cargo install`).
   **Stated, not proved**: no obligation has been discharged — the authoring
-  environment has no Rust toolchain at all, and this repository's `Rust CI`
-  currently ends as a zero-job `startup_failure`, so CI has not compiled the
-  workspace either. The estate gate's detect/theatre phases were run against
+  environment has no Rust toolchain at all, and this repository's `Rust CI` on
+  `main` has been ending as a zero-job `startup_failure` (four consecutive runs),
+  so pushes to `main` have not compiled the workspace. Pull requests *do* run it:
+  on PR #145 `Cargo check` passes and `Cargo fmt` fails, so the workspace is
+  type-checked but the Creusot prove job still has no green precedent. The estate gate's detect/theatre phases were run against
   this tree (obligations=true, claims=false, 10 contract attributes, T1/T2/T3
   clean) and its prove phase correctly reported "NO PROOF WAS PERFORMED".
 * The dev container now installs the Rust toolchains it was missing (stable for
