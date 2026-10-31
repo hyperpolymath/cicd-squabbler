@@ -157,7 +157,7 @@ if [ -f "$EXEC_SRC" ]; then
             if printf '%s' "$EXEC_PROD" | grep -Fq "\"$name\""; then
                 LEAKED="$LEAKED $name"
             fi
-        done < <(grep -oE '^[[:space:]]*"[^"]+"' "$EXEC_DIRECTIVE" | tr -d ' "')
+        done < <(sed -nE 's/^[[:space:]]*"([^"]+)".*/\1/p' "$EXEC_DIRECTIVE")
         if [ -n "$LEAKED" ]; then
             fail "execution.rs compiles in step vocabulary from the directive:$LEAKED"
         else
