@@ -67,6 +67,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash tests/squabble_action_test.sh
 
+      - name: Estate gate census (read-only hermetic fixtures)
+        run: bash tests/estate_gate_census_test.sh
+
       - name: Install, as the action's install step does
         id: install
         env:
