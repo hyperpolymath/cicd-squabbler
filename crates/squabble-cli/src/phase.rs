@@ -110,10 +110,13 @@ fn parse_job(text: &str) -> Result<(Option<CheckRun>, Vec<StepOutcome>), String>
     let job = if no_job {
         None
     } else {
-        Some(CheckRun::from_github(
-            v.get("status").and_then(|s| s.as_str()),
-            v.get("conclusion").and_then(|s| s.as_str()),
-        ))
+        let upper = |k: &str| {
+            v.get(k)
+                .and_then(|s| s.as_str())
+                .map(str::to_ascii_uppercase)
+        };
+        let (status, conclusion) = (upper("status"), upper("conclusion"));
+        Some(CheckRun::from_github(status.as_deref(), conclusion.as_deref()))
     };
 
     let steps = v
