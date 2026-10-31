@@ -87,6 +87,12 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
 /// such rather than guessed at. An absent `steps` array is a legitimate payload
 /// and parses to an empty list (which the classifier treats as absence of
 /// evidence, never as evidence of anything).
+/// A non-array `steps` value also yields an empty list. Job status and conclusion
+/// are passed unchanged to `CheckRun::from_github`, which recognises uppercase
+/// values; unrecognised values can result in a pending job.
+///
+/// Returns an error for invalid JSON, a non-object value other than null, or a
+/// non-empty object without a string `status` or `conclusion`.
 fn parse_job(text: &str) -> Result<(Option<CheckRun>, Vec<StepOutcome>), String> {
     let v: serde_json::Value =
         serde_json::from_str(text).map_err(|e| format!("not valid JSON: {e}"))?;
@@ -140,6 +146,10 @@ fn parse_job(text: &str) -> Result<(Option<CheckRun>, Vec<StepOutcome>), String>
     Ok((job, steps))
 }
 
+/// Read and classify a job payload, printing the result as text or JSON.
+/// Returns 2 for invalid arguments, read or parse errors, or JSON serialisation
+/// failure; a missing or unreadable directive falls back to empty signatures.
+/// Returns 0 when a classification is printed, including an unclassified result.
 pub(crate) fn run(rest: &[String]) -> ExitCode {
     let args = match parse_args(rest) {
         Ok(a) => a,

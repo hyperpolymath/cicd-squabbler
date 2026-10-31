@@ -103,8 +103,7 @@ pub struct PhaseSignatures {
 
 impl PhaseSignatures {
     /// A signature set is usable only when it declares something. An empty set
-    /// matches nothing, so a missing directive means "attribute no preflight
-    /// class", never "everything is preflight".
+    /// adds no matches, though GitHub's implicit setup step still matches.
     pub fn is_usable(&self) -> bool {
         !self.setup_steps.is_empty() || !self.prerequisite_steps.is_empty()
     }
@@ -311,8 +310,11 @@ impl ExecutionClass {
 /// * `steps` — the jobs-API step list, in API order.
 /// * `signatures` — the host's declared setup/prerequisite step names.
 ///
-/// Order matters and is checked from the top of the job down: a preflight
-/// failure cannot be masked by anything later, because nothing later ran.
+/// For a concluded job with steps, failures take precedence over success:
+/// setup failures outrank prerequisite failures, which outrank policy failures,
+/// regardless of their order in `steps`. The first failure in the winning
+/// category is returned. A passed job with no failures is verified using the
+/// last successful policy step; otherwise it is unclassified.
 pub fn classify(
     job: Option<CheckRun>,
     steps: &[StepOutcome],

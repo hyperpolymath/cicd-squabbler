@@ -27,7 +27,8 @@ pub const DIRECTIVE_PATH: &str = ".machine_readable/bot_directives/execution_tax
 /// The section that carries the step-name signatures.
 pub const SECTION: &str = "[execution-taxonomy]";
 
-/// Load the phase signatures from a repo checkout. Never fails.
+/// Load the phase signatures from a repo checkout. If the directive cannot be
+/// read, return empty signatures; the implicit GitHub setup step still matches.
 pub fn load_signatures(repo_root: &Path) -> PhaseSignatures {
     let raw = std::fs::read_to_string(repo_root.join(DIRECTIVE_PATH)).unwrap_or_default();
     parse_signatures(&raw)
@@ -48,7 +49,7 @@ pub fn parse_signatures(raw: &str) -> PhaseSignatures {
     }
 }
 
-/// The text of one `[section]`, from its header to the next header.
+/// The text after the first occurrence of `header`, up to the next header line.
 ///
 /// Returns an empty string when the header is absent — an absent section is an
 /// absent declaration, and returning the whole file would let an example line
