@@ -17,5 +17,12 @@ Downstream integration contracts (published revisions, not branches):
 
 Core docs:
 
+* `reports/estate-integration/2026-10-31-ci-diagnosis-coverage.adoc` — squabbler's
+  role in estate CI diagnosis: the five outcomes (not started · preflight ·
+  prerequisite · executed finding · verified), who diagnoses and who remediates
+  each, gaps, owner handoffs for inaccessible settings, and proposals kept
+  separate from implemented capabilities
+* `../.machine_readable/bot_directives/execution_taxonomy.a2ml` — the step-name
+  signatures behind `squabble phase` (host-supplied; no step name is compiled in)
 * `maintenance/MAINTENANCE-CHECKLIST.md`
 * `practice/SOFTWARE-DEVELOPMENT-APPROACH.adoc`

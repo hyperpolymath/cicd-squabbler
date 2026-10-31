@@ -1,0 +1,700 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+= cicd-squabbler in estate CI diagnosis: role, coverage, gaps, handoffs
+:toc: left
+:toclevels: 3
+:sectnums:
+
+*Date:* 2026-10-31
+*Status:* investigation + one narrowly scoped implementation (see §10). No
+policy was disabled, no issue or PR was closed, and no verdict was redefined.
+*Question:* given that estate CI failures split into five outcomes automation
+must keep distinct, what is `cicd-squabbler`'s intended role, what can it
+actually detect and explain today, and what must be handed to whom?
+
+[IMPORTANT]
+====
+*Evidence tier — read this first.* Claims below are of three kinds, and they are
+labelled:
+
+. *Read from code in this repository* (file + symbol named). Strongest.
+. *Read from a sibling repository's canon through the GitHub API on 2026-10-31*
+  (`gh api repos/...`): `metadatastician/standards`, `hyperpolymath/cicd-suite`,
+  `hyperpolymath/hypatia`, `hyperpolymath/reposystem`,
+  `hyperpolymath/gitbot-fleet`, `hyperpolymath/proven-tests-and-benches`.
+. *NOT verified here.* This authoring environment has **no Rust toolchain**
+  (`cargo`/`rustc` absent; `static.rust-lang.org` is unreachable), so the Rust
+  added in §10 has **not been compiled or executed**, and no `squabble` binary
+  was run against live GitHub. Everything the *existing* code does is read, not
+  observed. Measurements quoted from earlier estate work are attributed to the
+  document that recorded them.
+====
+
+== 1. What squabbler says it is (the canon that binds this investigation)
+
+From this repository's own `ANCHOR`/`ECOSYSTEM` statements and
+`docs/CHARTER.adoc`:
+
+*IS*:: a standalone per-repo CI/CD **fighter**. It drives a stuck branch
+protection gate to a *legitimately satisfied* green by satisfying its required
+checks, or improves red→yellow, or fails and emits a structured report.
+
+*IS-NOT*:: a bypass (never `enforce_admins=off`, never drop a required context,
+never admin-merge) · hypatia-dependent · a red→green code-fixer · a merge-commit
+lander.
+
+Two further docs constrain its *rank*, not just its scope, and they are the
+reason this report is mostly about **handoffs** rather than features:
+
+. `.machine_readable/bot_directives/gate_triage.a2ml` declares a precedence
+  order: `gitbot-fleet/robot-repo-automaton` is **primary** wherever it is
+  "present AND working", and `cicd-squabbler` is the **fallback**, bound by
+  `fallback-must-be-standalone = true`. The squabbler exists for repos that do
+  not adopt the full stack, or for the estate when the primary is down, polluted
+  or out of paid CI minutes.
+. The directive also fixes the invariant that shapes every answer below: an
+  unavailable gate **classifies as `escalate`, never `self-win`**, and
+  `may-transition-to-green = false`.
+
+So the honest role statement is: **squabbler is the per-repo *gate-semantics*
+specialist and the estate's fallback classifier. It explains why a required
+context is absent or unsatisfiable, and who must act. It does not own runner
+provisioning, Actions settings, estate inventory, policy findings, or evidence
+provenance — and it must not pretend to.**
+
+== 2. The five outcomes, and who decides each
+
+The estate investigation separates these outcomes because collapsing them is how
+a red board becomes a lie:
+
+[cols="1,4",options="header"]
+|===
+| # | Outcome
+
+| 1 | *Not started* — workflow admission or source resolution failed; zero jobs, no
+log, no check run.
+| 2 | *Preflight* — a job started and died in runner setup, provisioning or lock
+resolution, **before any policy step executed**.
+| 3 | *Prerequisite* — a tool, credential or configuration fact was missing, so the
+policy step could not run.
+| 4 | *Executed finding* — the policy/security/test actually ran and reported
+something.
+| 5 | *Verified success* — the policy ran and passed, with evidence.
+|===
+
+Nobody in the estate owns all five. The division of labour, measured from the
+sibling repositories' own canon:
+
+[cols="1,2,2,2",options="header"]
+|===
+| Outcome | Diagnoses | Remediation of record | Never
+
+| 1 | `squabble zero-job` (per-run attribution), `squabble chains` (moved
+upstreams *before* a run proves it) · hypatia `scripts/ci-health` `B-ALLOWLIST`,
+`B-STARTUPFAIL`, `B-LOCKFILE` · standards `allowlist-preflight-reusable.yml`,
+`lockfile-drift-detect.yml`
+| hypatia `remediate.sh` PUTs the curated superset (`action-superset.txt`), then
+reads the setting back; settings drift by standards
+`settings-drift-detect.yml`; a human clears billing
+| A workflow edit is never the fix for an allow-list refusal; no bot infers a
+cause from the conclusion alone
+
+| 2 | *nobody, from step evidence* — hypatia reads **job annotations**
+(`B-LOCKFILE`), and `A-BILLING` is an annotation class too
+| owner of the provisioning (toolchain, lock regeneration with the authoritative
+tool, runner label, billing)
+| A provisioning failure is never reported as a code/security finding
+
+| 3 | `cicd-squabbler` for the *policy-shaped* subset (Actions posture, SHA
+pinning, allow-list); otherwise the owner's own preflight
+| owner of settings/secrets; standards `provisioning-check-reusable.yml`
+| A missing secret is never reported as a scan finding, and a missing tool is
+never reported as a pass
+
+| 4 | the producing policy (cicd-suite gates, hypatia SARIF, tests) ·
+`cicd-squabbler` only *routes* it (`EscalateToExpert`)
+| hypatia + fleet (`hypatia-mcp`/`fleet-mcp`) where adopted; the repo's own owner
+otherwise
+| squabbler never fixes code to turn a finding green (`IS-NOT`)
+
+| 5 | `Gate::evaluate` + `polarity` (vacuity) + `contracts/squabble`
+`legitimate_green` · proven-tests-and-benches provenance tiers for *test* claims
+| nobody: it is either evidenced or it is not
+| A skipped, unavailable, vacuous or unmeasured check is never green
+|===
+
+== 3. Coverage matrix: what squabbler can detect and explain today
+
+Verdicts: *covered* (detects **and** explains), *partial* (detects, explains
+weakly, or covers one sub-case), *gap* (neither).
+
+=== 3.1 Outcome 1 — not started (zero jobs)
+
+*Covered, and better than any sibling on the two attribution classes.*
+
+* `squabble_core::startup` models `StartupFailureClass::{MovedCoordinate,
+  AllowListAdmissionRequired, Unattributed}` with **distinct moves**
+  (`RepointToCanonical` carrying the same pin; `AllowListAdmissionRequired`
+  naming the minimal `owner/repo@*`). `AllowList::covers` /
+  `missing_pattern` / `admission_unknown` encode the `selected` semantics,
+  including `github_owned_allowed` and the `verified_allowed` blind spot, so an
+  unresolvable creator status degrades to *unknown*, never to *refused*.
+* `squabble zero-job` reports per run: repo, workflow, coordinate as written,
+  canonical target, required pattern, and the sequencing (repoint first, then
+  admit). Exit `4` on *any* observed zero-job run — including unattributed ones,
+  "because silence is not a clean result".
+* `squabble chains` resolves every upstream through REST with redirects followed
+  and compares canonical `full_name`s — **names, never pins** — so a
+  renamed/transferred upstream is named before a run proves it.
+* `MissingCause` in `squabble_core::gate` keeps the causes of a missing context
+  distinct — `NoSuchJob`, `DeadActionPin`, `ActionsPolicyRefusal`,
+  `MovedUpstreamCoordinate`, `AllowListAdmissionRequired`, `EmptyJobsMap`,
+  `NotTriggeredOnPullRequest`, and an explicit `Unknown` — each with its own
+  remedy string, and a test asserting that *no* cause can move a gate to green.
+
+*What it does not explain:* the two causes whose evidence is not a workflow file
+or an allow-list — **billing refusal (`A-BILLING`)** and **lockfile drift
+(`B-LOCKFILE`)**. These land in `Unattributed` with the probe failure quoted.
+That is the correct fail-closed answer, and it is also where this repository's
+own CI sits (`.github/settings.yml`: "GitHub Actions is billing-blocked for
+PRIVATE repositories on this account … which is why every workflow here fails
+with zero steps"). The report says "unattributed"; it does not say *which sibling
+already knows the answer*. That is gap *G-4*.
+
+=== 3.2 Outcome 2 — preflight (runner setup / provisioning / lock)
+
+*Gap — the largest one. It was not detectable from the gate model, and until
+this change there was no notion of it anywhere in the engine.*
+
+Why: the engine's only input per requirement is `RequiredCheck { run: CheckRun }`
+(`CheckRun::{Missing, Pending, Failed, Skipped, Passed}`). A job that dies in
+`Set up job`, or in `Install Rust toolchain`, arrives as `CheckRun::Failed` —
+*the same value as a genuine failing test*. `squabble_fight::workflows::
+classify_with_policy` then attributes the red from the **shape of the workflow**:
+
+* reusable-in-another-repo → `AssignGateOwner{OwnedUpstream}`;
+* `CodeBuild` → `EscalateToExpert{HypatiaFleet, DispatchFix}`;
+* `Security` → `EscalateToExpert{Security, Scan}`;
+* `Hygiene` → `GroundTruthCheckNames`.
+
+For a preflight failure every one of those is a *misattribution*: nothing has
+been said about the code, the scan, or the reusable. The estate has measured
+both shapes:
+
+* `A-BILLING` — "the job was not started because recent account payments have
+  failed…", which manifests on code-scanning gates as "waiting for results from
+  CodeQL" because no result is ever uploaded (hypatia `scripts/ci-health`,
+  class `A-BILLING`).
+* `B-LOCKFILE` — an `actions.lock` verification failure, diagnosed by reading
+  **job annotations** (same source, class `B-LOCKFILE`; standards
+  `lockfile-drift-detect.yml` reports estate-wide and opens one tracking issue,
+  never mutating another repository).
+
+Note the two sources disagree about the *mechanism* and this matters: standards'
+`lockfile-drift-detect.yml` header says a drifted lock produces `startup_failure`
+with **zero jobs**, while hypatia's ci-health classifies lock failures from
+**job annotations** in failed runs. Both can be true (the failure can be
+recorded either way depending on where it is refused), which is precisely why
+neither conclusion alone is a diagnosis — and hypatia states the rule out loud:
+"Do not infer an allow-list defect from the conclusion alone."
+
+*Implemented in this change:* `squabble_core::execution` (see §10) classifies
+step evidence into a distinct `PreflightFailed` class, and
+`squabble phase <job.json>` prints it with an owner handoff. It is **not yet
+wired into `fight`** — that needs a jobs fetch for failed checks (*P-2*).
+
+=== 3.3 Outcome 3 — missing tools, credentials or configuration
+
+*Partial.* Split three ways today:
+
+* *Actions posture* — well covered and first-class:
+  `ReconcileActionsPolicy`, `SetActionsAllowedAll`, `PinWorkflowActions`,
+  `AllowListAdmissionRequired`, plus a **latent** scan (`structural_scan` in
+  `squabble_fight::lib`) that surfaces an allow-list gap or a tag-pinned `uses:`
+  *before* a run proves it.
+* *Tools* — `polarity` deliberately refuses to model them: `Recommendation`
+  omits the directive's case 4 (`missing-local-tooling`) because it "is not
+  observable from the jobs API". Also `VacuitySignature::is_usable` requires both
+  halves, so a skipped scan step with no stub-writing step is read as a
+  legitimately optional step rather than vacuity.
+* *Credentials/configuration* — **not modelled at all** before this change, and
+  still only partly: `squabble_core::execution::PrerequisiteMissing` fires only
+  for a **host-declared** prerequisite step. The shipped directive declares one,
+  because only one was measured (see `.machine_readable/bot_directives/
+  execution_taxonomy.a2ml`). Everything else stays in the policy lane, which is
+  the honest default.
+
+The estate's own example of the shape: standards' `cicd-squabbler-reusable.yml`
+probes whether a supplied credential can read the whole gate before asking
+`squabble fight` to classify anything, and reports **NOT RUN** (no credential) or
+**NOT EVALUATED** (credential present, gate only partly visible) rather than a
+verdict.
+
+=== 3.4 Outcome 4 — genuine executed findings
+
+*Covered as a handoff, by construction.* `Move::EscalateToExpert` and
+`Move::AssignGateOwner` are non-satisfying: `Report` buckets each unsatisfied
+check as self-win / escalation / owner assignment, and neither of the latter two
+constructs a `CheckRun` or drops a context. `--summon` (feature `boj`) puts
+expert verdicts on the report and **fails closed** when an expert is
+unreachable.
+
+*What it does not do — deliberately:* decide whether a finding is real. The
+report routes. `Move::FlagNonFunctionalGate` recognises the unwinnable case
+(mined from `hypatia#566`: a required check whose own script fails
+unconditionally) so the squabbler stops re-diagnosing it every run.
+
+=== 3.5 Outcome 5 — verified success
+
+*Covered, with the distinction the estate keeps asking for.* Three layers, and
+they are not interchangeable:
+
+. `Gate::evaluate` → `Green` iff the requirement set is **non-empty** and every
+  requirement `is_satisfied()`. `is_satisfied()` accepts `Passed` **or**
+  `Skipped`, mirroring GitHub's ruleset. An empty requirement set is `Blocked` —
+  the one-line proof that dropping contexts is not a path to green.
+. `Gate::evidence_free()` lists the `Skipped` requirements that satisfied the
+  gate while proving nothing, and `Contract` §5 makes the same distinction
+  upstream: `legitimate_green` requires *every* required check to have run and
+  passed, and there are negative fixtures for `skipped`
+  (`gate/required-skipped.bound.json`, `gate/passed-and-skipped.bound.json`).
+  So a `Green` gate is explicitly **not** a `legitimate_green`.
+. `squabble_core::polarity` interrogates a *green* check for vacuity
+  (`StubbedAfterSkippedScan`, `AllStepsSkipped`) and routes a finding to the
+  owner-facing `GateTriage` group — the only escalation group that names no
+  estate service, because the obligation is the owner's.
+
+The new `squabble_core::execution::Verified` sits at layer 2.5: a job passed
+**and** a policy step recorded success. It is deliberately *not* a gate verdict
+(`handoff() == NoClaim`) and must be read with `polarity`.
+
+=== 3.6 Summary
+
+[cols="3,1,3",options="header"]
+|===
+| Outcome | Verdict | Where
+
+| 1 not started | covered (2 of 4 causes) | `squabble-core::startup`, `squabble zero-job`, `squabble chains`
+| 2 preflight | **gap → new classifier, unwired** | `squabble-core::execution` (§10)
+| 3 prerequisites | partial | Actions-policy moves; `PrerequisiteMissing` with a deliberately thin signature
+| 4 executed findings | covered as routing | `Move::EscalateToExpert`, `Report`
+| 5 verified success | covered, layered | `Gate::evaluate`, `evidence_free`, `polarity`, contract §5
+|===
+
+== 4. Does it preserve required contexts?
+
+Yes, and this is the invariant everything else defers to:
+
+* No `Move` variant removes or renames a requirement. `ReconcileRequiredContext`
+  changes the *required* name to match a real emitted name — a ruleset edit, not
+  a workflow weakening — and is propose-only.
+* `Gate::evaluate` cannot reach `Green` from an empty requirement set
+  (`empty_requirement_set_is_never_green`), and `a_diagnosed_missing_check_still
+  _cannot_reach_green` iterates every `MissingCause` asserting none reaches
+  `Green`.
+* The new classifier has no path to `Green`: it builds no `CheckRun`, calls no
+  `evaluate`, and proposes no `Move`.
+* `zero-job`, `chains` and `phase` are all read-only, and stand outside
+  `squabble-contract/1.0.0` (whose surface stays at four subcommands). Nothing
+  here adds meaning to the pinned revision.
+
+One honest asymmetry to keep visible: **the gate model and the contract disagree
+by design.** GitHub satisfies a requirement with `SKIPPED`; `legitimate_green`
+does not. A consumer that reads only `squabble fetch`'s `Green` can therefore
+believe more than the contract certifies. The mitigation is `evidence_free()`
+being populated and printed — not a redefinition of either verdict.
+
+== 5. Source and publication dependencies
+
+`chains` models **source** dependencies: `EdgeKind::{ReusableWorkflow, Action}`,
+pins, canonical names, cycles and dead upstreams. It does not model
+**publication** dependencies, and those are what actually broke this repository
+on 2026-10-28 (`docs/reports/maintenance/2026-10-28-zero-job-allowlist.adoc`):
+
+[cols="2,3,1",options="header"]
+|===
+| Dependency | Evidence it is load-bearing | In `chains`?
+
+| owner/repo *move* of a reusable (`hyperpolymath/standards` →
+`metadatastician/standards`) | 7 workflows died as zero-job `startup_failure`; the
+discriminator was the *callee's owner*, nothing else in the caller changed |
+partly — canonical resolution catches the move, but the *allow-list precedence*
+it triggers is not an edge
+
+| the curated allow-list superset, published as `action-superset.txt` in hypatia
+`scripts/ci-health/` | its README: the superset was updated for the 2026-10-25
+move, "this repository's own allow-list evidently was not" | **no** — a
+cross-repo published artifact every repo's settings derive from
+
+| the squabble release binary + build attestation, consumed by
+`metadatastician/standards` as `.github/actions/squabble@1ab1507a…` | that
+reusable refuses any binary whose sha256/attestation do not match its pinned
+release | **no** — a release is not a `uses:` edge from a *consumer repo* that
+`chains` scans
+
+| `contracts/squabble` and `contracts/proven-tests` (revision + `SHASUMS`) |
+`contracts/bin/verify-pin.sh` exists precisely because consumers pin by digest |
+**no**
+
+| the reusable's *content* at a pin | a SHA pin is immutable; a tag pin is not —
+`chains` warns on tag/branch pins for this reason | yes
+|===
+
+*Gap G-5:* a consumer's install of the squabble binary can fail (attestation
+mismatch, missing release asset) as a **class-2 preflight failure inside the
+consumer's job**, and no squabbler surface describes that dependency. The
+composite action's own self-test (`tests/squabble_action_test.sh`, 27 cases) is
+the only place it is checked.
+
+== 6. Owner handoffs for inaccessible settings
+
+The measured situation: the built-in `GITHUB_TOKEN` cannot read the settings that
+decide outcome 1 and 3. This repository's own 2026-10-28 report records
+`403 Resource not accessible by integration` on every `actions/permissions*`
+endpoint, and standards' reusable records the same for classic branch protection
+("the classic-protection endpoint is 403 to the built-in Actions token even
+though all 24 ruleset contexts are visible"). The behaviour that follows is
+correct and worth stating plainly: **`fight` refuses to reason about a partially
+visible gate** (exit 2 with "classic branch protection on this branch is not
+visible to this token", `squabble-cli/src/fetch.rs`), and the reusable converts
+that into NOT RUN / NOT EVALUATED rather than an all-clear.
+
+What is *not* precise today is the handoff itself. The squabbler names the
+minimal pattern and says "no workflow edit can make the run start", but does not
+name **the principal and the surface**:
+
+[cols="2,2,2,3",options="header"]
+|===
+| Setting | Read/write surface | Principal who must act | What squabbler says today
+
+| Actions allow-list (`allowed_actions`, `patterns_allowed`) |
+`GET/PUT repos/{o}/{r}/actions/permissions[/selected-actions]` — `administration:
+read` / `administration: write` | *repo admin* for the repo; **org admin** when an
+org policy sets the ceiling | the exact `owner/repo@*` pattern + "settings are the
+owner's realm" (precise on the *what*, silent on the *who*)
+
+| SHA-pinning requirement | same endpoints | repo admin (an org policy can
+re-impose it) | "keep `sha_pinning_required=true`" + `PinWorkflowActions`
+
+| Branch ruleset / required contexts | `GET/PUT repos/{o}/{r}/rulesets/...`,
+`.../rules/branches/{b}` — `administration: read` (write to change) | repo admin |
+`ReconcileRequiredContext` as a propose-only move
+
+| Classic branch protection | `.../branches/{b}/protection` — 403 to
+`GITHUB_TOKEN`, 404 when absent | repo admin | distinguishes 403 from 404 in the
+error and refuses to classify on 403
+
+| Billing / spending limit | *no API this tool holds* | **account owner** only |
+nothing — it degrades to `Unattributed` (correct, but unhelpful: see *G-4*)
+
+| Secrets existence | `GET .../actions/secrets` (names only) | repo admin |
+not modelled at all (*G-2*)
+
+| Runner label / group availability | no *readable* surface for the queue reason
+| repo or org admin | not modelled (*G-2*)
+|===
+
+*Gap G-3:* the report names a fix but not a principal. The estate currently
+compensates in workflow glue (standards' probe + NOT EVALUATED). That is the
+right place for the *permission* decision, but the *report* should carry the
+principal, so a human reading a fight report knows whether to page an org admin,
+a repo admin or the billing owner. `squabble_core::execution::Handoff` now
+carries an owner phrase per class as a first step (§10); `fight`'s report does
+not yet.
+
+== 7. Coordination: no competing rewrites
+
+The estate already has overlapping observers. The rules below are *derived from
+what each repository declares*, not invented here.
+
+[cols="2,3,3",options="header"]
+|===
+| Sibling | What it owns | The rule for squabbler
+
+| `gitbot-fleet` / `robot-repo-automaton` | present-and-working primary for all
+five cases, with its own override rules under `.machine_readable/bot_directives/
+rr_automaton/` | yields. Squabbler is the fallback, and must keep working with
+the fleet absent (`fallback-must-be-standalone`)
+
+| `hypatia` (`scripts/ci-health/`) | class detection + **auto-remediation** of
+`B-ALLOWLIST` (PUT the curated superset, read back, verify), `D-BURN` (opens
+scoped PRs), `A-BILLING`/`B-LOCKFILE`/`B-STARTUPFAIL` (report only);
+`baton-bridge.sh` runs checks on owned compute when GitHub CI is blocked | never
+PUTs a setting; never opens the D-BURN PR; **names the minimal pattern for one
+run** and must not propose a divergent superset. The superset of record is
+`hypatia/scripts/ci-health/action-superset.txt`
+
+| `standards` (reusable gates) | the *wiring*: `allowlist-preflight-reusable.yml`
+(tree + credentialed live policy), `actions-lock-gate.yml`,
+`lock-sync-gate.yml`, `lockfile-drift-detect.yml`, `required-contexts.yml` (+
+`.machine_readable/required-contexts-allow.txt` as a **declaration**, not a
+silencer), `settings-drift-detect.yml`, `check-suite-monitor.yml`, and the
+`cicd-squabbler-reusable.yml` consumer contract | squabbler supplies diagnosis to
+these; it does not re-implement a preflight, does not edit workflows from CI
+(`--apply` is refused by the consumer contract), and does not add an allow-list
+"silencer" of its own
+
+| `cicd-suite` (30 composite audit actions) | the *policy* checks (required-files,
+SPDX, hygiene, manifests, language gates) with an explicit tiering: enforcing /
+advisory / **tool-dependent (`not_run`, exit 2 — "NO CHECK WAS PERFORMED")** /
+unimplemented | consumes their `not_run` distinction as evidence for outcome 3;
+never re-runs their logic; never reports their `not_run` as a finding *or* a pass
+
+| `reposystem` | estate inventory / coordination layer (`repos.toml`
+regenerated from `.gitmodules`), megasweep control plane | squabbler never
+invents repo identity; the API owner is the identity (`drive off the API owner,
+never local dir names` is already a hypatia lesson), and `chains` takes
+`path=owner/repo`
+
+| `proven-tests-and-benches` | evidence provenance for *test* claims
+(`Actually-Proven` / `Provisionally-Proven` / `Unproven`; coverage derived only
+from tests that ran and passed) | squabbler does not assert test evidence; its
+`contracts/proven-tests` contract is the submission format, and a `Verified`
+phase class is **not** a provenance tier
+|===
+
+Two failure modes this report explicitly forbids:
+
+* **Two bots rewriting one workflow.** Only a human (or a separately reviewed
+  automation with its own reviewed mandate) edits workflows. Squabbler's
+  `--apply` enacts one local edit (strip a `on.*.paths` filter that strands a
+  required check), never commits, never pushes, and is **refused** by the
+  consumer contract in CI.
+* **Two bots "fixing" the same setting with different values.** The allow-list
+  has one source of record (hypatia's superset). A narrow addition named by
+  squabbler's report is a *request*, not a competing write.
+
+== 8. Concrete gaps
+
+[cols="1,4,1,2",options="header"]
+|===
+| ID | Gap | Severity | Evidence
+
+| G-1 | A job that died in preflight is attributed by *workflow shape*
+(`DispatchFix` / `OwnedUpstream` / security scan) — a misattribution that invites
+a real code fix for a non-code failure | high (wrong work dispatched) | §3.2;
+`classify_with_policy` has no failure-phase input
+| G-2 | Credentials and tool availability are not modelled; `polarity` refuses
+tool questions outright, correctly, but nothing else answers them | medium |
+§3.3; `Recommended` enum omits cases 2 and 4 with reasons
+| G-3 | Handoffs name a fix and a pattern but not the **principal** (repo admin
+vs org admin vs billing owner) | medium | §6
+| G-4 | An unattributable zero-job run is reported as `Unattributed` with no
+cross-reference to the sibling that already knows the class (`A-BILLING`,
+`B-LOCKFILE`) | medium | §3.1; this repo's own billing-blocked CI
+| G-5 | Publication dependencies (release binary + attestation, contracts by
+revision + `SHASUMS`, the allow-list superset) are not in `chains`; an install
+failure in a consumer is invisible as a dependency | medium | §5
+| G-6 | The gate model accepts `Skipped` (GitHub's rule) while
+`legitimate_green` does not; a consumer reading `fetch` alone can believe more
+than the contract certifies | medium (documentation-level, by design) | §4;
+contract §5 fixtures
+| G-7 | `fight` cannot fetch job step evidence for red checks, so the new phase
+classifier is reachable only offline | low (nothing regressed) | §10; `fetch.rs`
+builds `greens_from_rollup` only, using `job_id_from_details_url`
+| G-8 | The engine has no equivalent of standards' `required-contexts-allow.txt`
+**declaration** pattern, and must not acquire one silently: a "known
+unsatisfiable" list is exactly where a silent green would hide | note, not a gap
+to close before G-1 | standards `required-contexts.yml` header
+|===
+
+== 9. What was *not* changed
+
+* No required context was dropped, renamed away, or reconciled.
+* No policy, allow-list, ruleset or pinning posture was disabled or loosened.
+* No issue or PR was closed, and nothing was re-run to make a board look better.
+* No new exit code means "green"; `squabble phase` has only `0` and `2`.
+* `squabble-contract/1.0.0` is untouched: its four subcommands and the
+  `legitimate_green` decision procedure are unchanged, and `phase` — like
+  `zero-job` and `chains` — is outside the contract surface.
+
+== 10. Implemented in this change
+
+=== 10.1 `squabble_core::execution` — the execution-phase classifier
+
+New pure module, no new dependency, no `Move` variant, no gate change.
+
+[cols="2,3",options="header"]
+|===
+| Class | Meaning
+
+| `NotStarted` | no job exists (outcome 1) — attribution deferred to `startup`
+| `PreflightFailed{step}` | a declared setup/provisioning step (or GitHub's
+implicit `Set up job`) concluded failure: **provisioning, not a finding**
+| `PrerequisiteMissing{step}` | a declared tool/credential/config step failed, so
+the policy step could not run
+| `PolicyStepFailed{step}` | a policy step ran and failed — *where*, not *why*
+| `Verified{step}` | the job passed **and** a policy step recorded success
+| `Unclassified{reason}` | fail-closed non-answer, with one of five reasons
+|===
+
+Design notes, all of which are tested:
+
+* **Signatures are host-supplied** (`PhaseSignatures`), never compiled in — the
+  same standalone discipline as `polarity::VacuitySignature`. Matching is
+  **exact** after trimming, because this repository has already paid once for
+  abbreviation drift (`gate_triage.a2ml` 0.2.0 → 0.3.0).
+* **Evidence tier stated**: step names and conclusions only. The module docs say
+  outright that a dependency-resolution error inside `Cargo check --locked` is
+  indistinguishable from a compile failure here, so `PolicyStepFailed` must not
+  be read as "class 4 confirmed". Job annotations are the stronger source, and
+  they belong to the sibling that owns them.
+* **Ordering**: preflight is checked before prerequisite, and both before
+  policy, so nothing later can mask an earlier stop. A failure recorded only by
+  `Post job`/`Complete job` is *not* a policy finding.
+* **No green**: no `CheckRun` is constructed, `Verified` hands off to `NoClaim`,
+  and the tests assert every class serialises without a gate state.
+
+=== 10.2 Host wiring
+
+* `.machine_readable/bot_directives/execution_taxonomy.a2ml` — the step
+  signatures, each with the workflow it was read from on 2026-10-31, and an
+  explicit note that `cargo check --locked` is **not** a setup step.
+* `squabble_fight::execution::{load_signatures, parse_signatures}` — fail-safe
+  reader scoped to `[execution-taxonomy]` so no other section can donate keys;
+  an absent directive yields an unusable set ("claim no preflight class").
+* `squabble phase <job.json> [--repo <path>] [--json]` — offline classifier over
+  a jobs-API payload, printing class, step, handoff label, owner phrase and an
+  explanation, with a permanent "NOT a gate verdict" line.
+
+=== 10.3 Tests (stated, not executed here)
+
+|===
+| Suite | Cases
+
+| `squabble_core::execution` | 19: `Set up job` failure → preflight (the
+regression); declared provisioning step; undeclared step stays policy; failed
+prerequisite ≠ preflight; setup outranks prerequisite; policy-step failure names
+the step and hands to the policy owner; verified names the step; a green with no
+successful policy step is **not** verified; a green from setup alone is not
+verified; cleanup failure is not a finding; empty step list is a non-answer;
+unconcluded job; no failing step; exact-match/abbreviation guard; empty signature
+set; JSON round-trip with no gate state; only `Verified` is evidence-bearing;
+every class names a handoff and an actionable reason
+| `squabble_fight::execution` | 6: lists parse; a subsection cannot donate keys;
+absent directive is unusable not permissive; comment-only declaration declares
+nothing; missing root; **this repo's own directive re-read on every run**
+| `squabble phase` | 6: arg parsing; bad usage; failed payload parses steps (and
+`null` conclusion is `Other`, never a skip); null/empty payload is the no-job
+class; payload without steps is absence of evidence; non-JSON is a tool failure
+|===
+
+*Honesty:* these were written without a Rust toolchain in the authoring
+environment. They have not been compiled or run. `just test` must be run on a
+host with a toolchain before this change is claimed as verified; if any assertion
+is wrong, the assertion is the thing to change, not the class.
+
+=== 10.4 Executable check — run, not asserted
+
+`tests/aspect_tests.sh` gained an aspect that needs no toolchain and does run
+here. It asserts, on the module's **non-test, non-comment** source, that:
+
+. it cannot name or reach a gate state (`GateState`, `evaluate()`, `gate::Gate`);
+. it references no `Move` (a classifier proposes nothing);
+. no step name from `execution_taxonomy.a2ml` is compiled into it (the
+   directive is the only vocabulary — GitHub's implicit `Set up job`,
+   `Post job`, `Complete job` excepted as primitives);
+. it spawns no process and performs no IO.
+
+[source,text]
+----
+$ bash tests/aspect_tests.sh          # 2026-10-31
+Aspect 5: diagnosis has no path to green
+  PASS: execution.rs cannot reach or name a gate state
+  PASS: execution.rs proposes no move
+  PASS: no directive step name is compiled into execution.rs
+  PASS: execution.rs is pure (no process, no IO)
+Results: PASS=6  FAIL=1  WARN=0
+----
+
+The one `FAIL` is **pre-existing and unrelated**: Aspect 2 greps
+`verification/` for forbidden proof markers and trips on the *documentation* that
+names them (`verification/proofs/README.adoc`, `coq/TypeSafety.v`). It fails
+identically without this change and was deliberately not "fixed" here — silencing
+a documentation-lint by editing a proof file is exactly the class of change this
+report exists to prevent.
+
+== 11. Proposals (not implemented)
+
+[cols="1,4,2,3",options="header"]
+|===
+| ID | Proposal | Owner | Acceptance
+
+| P-1 | **Route preflight failures away from fixers in `fight`.** Give
+`classify_with_policy` an optional `ExecutionClass` per red; when `PreflightFailed`
+or `PrerequisiteMissing`, emit `AssignGateOwner{OwnedUpstream → provisioning
+owner}` or a new non-satisfying move instead of `EscalateToExpert{DispatchFix}`.
+Nothing about the gate changes. | this repo | a test where a `Set up job` failure
+in a `CodeBuild` workflow produces **no** `DispatchFix` escalation; and the
+report names the failing step
+| P-2 | **Fetch step evidence for reds.** `fetch.rs` already parses job ids out
+of check `details_url` (`job_id_from_details_url`) but keeps only greens
+(`greens_from_rollup`). Keep failing checks' job ids too, fetch their steps, and
+run `execution` in `plan_with_policy`. Credential-gated like the rest of the
+Administration read path. | this repo + standards (credential) | `fight` prints a
+phase per red; with no credential it prints `phase: unknown (no step evidence)`
+and proposes nothing new
+| P-3 | **Name the principal in every settings handoff.** Extend the report's
+owner phrase to carry the surface + scope (*repo admin / org admin / billing
+owner*), reusing §6's table as the single source. | standards (canon) + this repo
+| a fight report on an allow-list refusal names `repos/{o}/{r}/actions/permissions`
+and `administration: write`
+| P-4 | **Cross-reference sibling detectors on `Unattributed`.** When
+`zero-job` cannot attribute a run, and the caller supplies no better evidence,
+name the classes it cannot resolve (`A-BILLING`, `B-LOCKFILE`) and the command
+that owns each, instead of a bare *unattributed*. Not an attribution claim: the
+wording must stay "unresolved; these detectors cover it". | this repo + hypatia
+| a billing-blocked repo's report says "not attributed here; hypatia
+`scripts/ci-health` class `A-BILLING` covers it" and still exits `4`
+| P-5 | **Publication edges in `chains`.** Add `EdgeKind::PublishedRelease`
+(release asset + attestation) and `EdgeKind::ContractRevision` (digest pin), so
+a consumer's install dependency on the squabble binary and on `contracts/*` is
+visible. Blocking only for a *dead* publication; a digest mismatch stays a
+warning routed to the consumer's preflight. | this repo | `chains` on
+`metadatastician/standards` shows the `.github/actions/squabble@…` edge and its
+attestation, and a deleted release blocks
+| P-6 | **Declare, do not silence.** If a "known unsatisfiable context" list ever
+lands here, model it as standards' `required-contexts-allow.txt` does: a *subset*
+check that fails on anything new, with the declaration visible in every report.
+Deliberately not implemented now (G-8). | this repo + standards | the list cannot
+suppress a new finding, and `fight` prints the declaration it relied on
+|===
+
+== 12. How to verify this report
+
+[source,sh]
+----
+# 1. The code claims (needs a Rust toolchain; absent in the authoring env)
+just test
+cargo test -p squabble-core execution
+cargo test -p squabble-fight execution
+
+# 2. The new offline entry point, on a real failed job
+gh api repos/hyperpolymath/cicd-squabbler/actions/jobs/<job_id> > /tmp/job.json
+squabble phase /tmp/job.json --repo .            # class + handoff + owner
+squabble phase /tmp/job.json --repo . --json     # machine-readable class
+
+# 3. The sibling claims this report makes (read-only)
+gh api repos/hyperpolymath/hypatia/contents/scripts/ci-health/README.adoc --jq '.content' | base64 -d
+gh api repos/metadatastician/standards/contents/.github/workflows/required-contexts.yml --jq '.content' | base64 -d
+gh api repos/metadatastician/standards/contents/.github/workflows/lockfile-drift-detect.yml --jq '.content' | base64 -d
+gh api repos/metadatastician/standards/contents/.github/workflows/cicd-squabbler-reusable.yml --jq '.content' | base64 -d
+
+# 4. This repository's own blocked state (outcome 1 + 2, measured earlier)
+sed -n '/A required context must name/,/once Actions can run/p' .github/settings.yml
+----
+
+== 13. One-paragraph summary for the owner
+
+`squabble` is already the estate's most precise instrument for *why a required
+context does not exist* (moved coordinates, allow-list admission, dead pins,
+non-emitted names) and for *what must never be called green* (non-empty
+requirement set, skipped ≠ passed, vacuity). It had no concept of *where a job
+stopped*, so a runner or lock failure was attributed to the workflow's shape —
+the one misattribution that dispatches real work for a non-code failure. That
+gap now has a pure, fail-closed classifier and an offline command, with signatures
+in a directive rather than in the engine, and with handoffs that name an owner
+class. It is not yet wired into `fight` (P-1, P-2), it does not name the
+principal behind an inaccessible setting (P-3), and it still cannot see billing
+or lockfile classes that hypatia already owns (P-4). None of this makes anything
+green, and none of it should be read as a green.

@@ -120,6 +120,32 @@ Both moves only let a check *start*. Neither drops a required context, weakens a
 check, nor edits settings: `squabble ≠ bypass` holds, and nothing here is a
 green. A missing or skipped check cannot be made green by a diagnosis.
 
+== Where a run stopped: preflight is not a finding
+
+A red check says *that* a run failed; it never says whether the policy ran. A job
+that dies in runner setup, provisioning or lock resolution is not a verdict on
+the code, and attributing it by the workflow's shape dispatches work nobody can
+do.
+
+[source,sh]
+----
+gh api repos/o/r/actions/jobs/12345 > job.json
+squabble phase job.json --repo .      # class · step · handoff · owner
+----
+
+`squabble phase` classifies step evidence into the outcomes an estate report must
+keep distinct — *not started* (zero jobs: attributed by `zero-job`/`chains`),
+*preflight*, *prerequisite missing*, *policy step failed* (where, never why: read
+the policy's own report), and *verified* (still subject to `polarity`'s vacuity
+check) — or refuses with a reason (`Unclassified`). Step names live in
+`.machine_readable/bot_directives/execution_taxonomy.a2ml`, never in the engine.
+No class constructs a check, drops a context or reaches green: `squabble ≠
+bypass` holds, and `phase` has no exit code that means green.
+
+The role, ownership map, gaps and handoffs across `cicd-suite`, `standards`,
+`reposystem`, `proven-tests-and-benches`, Hypatia and `gitbot-fleet`:
+`docs/reports/estate-integration/2026-10-31-ci-diagnosis-coverage.adoc`.
+
 == Rust deductive verification (Creusot)
 
 The estate requires its Rust to carry verification obligations, the twin of the

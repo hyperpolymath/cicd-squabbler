@@ -10,6 +10,36 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
 
 ==== Added
 
+* `squabble_core::execution` — the execution-phase classifier. `fight` knew only
+  *that* a check was red, so a job that died in runner setup or lock resolution
+  was attributed by the workflow's *shape* (a code fixer, a security scan, an
+  upstream owner) rather than as provisioning. The module classifies step
+  evidence into the five outcomes an estate report must keep distinct — not
+  started, preflight, prerequisite missing, policy step failed, verified — with
+  a fail-closed `Unclassified` carrying one of five reasons, and a `Handoff`
+  naming who must act. Signatures are **host-supplied** (no step name is
+  compiled in, preserving the standalone rule) and matched **exactly**, the
+  lesson `gate_triage.a2ml` 0.2.0 already paid for. It constructs no `CheckRun`,
+  proposes no `Move`, drops no required context and reaches no gate state, so
+  `squabble ≠ bypass` is untouched; `Verified` hands off to `NoClaim` and must
+  still be read with `polarity`.
+* `squabble phase <job.json> [--repo <path>] [--json]` — the offline entry point
+  for that classifier, over a jobs-API payload. Prints class, step, handoff
+  label, owner phrase and explanation, plus a permanent "NOT a gate verdict"
+  line. Exit `0` (a classification was produced) or `2` (tool failure): there is
+  deliberately no exit code that means green. Outside `squabble-contract/1.0.0`,
+  like `zero-job` and `chains`.
+* `.machine_readable/bot_directives/execution_taxonomy.a2ml` — the step-name
+  signatures, each with the workflow it was read from (2026-10-31), and an
+  explicit note that `cargo check --locked` is *not* a setup step: a
+  dependency-resolution error inside it is indistinguishable from a compile
+  failure at the step-conclusion evidence tier.
+* `docs/reports/estate-integration/2026-10-31-ci-diagnosis-coverage.adoc` — the
+  role/ownership map behind the above: the five outcomes, who diagnoses and who
+  remediates each (hypatia `ci-health`, standards' reusables, cicd-suite,
+  reposystem, proven-tests-and-benches, gitbot-fleet), eight concrete gaps, the
+  owner-handoff table for inaccessible settings, and six proposals kept separate
+  from what is implemented.
 * `.github/actions/squabble` — a composite action that installs the
   squabble v0.1.0 release binary for other workflows and, optionally, runs
   it. It refuses any download whose sha256 is not the pinned digest, or whose
