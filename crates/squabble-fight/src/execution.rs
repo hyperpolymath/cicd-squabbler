@@ -115,14 +115,19 @@ setup-steps = ["this belongs to a different section and must not be read"]
         // The trailing `[execution-taxonomy.notes]` redefines `setup-steps`.
         // Section scoping is what keeps that out.
         let s = parse_signatures(DIRECTIVE);
-        assert!(!s.setup_steps.iter().any(|x| x.contains("different section")));
+        assert!(!s
+            .setup_steps
+            .iter()
+            .any(|x| x.contains("different section")));
     }
 
     #[test]
     fn an_absent_directive_is_unusable_not_permissive() {
         let s = parse_signatures("");
         assert!(!s.is_usable());
-        assert!(s.setup_steps.is_empty() && s.prerequisite_steps.is_empty());
+        assert!(
+            s.setup_steps.is_empty() && s.prerequisite_steps.is_empty()
+        );
         // Unusable means "claim no preflight class", which is the fail-closed
         // answer — not "everything is preflight".
         assert!(!s.is_setup("Install Rust toolchain"));

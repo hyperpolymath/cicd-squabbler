@@ -433,12 +433,18 @@ mod tests {
         // Even with step text in hand, "no job" wins: the estate's first class is
         // decided before any step could exist.
         let steps = vec![step("Cargo check", StepConclusion::Failure)];
-        assert_eq!(classify(None, &steps, &sig()), ExecutionClass::NotStarted);
+        assert_eq!(
+            classify(None, &steps, &sig()),
+            ExecutionClass::NotStarted
+        );
         assert_eq!(
             classify(Some(CheckRun::Missing), &steps, &sig()),
             ExecutionClass::NotStarted
         );
-        assert_eq!(ExecutionClass::NotStarted.handoff(), Handoff::Admission);
+        assert_eq!(
+            ExecutionClass::NotStarted.handoff(),
+            Handoff::Admission
+        );
     }
 
     #[test]
