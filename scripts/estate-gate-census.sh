@@ -69,8 +69,12 @@ sort -u "$tmp" | while IFS= read -r repo; do
       fi
     fi
     required=unknown; bypass=unknown
-    if [[ -n "$rules" ]] && jq -e 'type=="array"' <<<"$rules" >/dev/null; then
-      required=not_in_readable_rulesets; bypass='[]'
+    if [[ -n "$job" && -n "$rules" ]] && jq -e 'type=="array"' <<<"$rules" >/dev/null; then
+      # A single page is not a complete negative. Keep incomplete data explicit.
+      required=not_matched_in_readable_first_page; bypass='[]'
+      if [[ "$(jq -r 'length' <<<"$rules")" -ge 30 ]]; then
+        required=unknown; bypass=unknown
+      fi
       ids="$(jq -r '.[]|select(.enforcement=="active")|.id' <<<"$rules")"
       while IFS= read -r id; do
         [[ -n "$id" ]] || continue
