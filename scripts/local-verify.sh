@@ -47,6 +47,8 @@
 #   scripts/local-verify.sh --check         # report the toolchain and the plan; run nothing
 #   scripts/local-verify.sh --out DIR       # where to write the bundle (default: $TMPDIR/…)
 #   scripts/local-verify.sh --strict        # a KNOWN pre-existing failure fails the run
+#   scripts/local-verify.sh --only 02-check # run just these steps (comma-separated ids);
+#                                           # everything else is recorded SKIP, never PASS
 #
 # Reading the result: open <out>/SUMMARY.txt. It carries the per-step status, the
 # exact errors extracted from each log, and the run's git/rubist/cargo identity.
@@ -61,6 +63,7 @@ quick=false
 creusot_prove=false
 check_only=false
 strict=false
+only_list=
 out_dir=""
 
 usage() { sed -n '3,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
@@ -72,6 +75,7 @@ while [ "$#" -gt 0 ]; do
     --creusot-prove) creusot_prove=true ;;
     --check)         check_only=true ;;
     --strict)        strict=true ;;
+    --only)          shift; only_list="${1:-}" ;;
     --out)           shift; out_dir="${1:-}" ;;
     -h|--help)       usage; exit 0 ;;
     *) echo "local-verify.sh: unknown argument '$1'" >&2; usage >&2; exit 3 ;;
@@ -95,11 +99,6 @@ if [ -z "$out_dir" ]; then
 fi
 mkdir -p "$out_dir" || { echo "cannot create $out_dir" >&2; exit 3; }
 
-STATUS_TSV="$out_dir/status.tsv"
-: > "$STATUS_TSV"
-printf 'step\tstatus\texit\tlog\n' >> "$STATUS_TSV"
-
-record() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$STATUS_TSV"; }
 say() { printf '%s\n' "$*"; }
 
 env_log="$out_dir/00-env.txt"
@@ -154,6 +153,15 @@ if [ "$check_only" = true ]; then
   fi
   exit 0
 fi
+
+# The run ledger is created only once a step is about to run: `--check` reports
+# and exits above, so a plan-only invocation leaves no status.tsv behind (an
+# empty ledger would be an empty claim).
+STATUS_TSV="$out_dir/status.tsv"
+: > "$STATUS_TSV"
+printf 'step\tstatus\texit\tlog\n' >> "$STATUS_TSV"
+
+record() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$STATUS_TSV"; }
 
 # --------------------------------------------------------------- install ----
 installed=true
@@ -212,6 +220,17 @@ skip_step() {
   printf '  %-12s %s\n' "$id" "SKIP — $label"
 }
 
+# selected <id> — true when no --only was given, or when <id> is in the list.
+# A deselected step is recorded SKIP (never PASS), so `--only` cannot be used to
+# make a suite look greener than it is.
+selected() {
+  [ -z "$only_list" ] && return 0
+  case ",$only_list," in
+    *",$1,"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 require_cargo() {
   if ! have cargo; then
     void_step "$1" "$2" "no cargo on PATH — install a toolchain first"
@@ -226,31 +245,41 @@ say "running steps (logs under $out_dir)"
 
 # 01 — formatting. Never auto-fixed here: rewriting files is a change, and this
 # script's contract is that the worktree is untouched. `cargo fmt --check` reports.
-if require_cargo 01-fmt "cargo fmt --check"; then
+if ! selected 01-fmt; then
+  skip_step 01-fmt "cargo fmt --check (not selected)"
+elif require_cargo 01-fmt "cargo fmt --check"; then
   run_step 01-fmt "cargo fmt --all -- --check" "$out_dir/01-fmt.txt" \
     cargo fmt --all -- --check
 fi
 
 # 02 — compile. The step that matters most for the new modules.
-if require_cargo 02-check "cargo check"; then
+if ! selected 02-check; then
+  skip_step 02-check "cargo check (not selected)"
+elif require_cargo 02-check "cargo check"; then
   run_step 02-check "cargo check --workspace --all-targets --locked" "$out_dir/02-check.txt" \
     cargo check --workspace --all-targets --locked
 fi
 
 # 03 — clippy. `-D warnings` matches what the estate's rust-ci gates on.
-if require_cargo 03-clippy "cargo clippy -D warnings"; then
+if ! selected 03-clippy; then
+  skip_step 03-clippy "cargo clippy -D warnings (not selected)"
+elif require_cargo 03-clippy "cargo clippy -D warnings"; then
   run_step 03-clippy "cargo clippy --workspace --all-targets --locked -- -D warnings" "$out_dir/03-clippy.txt" \
     cargo clippy --workspace --all-targets --locked -- -D warnings
 fi
 
 # 04 — the workspace tests (`just test`, first command).
-if require_cargo 04-test "cargo test --workspace"; then
+if ! selected 04-test; then
+  skip_step 04-test "cargo test --workspace (not selected)"
+elif require_cargo 04-test "cargo test --workspace"; then
   run_step 04-test "cargo test --workspace --locked" "$out_dir/04-test.txt" \
     cargo test --workspace --locked
 fi
 
 # 05 — the `boj` feature build (`just test`, second command).
-if require_cargo 05-test-boj "cargo test -p squabble-cli --features boj"; then
+if ! selected 05-test-boj; then
+  skip_step 05-test-boj "cargo test -p squabble-cli --features boj (not selected)"
+elif require_cargo 05-test-boj "cargo test -p squabble-cli --features boj"; then
   run_step 05-test-boj "cargo test -p squabble-cli --features boj --locked" "$out_dir/05-test-boj.txt" \
     cargo test -p squabble-cli --features boj --locked
 fi
@@ -258,6 +287,8 @@ fi
 # 06 — the stable-Rust mirror of the Creusot model (`just verify-mirror`).
 if [ "$quick" = true ]; then
   skip_step 06-mirror "stable Creusot mirror (--quick)"
+elif ! selected 06-mirror; then
+  skip_step 06-mirror "cargo test --no-default-features (verification/) (not selected)"
 elif require_cargo 06-mirror "cargo test --no-default-features (verification/)"; then
   run_step 06-mirror "cargo test --manifest-path verification/squabble-creusot/Cargo.toml --no-default-features" \
     "$out_dir/06-mirror.txt" \
@@ -266,7 +297,9 @@ fi
 
 # 07 — the toolchain-free structural aspects (this is the one that already runs
 # in the sandbox; aspect 2's pre-existing documentation-grep failure is known).
-if [ -f tests/aspect_tests.sh ]; then
+if ! selected 07-aspect; then
+  skip_step 07-aspect "aspect tests (not selected)"
+elif [ -f tests/aspect_tests.sh ]; then
   aspect_log="$out_dir/07-aspect.txt"
   printf '$ bash tests/aspect_tests.sh\n\n' > "$aspect_log"
   bash tests/aspect_tests.sh >> "$aspect_log" 2>&1
@@ -299,7 +332,9 @@ else
 fi
 
 # 08 — the pinned contracts (`just contract-test`); jq only, no Rust.
-if ! have jq; then
+if ! selected 08-contract; then
+  skip_step 08-contract "contract conformance (not selected)"
+elif ! have jq; then
   void_step 08-contract "contract conformance" "jq is required by contracts/*/tests/run-conformance.sh"
 else
   log="$out_dir/08-contract.txt"
@@ -320,7 +355,9 @@ fi
 # 09 — discharge the Creusot obligations. Opt-in: it needs opam+Why3+SMT, the
 # pinned nightly, and it is slow. `--creusot-prove` is the only way in, so a
 # "stated" obligation can never be reported as merely skipped by accident.
-if [ "$quick" = true ]; then
+if ! selected 09-creusot-prove; then
+  skip_step 09-creusot-prove "Creusot prove (not selected)"
+elif [ "$quick" = true ]; then
   skip_step 09-creusot-prove "Creusot prove (--quick)"
 elif [ "$creusot_prove" = false ]; then
   skip_step 09-creusot-prove "Creusot prove (needs --creusot-prove)"
