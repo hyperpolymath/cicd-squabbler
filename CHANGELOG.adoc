@@ -10,6 +10,17 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
 
 ==== Added
 
+* `scripts/local-verify.sh` (and `just local-verify`) — runs every gate CI runs,
+  locally, and leaves one bundle (`SUMMARY.txt` inside a timestamped `$TMPDIR`
+  directory) carrying per-step status, the errors extracted from each log, the
+  toolchain identity and the before/after worktree state. It writes nothing into
+  the repository, and it delegates installation to `scripts/install-toolchain.sh`
+  so nothing it installs is unverified. Status vocabulary is the estate's:
+  `PASS`/`FAIL`/`VOID`/`SKIP`/`KNOWN`, where `VOID` ("no check was performed")
+  and `SKIP` are never passes, and a `KNOWN` pre-existing failure must be the
+  single failure in the run to be recognised at all. Written because the new
+  modules below were authored without a reachable Rust toolchain, so their tests
+  have never been compiled.
 * `squabble_core::execution` — the execution-phase classifier. `fight` knew only
   *that* a check was red, so a job that died in runner setup or lock resolution
   was attributed by the workflow's *shape* (a code fixer, a security scan, an

@@ -662,6 +662,18 @@ suppress a new finding, and `fight` prints the declaration it relied on
 
 == 12. How to verify this report
 
+The whole battery runs as one command, on a machine with a toolchain:
+
+[source,sh]
+----
+scripts/local-verify.sh                 # or: just local-verify
+scripts/local-verify.sh --quick         # stable only, no Creusot
+scripts/local-verify.sh --creusot-prove # also discharge the Creusot obligations
+----
+
+It writes one `SUMMARY.txt` (per-step status, extracted errors, worktree diff) and
+nothing into the repository. Read §10.3/§10.4 with it: a `VOID` step is not a pass.
+
 [source,sh]
 ----
 # 1. The code claims (needs a Rust toolchain; absent in the authoring env)
