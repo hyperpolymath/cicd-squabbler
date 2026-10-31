@@ -313,7 +313,11 @@ impl ExecutionClass {
 ///
 /// Order matters and is checked from the top of the job down: a preflight
 /// failure cannot be masked by anything later, because nothing later ran.
-pub fn classify(job: Option<CheckRun>, steps: &[StepOutcome], signatures: &PhaseSignatures) -> ExecutionClass {
+pub fn classify(
+    job: Option<CheckRun>,
+    steps: &[StepOutcome],
+    signatures: &PhaseSignatures,
+) -> ExecutionClass {
     // Class 1 — nothing started. Attribution is `startup`'s job, not ours.
     let Some(job) = job.filter(|c| !matches!(c, CheckRun::Missing)) else {
         return ExecutionClass::NotStarted;
@@ -429,10 +433,7 @@ mod tests {
         // Even with step text in hand, "no job" wins: the estate's first class is
         // decided before any step could exist.
         let steps = vec![step("Cargo check", StepConclusion::Failure)];
-        assert_eq!(
-            classify(None, &steps, &sig()),
-            ExecutionClass::NotStarted
-        );
+        assert_eq!(classify(None, &steps, &sig()), ExecutionClass::NotStarted);
         assert_eq!(
             classify(Some(CheckRun::Missing), &steps, &sig()),
             ExecutionClass::NotStarted

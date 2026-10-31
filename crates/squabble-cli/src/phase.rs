@@ -39,8 +39,7 @@ use squabble_fight::execution::load_signatures;
 use std::path::Path;
 use std::process::ExitCode;
 
-pub(crate) const USAGE: &str =
-    "usage: squabble phase <job.json> [--repo <path>] [--json]";
+pub(crate) const USAGE: &str = "usage: squabble phase <job.json> [--repo <path>] [--json]";
 
 struct Args {
     job: String,
@@ -262,7 +261,8 @@ mod tests {
 
     #[test]
     fn a_payload_without_steps_is_absence_of_evidence_not_a_class() {
-        let (job, steps) = parse_job(r#"{"status": "completed", "conclusion": "failure"}"#).unwrap();
+        let (job, steps) =
+            parse_job(r#"{"status": "completed", "conclusion": "failure"}"#).unwrap();
         assert_eq!(job, Some(CheckRun::Failed));
         assert!(steps.is_empty());
         let c = classify(job, &steps, &Default::default());
