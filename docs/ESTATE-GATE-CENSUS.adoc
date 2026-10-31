@@ -23,7 +23,9 @@ to the repositories, workflow runs and rulesets, plus `jq`.
 Each output line is JSON. `filename_absent` means no workflow *filename*
 matches Squabble; it **does not** establish that no embedded integration
 exists in an unrelated workflow file. `named_workflow_found` establishes
-only that a candidate workflow exists. `run.status` is the latest
+only that a candidate workflow exists. `role=action_selftest` distinguishes
+Squabble installer/consumer tests from `role=gate_candidate`; neither
+role alone establishes enforcement. `run.status` is the latest
 default-branch run status; `startup_failure` with `zero_jobs` is explicitly
 not green. A successful run is not evidence that its job is required.
 
