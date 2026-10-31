@@ -18,9 +18,23 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
   so nothing it installs is unverified. Status vocabulary is the estate's:
   `PASS`/`FAIL`/`VOID`/`SKIP`/`KNOWN`, where `VOID` ("no check was performed")
   and `SKIP` are never passes, and a `KNOWN` pre-existing failure must be the
-  single failure in the run to be recognised at all. Written because the new
-  modules below were authored without a reachable Rust toolchain, so their tests
-  have never been compiled.
+  single failure in the run to be recognised at all. `--only <ids>` runs a subset
+  (deselected steps are recorded `SKIP`, never `PASS`) and `--check` reports the
+  toolchain and the plan without running a step or writing a ledger. Written
+  because the new modules below were authored without a reachable Rust toolchain,
+  so their tests have never been compiled.
+* `tests/local_verify_test.sh` — 31 planted controls for the harness above: no
+  toolchain (`VOID`, exit 2), all-green (exit 0), a planted compile error (its
+  diagnostic and `file:line` extracted), a fmt diff, a failing assertion (both
+  sides extracted), `--only`, `--check`, a missing `jq` (`VOID`, never `PASS`), an
+  unchanged worktree, and exactly one documented status per ledger row. No Rust,
+  no network, no token: `bash tests/local_verify_test.sh`.
+  Two of its own first-draft cases were **wrong and were fixed, not worked
+  around**: the bare `PATH` fixture omitted `dirname`, so the script under test
+  resolved its repository root to `/` and two `VOID` cases passed for the wrong
+  reason; and one case piped the script into `grep -q`, which exits at the first
+  match and killed the writer with `SIGPIPE`, which `pipefail` then reported as
+  the plan being missing.
 * `squabble_core::execution` — the execution-phase classifier. `fight` knew only
   *that* a check was red, so a job that died in runner setup or lock resolution
   was attributed by the workflow's *shape* (a code fixer, a security scan, an

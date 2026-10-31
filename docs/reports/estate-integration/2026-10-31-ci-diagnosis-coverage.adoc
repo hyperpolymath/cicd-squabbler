@@ -674,6 +674,13 @@ scripts/local-verify.sh --creusot-prove # also discharge the Creusot obligations
 It writes one `SUMMARY.txt` (per-step status, extracted errors, worktree diff) and
 nothing into the repository. Read §10.3/§10.4 with it: a `VOID` step is not a pass.
 
+The harness's own status vocabulary is itself tested, with planted controls in
+both directions (`tests/local_verify_test.sh`, 31 checks, no Rust or network
+needed): a missing toolchain and a missing `jq` report `VOID` and exit 2; a
+planted compile error exits 1 *and* has its diagnostic and `file:line`
+extracted; `--only` leaves every other step `SKIP`; the worktree is unchanged
+afterwards.
+
 [source,sh]
 ----
 # 1. The code claims (needs a Rust toolchain; absent in the authoring env)

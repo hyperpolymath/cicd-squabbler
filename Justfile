@@ -365,6 +365,10 @@ validate-coapt:
 local-verify *args:
     @bash scripts/local-verify.sh {{args}}
 
+# Planted controls for the harness above (no Rust, no network, no token)
+local-verify-test:
+    @bash tests/local_verify_test.sh
+
 verify-status:
     @bash scripts/install-toolchain.sh --check
 
