@@ -18,6 +18,9 @@ while (($#)); do
     *) echo "Bad argument: $1" >&2; exit 2 ;;
   esac
 done
+# api <endpoint> — print the gh API response when jq -e accepts it.
+# Returns 1 on request or validation failure, including a final false or null
+# value; callers convert these failures to unknown evidence. Write errors propagate.
 api() {
   local data
   data="$(gh api "$1" 2>/dev/null)" || return 1
@@ -25,6 +28,8 @@ api() {
   printf '%s\n' "$data"
 }
 if [[ -n "$out" ]]; then mkdir -p "$(dirname "$out")"; : > "$out"; fi
+# emit <row> — write a newline-terminated row to stdout or append it to $out
+# when non-empty. Write errors propagate.
 emit() {
   if [[ -n "$out" ]]; then printf '%s\n' "$1" >> "$out"
   else printf '%s\n' "$1"; fi
