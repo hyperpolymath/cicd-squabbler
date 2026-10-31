@@ -360,6 +360,15 @@ validate-coapt:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Report which toolchains and provers are present (installs nothing)
+# Run every CI gate locally and leave one evidence bundle to hand back.
+# Writes nothing into the repository (default bundle: $TMPDIR/squabble-verify-*).
+local-verify *args:
+    @bash scripts/local-verify.sh {{args}}
+
+# Planted controls for the harness above (no Rust, no network, no token)
+local-verify-test:
+    @bash tests/local_verify_test.sh
+
 verify-status:
     @bash scripts/install-toolchain.sh --check
 

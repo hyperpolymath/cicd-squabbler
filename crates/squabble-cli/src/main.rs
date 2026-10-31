@@ -35,6 +35,11 @@
 //!
 //! Note `3` says nothing about *classic* branch protection, which lives behind
 //! a different endpoint and is invisible to the rules API this binary queries.
+//!
+//! `squabble phase` uses only `0` (a classification was produced) and `2` (tool
+//! failure). There is deliberately no exit code that means "green": it reports
+//! *where* a job stopped — preflight, prerequisite, policy-reached, verified —
+//! which is a diagnosis, not a gate verdict.
 
 mod board;
 #[cfg(feature = "boj")]
@@ -43,6 +48,7 @@ mod chains;
 mod fetch;
 mod fight;
 mod inbox;
+mod phase;
 mod verify;
 mod zero_job;
 
@@ -71,6 +77,7 @@ fn main() -> ExitCode {
         Some("fight") => fight::run(&args[2..]),
         Some("chains") => chains::run(&args[2..]),
         Some("zero-job") => zero_job::run(&args[2..]),
+        Some("phase") => phase::run(&args[2..]),
         Some("verify-satisfied") => verify::run(&args[2..]),
         Some("board") => board::run(&args[2..]),
         Some("inbox-sweep") => inbox::run(&args[2..]),
@@ -92,6 +99,7 @@ fn main() -> ExitCode {
                  squabble {}\n  \
                  squabble {}\n  \
                  squabble {}\n  \
+                 squabble {}\n  \
                  squabble --version\n\n\
                  EXIT CODES:\n  \
                  0 ok · 2 failure · 3 no `required_status_checks` rule on the base branch · 4 chains/zero-job: blocking finding · 5 verify-satisfied: agent items remain · 6 board or inbox-sweep: incomplete\n",
@@ -99,6 +107,7 @@ fn main() -> ExitCode {
                 fight::USAGE.trim_start_matches("usage: squabble "),
                 chains::USAGE.trim_start_matches("usage: squabble "),
                 zero_job::USAGE.trim_start_matches("usage: squabble "),
+                phase::USAGE.trim_start_matches("usage: squabble "),
                 board::USAGE.trim_start_matches("usage: squabble "),
                 inbox::USAGE.trim_start_matches("usage: squabble "),
                 verify::USAGE.trim_start_matches("usage: squabble ")

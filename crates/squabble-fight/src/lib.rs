@@ -28,6 +28,7 @@
 pub mod apply;
 pub mod chains;
 pub mod context;
+pub mod execution;
 pub mod gate_triage;
 pub mod startup;
 pub mod workflows;

@@ -10,6 +10,66 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
 
 ==== Added
 
+* `scripts/local-verify.sh` (and `just local-verify`) — runs every gate CI runs,
+  locally, and leaves one bundle (`SUMMARY.txt` inside a timestamped `$TMPDIR`
+  directory) carrying per-step status, the errors extracted from each log, the
+  toolchain identity and the before/after worktree state. It writes nothing into
+  the repository, and it delegates installation to `scripts/install-toolchain.sh`
+  so nothing it installs is unverified. Status vocabulary is the estate's:
+  `PASS`/`FAIL`/`VOID`/`SKIP`/`KNOWN`, where `VOID` ("no check was performed")
+  and `SKIP` are never passes, and a `KNOWN` pre-existing failure must be the
+  single failure in the run to be recognised at all. `--only <ids>` runs a subset
+  (deselected steps are recorded `SKIP`, never `PASS`) and `--check` reports the
+  toolchain and the plan without running a step or writing a ledger. Written
+  because the new modules below were authored without a reachable Rust toolchain.
+  They type-check on CI but have not been executed: `Cargo fmt` fails first, and
+  the `Cargo test` job does not start. That failure is **inherited**: `main` is
+  not fmt-clean, and the 7 unformatted workspace files it carries are repaired by
+  #144 (and identically by #143). None of the files this change adds or modifies
+  is unformatted. Merge one of those two first, rebase, and `fmt` passes on its
+  own — only then do `clippy` and the tests execute.
+* `tests/local_verify_test.sh` — 31 planted controls for the harness above: no
+  toolchain (`VOID`, exit 2), all-green (exit 0), a planted compile error (its
+  diagnostic and `file:line` extracted), a fmt diff, a failing assertion (both
+  sides extracted), `--only`, `--check`, a missing `jq` (`VOID`, never `PASS`), an
+  unchanged worktree, and exactly one documented status per ledger row. No Rust,
+  no network, no token: `bash tests/local_verify_test.sh`.
+  Two of its own first-draft cases were **wrong and were fixed, not worked
+  around**: the bare `PATH` fixture omitted `dirname`, so the script under test
+  resolved its repository root to `/` and two `VOID` cases passed for the wrong
+  reason; and one case piped the script into `grep -q`, which exits at the first
+  match and killed the writer with `SIGPIPE`, which `pipefail` then reported as
+  the plan being missing.
+* `squabble_core::execution` — the execution-phase classifier. `fight` knew only
+  *that* a check was red, so a job that died in runner setup or lock resolution
+  was attributed by the workflow's *shape* (a code fixer, a security scan, an
+  upstream owner) rather than as provisioning. The module classifies step
+  evidence into the five outcomes an estate report must keep distinct — not
+  started, preflight, prerequisite missing, policy step failed, verified — with
+  a fail-closed `Unclassified` carrying one of five reasons, and a `Handoff`
+  naming who must act. Signatures are **host-supplied** (no step name is
+  compiled in, preserving the standalone rule) and matched **exactly**, the
+  lesson `gate_triage.a2ml` 0.2.0 already paid for. It constructs no `CheckRun`,
+  proposes no `Move`, drops no required context and reaches no gate state, so
+  `squabble ≠ bypass` is untouched; `Verified` hands off to `NoClaim` and must
+  still be read with `polarity`.
+* `squabble phase <job.json> [--repo <path>] [--json]` — the offline entry point
+  for that classifier, over a jobs-API payload. Prints class, step, handoff
+  label, owner phrase and explanation, plus a permanent "NOT a gate verdict"
+  line. Exit `0` (a classification was produced) or `2` (tool failure): there is
+  deliberately no exit code that means green. Outside `squabble-contract/1.0.0`,
+  like `zero-job` and `chains`.
+* `.machine_readable/bot_directives/execution_taxonomy.a2ml` — the step-name
+  signatures, each with the workflow it was read from (2026-10-31), and an
+  explicit note that `cargo check --locked` is *not* a setup step: a
+  dependency-resolution error inside it is indistinguishable from a compile
+  failure at the step-conclusion evidence tier.
+* `docs/reports/estate-integration/2026-10-31-ci-diagnosis-coverage.adoc` — the
+  role/ownership map behind the above: the five outcomes, who diagnoses and who
+  remediates each (hypatia `ci-health`, standards' reusables, cicd-suite,
+  reposystem, proven-tests-and-benches, gitbot-fleet), eight concrete gaps, the
+  owner-handoff table for inaccessible settings, and six proposals kept separate
+  from what is implemented.
 * `.github/actions/squabble` — a composite action that installs the
   squabble v0.1.0 release binary for other workflows and, optionally, runs
   it. It refuses any download whose sha256 is not the pinned digest, or whose
@@ -98,9 +158,11 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
   verify-{status,install,mirror,creusot,gate}` install and run the toolchain,
   Creusot included via upstream's `./INSTALL` (not `cargo install`).
   **Stated, not proved**: no obligation has been discharged — the authoring
-  environment has no Rust toolchain at all, and this repository's `Rust CI`
-  currently ends as a zero-job `startup_failure`, so CI has not compiled the
-  workspace either. The estate gate's detect/theatre phases were run against
+  environment has no Rust toolchain at all, and this repository's `Rust CI` on
+  `main` has been ending as a zero-job `startup_failure` (four consecutive runs),
+  so pushes to `main` have not compiled the workspace. Pull requests *do* run it:
+  on PR #145 `Cargo check` passes and `Cargo fmt` fails, so the workspace is
+  type-checked but the Creusot prove job still has no green precedent. The estate gate's detect/theatre phases were run against
   this tree (obligations=true, claims=false, 10 contract attributes, T1/T2/T3
   clean) and its prove phase correctly reported "NO PROOF WAS PERFORMED".
 * The dev container now installs the Rust toolchains it was missing (stable for

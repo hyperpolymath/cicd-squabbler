@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# execution_taxonomy.a2ml — WHERE a run stopped, as step evidence.
+#
+# Read by `squabble phase` (via squabble-fight::execution) and classified by
+# squabble-core::execution. It answers one question the gate model cannot:
+# a red check says *that* a run failed; it never says whether the policy ran.
+#
+# The five outcomes an estate report must keep distinct:
+#   1. not started      — zero jobs: admission or source resolution refused it.
+#                         Attributed by `squabble zero-job` / `squabble chains`.
+#   2. preflight        — a job started and died in runner setup, provisioning or
+#                         lock resolution, BEFORE any policy step executed.
+#   3. prerequisite     — a declared tool/credential/configuration step failed, so
+#                         the policy step could not run.
+#   4. policy failed    — the policy was reached and its step concluded failure.
+#                         The FINDING is read from the policy's own report; this
+#                         classifier only says the policy was reached.
+#   5. verified         — a policy step ran and succeeded (still subject to the
+#                         green-polarity/vacuity check in squabble-core::polarity).
+#
+# WHY THIS FILE EXISTS AT ALL
+# `squabble-core` holds no step names by design: it must stay detachable, and a
+# compiled-in vocabulary would be a taxonomy rather than a classifier. The estate
+# measured that lesson once already — an abbreviated scanner step name in
+# gate_triage.a2ml matched no real job, so the vacuity classifier silently
+# degraded to "genuine" forever (see the note in that directive).
+#
+# MATCHING IS EXACT (after trimming). Do not abbreviate a step name here for
+# readability: an abbreviated name matches nothing and the step silently falls
+# back to "policy step". Copy the `- name:` string from the workflow verbatim.
+#
+# HOW TO EXTEND, HONESTLY
+# Add a step only when you have READ IT in a workflow this estate ships, and say
+# where. A step name guessed from a convention is worse than an empty list: the
+# empty list leaves the classification to the more conservative class.
+#
+# `Set up job` is GitHub's implicit first step in every job. It is compiled into
+# squabble-core (it is a GitHub primitive, not a repo declaration), so listing it
+# here is documentation, not policy.
+
+[metadata]
+version = "0.1.0"
+last-updated = "2026-10-31"
+spec = "https://github.com/hyperpolymath/cicd-squabbler/blob/main/docs/reports/estate-integration/2026-10-31-ci-diagnosis-coverage.adoc"
+status = "wired into `squabble phase`; NOT yet wired into `squabble fight` (see proposal P-2)"
+
+[execution-taxonomy]
+# Steps that run before the policy. A failure in one of these is PROVISIONING:
+# nothing has been said about the code, the policy, or the PR.
+#
+# Measured 2026-10-31 in metadatastician/standards .github/workflows/
+# rust-ci-reusable.yml (jobs `check` and `test`), which is the rust CI this
+# estate's consumers call:
+#     - name: Checkout repository
+#     - name: Install Rust toolchain
+#     - name: Install Zig for native build
+#     - name: Cache cargo registry and build
+# and in that repository's allowlist-preflight-reusable.yml:
+#     - name: Stage policy tools outside the scanned tree
+# `cargo check --locked` is deliberately NOT here: it is the policy step, and a
+# lock-resolution error inside it is indistinguishable from a genuine compile
+# failure at this evidence tier. Attribute that class from job ANNOTATIONS (the
+# estate's B-LOCKFILE detector), never from a step conclusion.
+setup-steps = [
+  "Checkout repository",
+  "Checkout caller repository",
+  "Checkout policy source",
+  "Install Rust toolchain",
+  "Install Zig for native build",
+  "Cache cargo registry and build",
+  "Stage policy tools outside the scanned tree",
+]
+
+# Steps that establish a DECLARED prerequisite — a tool, credential or piece of
+# configuration — whose failure means the policy step could not run.
+#
+# Measured 2026-10-31 in metadatastician/standards
+# .github/workflows/cicd-squabbler-reusable.yml (`fight-report` job): the probe
+# step decides whether the supplied credential can read the whole gate before
+# `squabble fight` is asked to classify anything.
+#
+# Kept deliberately short: an empty or thin list means class 3 is rarely
+# attributed, which is the honest state of the evidence. Adding a guess here
+# would turn "unknown" into "missing secret" — the exact overclaim this file's
+# sibling directive warns about.
+prerequisite-steps = [
+  "Probe whether fight can inspect the full gate",
+]
+
+[execution-taxonomy.notes]
+# What this taxonomy deliberately does NOT do.
+#
+# * Class 1 needs no entry: it is "no job exists", decided before any step.
+# * Billing refusal (`A-BILLING`) is a JOB ANNOTATION, not a step conclusion.
+#   With no step evidence the classifier reports `Unclassified (no step
+#   evidence)` — fail-closed — and hypatia's `scripts/ci-health/` owns that class.
+# * A tag/branch-pinned `uses:` under `sha_pinning_required` refuses at startup
+#   with zero jobs, so it is class 1, owned by squabble-core::startup and
+#   `squabble zero-job`, not by this file.
+# * Nothing here may be read as a verdict: no class in squabble-core::execution
+#   constructs a CheckRun, drops a required context, or reaches GateState::Green.
