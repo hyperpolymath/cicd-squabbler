@@ -126,9 +126,7 @@ setup-steps = ["this belongs to a different section and must not be read"]
     fn an_absent_directive_is_unusable_not_permissive() {
         let s = parse_signatures("");
         assert!(!s.is_usable());
-        assert!(
-            s.setup_steps.is_empty() && s.prerequisite_steps.is_empty()
-        );
+        assert!(s.setup_steps.is_empty() && s.prerequisite_steps.is_empty());
         // Unusable means "claim no preflight class", which is the fail-closed
         // answer — not "everything is preflight".
         assert!(!s.is_setup("Install Rust toolchain"));

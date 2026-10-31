@@ -122,7 +122,10 @@ fn parse_job(text: &str) -> Result<(Option<CheckRun>, Vec<StepOutcome>), String>
                 .map(str::to_ascii_uppercase)
         };
         let (status, conclusion) = (upper("status"), upper("conclusion"));
-        Some(CheckRun::from_github(status.as_deref(), conclusion.as_deref()))
+        Some(CheckRun::from_github(
+            status.as_deref(),
+            conclusion.as_deref(),
+        ))
     };
 
     let steps = v
@@ -291,6 +294,49 @@ mod tests {
         assert!(steps.is_empty());
         let c = classify(job, &steps, &Default::default());
         assert_eq!(c.label(), "unclassified");
+    }
+
+    #[test]
+    fn lowercase_values_are_normalised_before_classification() {
+        // GitHub's API reports lowercase `status`/`conclusion`, but
+        // `CheckRun::from_github` matches uppercase. Passing them unchanged made
+        // a real failure read as Pending — a red classified as "not concluded".
+        // This test exists because that bug was live until the job payload was
+        // normalised, and nothing executed to catch it.
+        let lower = parse_job(r#"{"status": "completed", "conclusion": "failure"}"#)
+            .unwrap()
+            .0;
+        assert_eq!(lower, Some(CheckRun::Failed));
+        let upper = parse_job(r#"{"status": "COMPLETED", "conclusion": "FAILURE"}"#)
+            .unwrap()
+            .0;
+        assert_eq!(upper, lower, "case must not change the conclusion");
+        let skipped = parse_job(r#"{"status": "completed", "conclusion": "skipped"}"#)
+            .unwrap()
+            .0;
+        assert_eq!(skipped, Some(CheckRun::Skipped));
+        // Still running: no conclusion, so not concluded — never a failure.
+        let running = parse_job(r#"{"status": "in_progress"}"#).unwrap().0;
+        assert_eq!(running, Some(CheckRun::Pending));
+    }
+
+    #[test]
+    fn an_object_that_is_not_a_job_is_a_tool_failure() {
+        // The `gh api …/jobs` wrapper and any other object would otherwise be
+        // read as a Pending job, i.e. "no evidence" silently became "not
+        // concluded" instead of a refusal.
+        assert!(parse_job(r#"{"total_count": 1, "jobs": []}"#).is_err());
+        assert!(parse_job(r#"{"steps": []}"#).is_err());
+        // A non-string status is not a status.
+        assert!(parse_job(r#"{"status": 5}"#).is_err());
+    }
+
+    #[test]
+    fn a_json_array_is_a_tool_failure_not_a_job() {
+        assert!(parse_job("[]").is_err());
+        assert!(parse_job(r#"[{"status": "completed"}]"#).is_err());
+        assert!(parse_job("42").is_err());
+        assert!(parse_job(r#""completed""#).is_err());
     }
 
     #[test]

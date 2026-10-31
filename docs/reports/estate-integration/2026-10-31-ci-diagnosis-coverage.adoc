@@ -591,19 +591,45 @@ test` job never starts. `just test` (or `just local-verify`) must be run on a ho
 with a toolchain before this change is claimed as verified; if any assertion is
 wrong, the assertion is the thing to change, not the class.
 
-The `fmt` failure is worth recording as its own lesson. It cannot be repaired
-from this environment: `static.rust-lang.org` and GitHub release assets are
-blocked, and the only formatter reachable here is rustfmt compiled to wasm
-(`@scalar/rust-fmt`), which reproduces **26 of the 33** Rust files on `main`
-byte-for-byte and differs on the other 7 — it keeps long method chains inline
-where this repository's rustfmt breaks them at the dots, and verticalises macro
-arguments where this repository's keeps them inline. That calibration is what
-makes it unusable as an oracle rather than merely inconvenient. Three layouts
-were still fixed from evidence it agreed with (a 111-column signature, two
-asserts over the width the repo's own `chains.rs` keeps vertical, one chain
-broken the way the repo's `startup.rs` breaks it); the residual difference needs
-one real `cargo fmt --all` and is deliberately left visible rather than guessed
-away.
+The `fmt` failure is worth recording as its own lesson, and the first version of
+this paragraph had it **wrong**. It said the only reachable formatter disagreed
+with this repository's rustfmt on 7 of 33 files, and that those 7 showed the
+opposite choice in the very classes this change uses. The measurement was right;
+the conclusion was backwards. Those 7 files are not evidence of what this
+repository's rustfmt wants — they are *pre-existing violations*. `main` is not
+fmt-clean, and #144 (and #143, which carries the same reformatting) exists to
+repair exactly them.
+
+Re-measured against real rustfmt output instead of against `main`: the wasm
+formatter reproduces the eight files reformatted by #144 (real `rustup run stable
+cargo fmt`) **byte-for-byte**, bar one hunk in `squabble-core/src/chains.rs` that
+is not a formatting change at all (`.map(RepoId::new)` rewritten to a closure,
+which rustfmt never does). It is a valid oracle, and it should have been checked
+against a formatted tree from the start.
+
+With that oracle the position is measured, not guessed:
+
+[cols="1,4"]
+|===
+|files |state
+
+|**0** |files added or modified by this branch still differ from rustfmt output
+|**7** |workspace members inherited unformatted from `main`
+(`squabble-cli/{chains,fetch,zero_job}.rs`, `squabble-core/{moves,startup}.rs`,
+`squabble-fight/startup.rs`, `squabble-forge/rest.rs`) — all repaired by #144
+|**3** |further unformatted files outside the workspace, which `cargo fmt --all`
+does not see: two `contracts/proven-tests/downstream-rust-fixture` files and
+`verification/squabble-creusot/src/model.rs`, which root `Cargo.toml` `exclude`s
+|===
+
+Three layouts were therefore **wrongly** changed earlier (`b2b9f82`), because
+they were adjudicated against `main`'s unformatted code: two `assert_eq!`s that
+rustfmt joins, and one `assert!` it keeps inline. They are in the form rustfmt
+actually produces.
+
+So the merge path is not "one `cargo fmt --all` by the owner". It is: **#144 (or
+#143) merges first**, this branch rebases, `fmt` goes green on its own, and only
+then do `clippy` and the 31 unit tests execute for the first time.
 
 === 10.4 Executable check — run, not asserted
 

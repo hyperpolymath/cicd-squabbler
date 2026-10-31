@@ -23,7 +23,11 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
   toolchain and the plan without running a step or writing a ledger. Written
   because the new modules below were authored without a reachable Rust toolchain.
   They type-check on CI but have not been executed: `Cargo fmt` fails first, and
-  the `Cargo test` job does not start. Run `cargo fmt --all`, then `just test`.
+  the `Cargo test` job does not start. That failure is **inherited**: `main` is
+  not fmt-clean, and the 7 unformatted workspace files it carries are repaired by
+  #144 (and identically by #143). None of the files this change adds or modifies
+  is unformatted. Merge one of those two first, rebase, and `fmt` passes on its
+  own — only then do `clippy` and the tests execute.
 * `tests/local_verify_test.sh` — 31 planted controls for the harness above: no
   toolchain (`VOID`, exit 2), all-green (exit 0), a planted compile error (its
   diagnostic and `file:line` extracted), a fmt diff, a failing assertion (both
