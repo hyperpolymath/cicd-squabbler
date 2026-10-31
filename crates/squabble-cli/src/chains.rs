@@ -239,9 +239,9 @@ fn collect(
                 }
                 squabble_core::startup::CanonicalResolution::Canonical => {}
                 squabble_core::startup::CanonicalResolution::Unverified { reason } => {
-                    graph
-                        .notes
-                        .push(format!("canonical name for `{written}` unverified: {reason}"));
+                    graph.notes.push(format!(
+                        "canonical name for `{written}` unverified: {reason}"
+                    ));
                 }
             }
         }
@@ -283,7 +283,9 @@ fn narrate(r: &ChainsReport) -> String {
         o.push_str(&format!("  {repo}: {line}\n"));
     }
     if !r.canonical.is_empty() {
-        o.push_str("\ncanonical names (REST, redirects followed — names compared, pins untouched):\n");
+        o.push_str(
+            "\ncanonical names (REST, redirects followed — names compared, pins untouched):\n",
+        );
         for (written, canonical) in &r.canonical {
             o.push_str(&format!(
                 "  {written} → {canonical} (MOVED — repoint, same pin)\n"
@@ -473,8 +475,10 @@ mod tests {
     const APP: &str = "jobs:\n  gov:\n    uses: me/standards/.github/workflows/gov.yml@1111111111111111111111111111111111111111\n  b:\n    steps:\n      - uses: me/dead-action@v1\n      - uses: actions/checkout@v4\n";
     const GOV: &str = "jobs:\n  x:\n    steps:\n      - uses: actions/checkout@v5\n";
     const MOVED_APP: &str = "jobs:\n  gov:\n    uses: old/stds/.github/workflows/gov.yml@2222222222222222222222222222222222222222\n";
-    const SKEW_A: &str = "jobs:\n  a:\n    steps:\n      - uses: old/lib@1111111111111111111111111111111111111111\n";
-    const SKEW_B: &str = "jobs:\n  b:\n    steps:\n      - uses: new/lib@2222222222222222222222222222222222222222\n";
+    const SKEW_A: &str =
+        "jobs:\n  a:\n    steps:\n      - uses: old/lib@1111111111111111111111111111111111111111\n";
+    const SKEW_B: &str =
+        "jobs:\n  b:\n    steps:\n      - uses: new/lib@2222222222222222222222222222222222222222\n";
 
     /// A REST fake: resolves every requested name as canonical unless the test
     /// declares a move or a 404 for it.
@@ -733,9 +737,11 @@ mod tests {
         assert_eq!(a.follow, 2);
         assert!(a.json);
         assert!(!a.no_canonical);
-        assert!(parse_args(&["--no-canonical".into(), "gh:me/y".into()])
-            .unwrap()
-            .no_canonical);
+        assert!(
+            parse_args(&["--no-canonical".into(), "gh:me/y".into()])
+                .unwrap()
+                .no_canonical
+        );
         assert!(parse_args(&[]).is_err());
         assert!(parse_args(&["--batch".into(), "0".into(), "x".into()]).is_err());
         assert!(parse_args(&["--nope".into()]).is_err());
