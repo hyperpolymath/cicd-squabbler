@@ -18,6 +18,7 @@ pub mod admission;
 pub mod board;
 pub mod chains;
 pub mod done;
+pub mod execution;
 pub mod gate;
 pub mod inbox;
 pub mod moves;

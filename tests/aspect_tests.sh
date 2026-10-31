@@ -118,6 +118,65 @@ fi
 # fi
 
 # ═══════════════════════════════════════════════════════════════════════
+# Aspect 5: a diagnosis is not a path to green (squabble ≠ bypass)
+# ═══════════════════════════════════════════════════════════════════════
+# The execution-phase classifier explains *where* a run stopped. It must never
+# be able to decide gate state, propose a move, or carry a tool's vocabulary.
+# The Rust unit tests assert behaviour; this asserts the same properties
+# structurally, on every run, without needing a toolchain.
+bold "Aspect 5: diagnosis has no path to green"
+
+EXEC_SRC="crates/squabble-core/src/execution.rs"
+EXEC_DIRECTIVE=".machine_readable/bot_directives/execution_taxonomy.a2ml"
+if [ -f "$EXEC_SRC" ]; then
+    # Non-test code only, and comments stripped: the tests legitimately construct
+    # inputs, and the doc comments legitimately *state* the invariant (naming
+    # `GateState`/`Move` in prose is the point, not a violation).
+    EXEC_PROD="$(awk '/#\[cfg\(test\)\]/{exit} {print}' "$EXEC_SRC" | grep -vE '^[[:space:]]*//')"
+
+    if printf '%s' "$EXEC_PROD" | grep -qE '\bGateState\b|\bevaluate\(\)|gate::Gate\b'; then
+        fail "execution.rs names a gate state or evaluates a gate — a phase is not a verdict"
+    else
+        pass "execution.rs cannot reach or name a gate state"
+    fi
+
+    if printf '%s' "$EXEC_PROD" | grep -qE '\bMove\b|moves::'; then
+        fail "execution.rs references a Move — a classifier must propose nothing"
+    else
+        pass "execution.rs proposes no move"
+    fi
+
+    if [ -f "$EXEC_DIRECTIVE" ]; then
+        # No step name may be compiled in: the directive is the only vocabulary,
+        # except GitHub's own implicit job steps, which are primitives.
+        LEAKED=""
+        while IFS= read -r name; do
+            case "$name" in
+                "Set up job"|"Post job"|"Complete job") continue ;;
+            esac
+            if printf '%s' "$EXEC_PROD" | grep -Fq "\"$name\""; then
+                LEAKED="$LEAKED $name"
+            fi
+        done < <(sed -nE 's/^[[:space:]]*"([^"]+)".*/\1/p' "$EXEC_DIRECTIVE")
+        if [ -n "$LEAKED" ]; then
+            fail "execution.rs compiles in step vocabulary from the directive:$LEAKED"
+        else
+            pass "no directive step name is compiled into execution.rs"
+        fi
+    else
+        warn "no $EXEC_DIRECTIVE — the vocabulary test did not run"
+    fi
+
+    if printf '%s' "$EXEC_PROD" | grep -qE 'Command::new|std::process'; then
+        fail "execution.rs runs a process — a classifier is pure"
+    else
+        pass "execution.rs is pure (no process, no IO)"
+    fi
+else
+    warn "$EXEC_SRC absent — aspect 5 did not run"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════
 # Summary
 # ═══════════════════════════════════════════════════════════════════════
 echo ""
