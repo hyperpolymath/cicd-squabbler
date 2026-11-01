@@ -28,15 +28,30 @@ what it means, and — plainly — what has *not* happened yet.
   `diagnosed` and of `admitted`, and that pin the arithmetic at the `u32`
   boundaries. Needs only a stable toolchain.
 
-| `cargo creusot prove`
+| `cargo creusot` for this crate
 | **never run**
-| No obligation has reached Why3. No run has discharged anything.
+| No obligation has reached Why3. No run has discharged anything. Creusot
+  v0.14.0 has no `prove` subcommand; the shared job's old display name is kept
+  for check-name stability.
 
 | Estate gate (`Creusot Gate` workflow)
-| wired
-| Calls `hyperpolymath/cicd-suite`'s `creusot-gate.yml`, phase-verified locally
-  (see <<_what_was_actually_checked>>). It cannot pass until a runner installs
-  the toolchain and the obligations discharge.
+| pinned to validated published gate
+| Calls `hyperpolymath/cicd-suite`'s `creusot-gate.yml` at `6c6d772`, the repair
+  exercised by the upstream real-tool canary in PR #71. That canary proves a
+  fixture and planted controls, not this crate's obligations.
+
+| Observed Creusot installer failure
+| classified as `PrerequisiteMissing`
+| The exact failed installer step is declared in
+  `.machine_readable/bot_directives/execution_taxonomy.a2ml`; `squabble phase`
+  distinguishes it from a proof-step failure.
+
+| Shared `Creusot verdict` after a prerequisite failure
+| **upstream behavior still ambiguous**
+| Its aggregate `Adjudicate` step currently reports a red result for
+  `R_PROVE=failure` without saying whether proof ran. That red is not evidence
+  that this crate's contracts failed; the no-proof distinction must be fixed in
+  the shared gate, not copied into this caller.
 
 | Rust CI on this repository
 | **not running at all**
@@ -111,6 +126,34 @@ because that is what discharges quickly and reads clearly in Why3.
 The nightly is not a preference: Creusot is built against exactly one nightly
 per release (upstream's `rust-toolchain` at the tag), and a mismatch fails at
 translation time rather than at build time. Move all three, or none.
+
+== Shared gate pin and no-proof reporting
+
+This repository stays a thin caller; it does not copy the reusable workflow.
+`.github/workflows/creusot.yml` now pins the published repair at
+`6c6d772ebe82605ba22254db528faf54faec9f49` (cicd-suite
+https://github.com/hyperpolymath/cicd-suite/commit/6c6d772ebe82605ba22254db528faf54faec9f49[commit]).
+The upstream
+https://github.com/hyperpolymath/cicd-suite/pull/71[PR #71 real-tool canary]
+validated installation, false/true controls, a fixture proof, and the final
+verdict. That is evidence that the shared gate can operate, not evidence about
+`verification/squabble-creusot`.
+
+The old consumer run
+https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41220124068[41220124068]
+failed at `Install Creusot v0.14.0 (clone at the tag, ./INSTALL)`; the later
+proof steps were skipped. The `execution_taxonomy` directive declares that exact
+installer step as a prerequisite, and a regression test checks that the proof
+job classifies as `PrerequisiteMissing`, not as a contract finding.
+
+There is a separate limitation: the reusable workflow's `Creusot verdict` job
+has only an `Adjudicate` step and receives the aggregate `prove` job result. On
+`R_PROVE=failure`, its current logic exits red whether installation failed or a
+proof actually failed. The one-job `squabble phase` classifier cannot safely
+infer the cause from `Adjudicate` alone, so it deliberately does not label that
+step `PrerequisiteMissing`. Reporting **NO PROOF WAS PERFORMED** for this case
+still belongs to the shared gate. Until that upstream behavior changes, a red
+`Creusot verdict` is not a claim that these contracts failed.
 
 == Installing the toolchain
 
@@ -229,13 +272,15 @@ prebuilt image. `apt-get update` cannot write `/var/lib/apt/lists` and the
 Debian mirrors are not on the allow-list. `why3` does not exist on PyPI or npm
 (HTTP 404), so layer 4 cannot be improvised from the reachable channels either.
 
-**What this means for a verdict: nothing, which is the point.** With no
-toolchain, `just verify-status` reports every layer MISSING and exits `2`; the
-estate gate's prove phase exits `2` with NO PROOF WAS PERFORMED; and the status
-of the obligations is unchanged — STATED, NOT PROVED. What must *not* happen,
-and did not, is an installer that reports success because it skipped a layer.
-Run `just verify-install` on a host with dist access to move any of this
-forward.
+**What this means for proof status: nothing, which is the point.** With no
+toolchain, `just verify-status` reports every layer MISSING and exits `2`; when
+invoked directly, the shared gate's prove phase exits `2` with NO PROOF WAS
+PERFORMED. This phase-level response is distinct from the workflow's aggregate
+`Creusot verdict` job described above, which still needs an upstream no-proof
+result. In either case, this repository's obligations remain STATED, NOT
+PROVED. What must *not* happen is an installer that reports success because it
+skipped a layer. Run `just verify-install` on a host with dist access to move
+any of this forward.
 
 == Running the obligations
 

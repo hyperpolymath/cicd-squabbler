@@ -6,8 +6,12 @@
 # spark/gate_machine. It detects Creusot obligations and claims, fails a claim of
 # proof that has no contracts behind it, and — when obligations exist — installs
 # Creusot at a pinned release, proves a planted FALSE contract to show the prover
-# can say no, proves a planted TRUE one, and only then runs
-# `cargo creusot prove` in every crate that carries contracts.
+# can say no, proves a planted TRUE one, and only then runs `cargo creusot` in
+# every crate that carries contracts. Creusot v0.14.0 has no `prove` subcommand;
+# the reusable job's historical display name is retained for check-name stability.
+#
+# Pin the published repair validated by cicd-suite PR #71's real-tool canary.
+# That canary proves the shared installer/control path, not this crate's contracts.
 #
 # What it covers here: verification/squabble-creusot. Obligations are
 # **stated, not discharged** — no run has reached Why3 yet (see
@@ -33,7 +37,7 @@ permissions:
 
 jobs:
   creusot:
-    uses: hyperpolymath/cicd-suite/.github/workflows/creusot-gate.yml@bf7dd95cf49733019343ff485c2f45c6b261839c
+    uses: hyperpolymath/cicd-suite/.github/workflows/creusot-gate.yml@6c6d772ebe82605ba22254db528faf54faec9f49
     with:
       # Paired inputs: Creusot v0.14.0 is built against nightly-2026-08-03
       # (creusot-rs/creusot's own rust-toolchain at that tag, mirrored in
@@ -45,7 +49,7 @@ jobs:
       # dependency: prove nothing, claim nothing. Fail rather than warn.
       enforce_hollow: true
       # `prove_args` is deliberately EMPTY and must stay that way. The gate
-      # appends it to `cargo creusot prove` for the caller's crates *and* for its
+      # appends it to `cargo creusot` for the caller's crates *and* for its
       # two planted control crates, which define no such feature: passing
       # `--features creusot` here turns both controls into compile errors — the
       # false control then "refuses" for the wrong reason (a hollow pass) and the

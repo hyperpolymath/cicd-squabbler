@@ -24,11 +24,15 @@
 //! These obligations have been **written, never proved**. No run has reached
 //! Why3: the environment this crate was added in has no Rust toolchain, and
 //! this repository's own Rust CI currently dies as a zero-job
-//! `startup_failure`, so CI has not compiled the workspace either. The estate
-//! gate (`hyperpolymath/cicd-suite`'s `creusot-check`) reports exactly that
-//! distinction — it fails a claim of proof that has no contracts behind it, and
-//! refuses to report a verdict when the prover cannot be shown to work. Do not describe this crate as verified until a `prove` run
-//! discharges every obligation; the honest phrase is **stated, not proved**.
+//! `startup_failure`, so CI has not compiled the workspace either. The shared
+//! estate gate has a real-tool canary validated upstream; that canary proves a
+//! fixture, not this crate. An installer failure means these obligations were
+//! not exercised, and this repo's execution taxonomy reports the observed
+//! Creusot installer step as `PrerequisiteMissing`. The shared gate's aggregate
+//! `Creusot verdict` still needs to distinguish that from a failed proof and
+//! report that no proof was performed. Do not describe this crate as
+//! verified until a run of this crate's obligations succeeds; the honest phrase
+//! is **stated, not proved**.
 //!
 //! # Why a separate crate
 //!

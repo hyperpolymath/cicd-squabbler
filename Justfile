@@ -388,7 +388,7 @@ verify-mirror:
 # crate — which the estate gate cannot do (it shares one argument variable with
 # its planted controls).
 verify-creusot:
-    cd verification/squabble-creusot && cargo creusot prove
+    cd verification/squabble-creusot && cargo creusot
 
 # The estate gate, verbatim: detect → theatre (T1 claims, T2 hollow, T3 trusted)
 # → prove. Fetches the pinned script from hyperpolymath/cicd-suite rather than

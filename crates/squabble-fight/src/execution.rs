@@ -172,4 +172,43 @@ setup-steps = ["this belongs to a different section and must not be read"]
             .chain(s.prerequisite_steps.iter())
             .any(|n| n != "Set up job"));
     }
+
+    #[test]
+    fn a_creusot_installer_failure_is_a_missing_prerequisite_not_a_proof_finding() {
+        use squabble_core::{
+            execution::{classify, ExecutionClass},
+            gate::CheckRun,
+            polarity::{StepConclusion, StepOutcome},
+        };
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace root");
+        let signatures = load_signatures(root);
+        let failed_install = "Install Creusot v0.14.0 (clone at the tag, ./INSTALL)";
+        let steps = vec![
+            StepOutcome::new("Set up job", StepConclusion::Success),
+            StepOutcome::new(
+                "Install opam and Creusot's system dependencies",
+                StepConclusion::Success,
+            ),
+            StepOutcome::new(failed_install, StepConclusion::Failure),
+            StepOutcome::new("cargo creusot is on PATH", StepConclusion::Skipped),
+            StepOutcome::new(
+                "Planted controls, then every crate with obligations",
+                StepConclusion::Skipped,
+            ),
+        ];
+
+        assert_eq!(
+            classify(Some(CheckRun::Failed), &steps, &signatures),
+            ExecutionClass::PrerequisiteMissing {
+                step: failed_install.to_string(),
+            }
+        );
+        // `Adjudicate` is an aggregate in a different job. Its step payload
+        // alone cannot distinguish installer failure from failed obligations.
+        assert!(!signatures.is_prerequisite("Adjudicate"));
+    }
 }

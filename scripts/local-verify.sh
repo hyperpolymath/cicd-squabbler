@@ -149,7 +149,7 @@ if [ "$check_only" = true ]; then
   say "  07 aspect   bash tests/aspect_tests.sh"
   say "  08 contract bash contracts/squabble/tests/run-conformance.sh (+ proven-tests)"
   if [ "$quick" = false ]; then
-    say "  09 prove    $( [ "$creusot_prove" = true ] && echo 'cd verification/squabble-creusot && cargo creusot prove' || echo 'SKIP — needs --creusot-prove' )"
+    say "  09 prove    $( [ "$creusot_prove" = true ] && echo 'cd verification/squabble-creusot && cargo creusot' || echo 'SKIP — needs --creusot-prove' )"
   fi
   exit 0
 fi
@@ -362,12 +362,12 @@ elif [ "$quick" = true ]; then
 elif [ "$creusot_prove" = false ]; then
   skip_step 09-creusot-prove "Creusot prove (needs --creusot-prove)"
 elif ! have cargo || ! cargo creusot --help >/dev/null 2>&1; then
-  void_step 09-creusot-prove "cargo creusot prove" \
+  void_step 09-creusot-prove "cargo creusot" \
     "cargo creusot absent — the obligations stay STATED, NOT PROVED"
 else
   log="$out_dir/09-creusot-prove.txt"
-  printf '$ cd verification/squabble-creusot && cargo creusot prove\n\n' > "$log"
-  ( cd verification/squabble-creusot && cargo creusot prove ) >> "$log" 2>&1
+  printf '$ cd verification/squabble-creusot && cargo creusot\n\n' > "$log"
+  ( cd verification/squabble-creusot && cargo creusot ) >> "$log" 2>&1
   rc=$?
   if [ "$rc" -eq 0 ]; then
     record 09-creusot-prove PASS 0 "$log"; printf '  %-12s %s\n' "09-creusot-prove" "PASS — obligations discharged"

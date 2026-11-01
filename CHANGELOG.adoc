@@ -196,6 +196,12 @@ https://semver.org/spec/v2.0.0.html[Semantic Versioning].
   against the pin instead of treating any `cargo creusot` as ready, and the dev
   container no longer pipes a remote installer into a shell either — it verifies
   the published digest first, as the host installer now does.
+* Issue #148: pin the Creusot caller to the published gate revision validated by
+  cicd-suite PR #71 and sync `actions.lock`; align local v0.14 invocations with
+  `cargo creusot` (no `prove` subcommand). Add the observed installer step to the
+  host taxonomy and a regression for `PrerequisiteMissing`. The shared
+  `Adjudicate` job still needs an upstream no-proof result; documentation keeps
+  its red status distinct from evidence that a contract failed.
 
 * `squabble-forge` REST: an API path is now validated before it becomes an
   argument to `gh` — empty, over-long, option-looking, upward-traversing, or any

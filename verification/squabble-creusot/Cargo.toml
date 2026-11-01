@@ -22,13 +22,13 @@ publish = false
 [workspace]
 
 [features]
-# ON by default, deliberately. `cargo creusot prove` with an empty feature set
+# ON by default, deliberately. `cargo creusot` with an empty feature set
 # compiles `src/lib.rs`'s cfg-gated module *out*, so a prove run over this crate
 # would discharge nothing while the estate gate's source-level scan still counted
 # ten contracts — a verdict about a build that omits the thing being judged.
 #
 # The obvious alternative does not work: `prove_args: --features creusot` reaches
-# `cargo creusot prove` through the gate's *shared* argument variable, which the
+# `cargo creusot` through the gate's *shared* argument variable, which the
 # gate also passes to its two planted control crates (see cicd-suite
 # `actions/creusot-check/check.sh`, `plant creusot-control-*`). Those crates do
 # not define the feature, so the flag turns both controls into compile errors —

@@ -42,7 +42,7 @@
 
 [metadata]
 version = "0.1.0"
-last-updated = "2026-10-31"
+last-updated = "2026-11-01"
 spec = "https://github.com/hyperpolymath/cicd-squabbler/blob/main/docs/reports/estate-integration/2026-10-31-ci-diagnosis-coverage.adoc"
 status = "wired into `squabble phase`; NOT yet wired into `squabble fight` (see proposal P-2)"
 
@@ -71,6 +71,14 @@ setup-steps = [
   "Install Zig for native build",
   "Cache cargo registry and build",
   "Stage policy tools outside the scanned tree",
+  # Measured in cicd-suite's reusable Creusot gate at 6c6d772 (PR #71
+  # real-tool canary); these are workflow/commit setup, not proof evidence.
+  "Check out the calling repository",
+  "Resolve the cicd-suite commit this caller pins",
+  "Check out cicd-suite at that commit",
+  "Refuse gate scripts from an unverified cicd-suite commit",
+  "Install the nightly Creusot 0.14.0 is built against",
+  "Cache the Creusot opam switch, provers and cargo-creusot",
 ]
 
 # Steps that establish a DECLARED prerequisite — a tool, credential or piece of
@@ -87,6 +95,12 @@ setup-steps = [
 # sibling directive warns about.
 prerequisite-steps = [
   "Probe whether fight can inspect the full gate",
+  # Read verbatim from the shared gate's prove job at 6c6d772. The Creusot
+  # install step specifically failed on the old consumer pin in run 41220124068;
+  # the repaired gate was then validated by a real-tool canary (PR #71).
+  "Install opam and Creusot's system dependencies",
+  "Install Creusot v0.14.0 (clone at the tag, ./INSTALL)",
+  "cargo creusot is on PATH",
 ]
 
 [execution-taxonomy.notes]
@@ -101,3 +115,7 @@ prerequisite-steps = [
 #   `squabble zero-job`, not by this file.
 # * Nothing here may be read as a verdict: no class in squabble-core::execution
 #   constructs a CheckRun, drops a required context, or reaches GateState::Green.
+# * Do NOT declare the shared Creusot gate's `Adjudicate` step as a
+#   prerequisite: its one-step job does not expose whether `needs.prove` failed
+#   during installation or during proof. That distinction belongs in the shared
+#   gate, which must report NO PROOF WAS PERFORMED for prerequisite failure.

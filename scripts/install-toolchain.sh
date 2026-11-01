@@ -116,7 +116,7 @@ if [ "$check_only" = true ]; then
      && { ! have cargo || ! cargo creusot --help >/dev/null 2>&1; }; then
     say ""
     say "Creusot obligations are STATED, NOT PROVED: run 'squabble' proof work with"
-    say "'cargo creusot prove' in verification/squabble-creusot after installing."
+    say "'cargo creusot' in verification/squabble-creusot after installing."
     status=2
   fi
   exit "$status"
@@ -171,7 +171,7 @@ rustup toolchain install "$creusot_nightly" --profile minimal \
 # mismatch is reported instead of being reported as ready.
 creusot_installed=""
 if cargo creusot --help >/dev/null 2>&1; then
-  creusot_installed="$(cargo creusot --version 2>/dev/null | head -1)"
+  creusot_installed="$(cargo creusot version 2>/dev/null | head -1)"
 fi
 if [ -n "$creusot_installed" ] && printf '%s' "$creusot_installed" | grep -qF "$creusot_version"; then
   say "Creusot already present and matching the pin: $creusot_installed"
@@ -229,7 +229,7 @@ fi
 say ""
 say "ready. Prove the obligations (this is the only step that changes"
 say "'stated' into 'proved', and it has not been run for this repository yet):"
-say "  cd verification/squabble-creusot && cargo creusot prove"
+say "  cd verification/squabble-creusot && cargo creusot"
 say "Stable-Rust mirror of the same statements (the contracts are a default"
 say "feature, so the stable half is built without it):"
 say "  cargo test --manifest-path verification/squabble-creusot/Cargo.toml \\"

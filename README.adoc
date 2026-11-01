@@ -166,10 +166,13 @@ just verify-creusot   # the prover: discharge the obligations
 
 **Stated, not proved.** No obligation has been discharged, and this repository's
 own `Rust CI` currently ends as a zero-job `startup_failure`, so CI has not
-compiled the workspace either. `.github/workflows/creusot.yml` calls the estate's
-`creusot-gate.yml`, which fails a claim of proof with no contracts behind it and
-reports *no proof performed* rather than a verdict when the prover cannot be
-shown to work. Details and the licence note: `docs/CREUSOT.adoc`.
+compiled the workspace either. `.github/workflows/creusot.yml` pins the published
+shared gate revision validated by cicd-suite PR #71; that canary proves the
+installer/control path and a fixture, not these obligations. `squabble phase`
+classifies the observed Creusot installer failure as `PrerequisiteMissing`, not a
+contract finding. The separate shared `Creusot verdict` job still needs an
+upstream no-proof result; its red status alone is not evidence that contracts
+failed. Details and the licence note: `docs/CREUSOT.adoc`.
 
 == Downstream integration contracts (pinned, immutable revisions)
 

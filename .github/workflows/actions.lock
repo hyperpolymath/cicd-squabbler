@@ -9,7 +9,7 @@ workflows:
     '.github/workflows/container-build.yml':
         - 'actions/checkout@v7.0.1'
     '.github/workflows/creusot.yml':
-        - 'hyperpolymath/cicd-suite@bf7dd95cf49733019343ff485c2f45c6b261839c'
+        - 'hyperpolymath/cicd-suite@6c6d772ebe82605ba22254db528faf54faec9f49'
     '.github/workflows/dependabot-automerge.yml':
         - 'dependabot/fetch-metadata@v3.1.0'
     '.github/workflows/dogfood-gate.yml':
@@ -212,9 +212,9 @@ dependencies:
             - 'dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8'
             - 'goto-bus-stop/setup-zig@abea47f85e598557f500fa1fd2ab7464fcb39406'
             - 'swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6'
-    'hyperpolymath/cicd-suite@bf7dd95cf49733019343ff485c2f45c6b261839c':
-        ref: 'bf7dd95cf49733019343ff485c2f45c6b261839c'
-        commit: 'sha1-bf7dd95cf49733019343ff485c2f45c6b261839c'
+    'hyperpolymath/cicd-suite@6c6d772ebe82605ba22254db528faf54faec9f49':
+        ref: '6c6d772ebe82605ba22254db528faf54faec9f49'
+        commit: 'sha1-6c6d772ebe82605ba22254db528faf54faec9f49'
         owner_id: 6759885
         repo_id: 1326697643
         uses:
