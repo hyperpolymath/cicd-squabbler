@@ -231,9 +231,16 @@ pub fn parse_startup_runs(body: &str) -> Result<Vec<ZeroJobRun>, String> {
 pub fn parse_job_count(body: &str) -> Result<u64, String> {
     let v: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| format!("could not parse actions/jobs response: {e}"))?;
-    v.get("total_count")
+    let count = v.get("total_count")
         .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| "actions/jobs response has no `total_count`".to_string())
+        .ok_or_else(|| "actions/jobs response has no `total_count`".to_string())?;
+    if let Some(jobs) = v.get("jobs") {
+        let jobs = jobs.as_array().ok_or("actions/jobs response has invalid `jobs`")?;
+        if jobs.len() as u64 > count {
+            return Err("actions/jobs response lists more jobs than its total_count".to_string());
+        }
+    }
+    Ok(count)
 }
 
 #[cfg(test)]
@@ -510,6 +517,7 @@ jobs:
             parse_job_count("{\"total_count\":0,\"jobs\":[]}").unwrap(),
             0
         );
+        assert!(parse_job_count(r#"{"total_count":0,"jobs":[{"id":1}]}"#).is_err());
         assert!(parse_job_count("{}").is_err());
         assert!(parse_job_count("[]").is_err());
     }
