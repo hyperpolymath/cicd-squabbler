@@ -227,7 +227,8 @@ pub fn parse_startup_runs(body: &str) -> Result<Vec<ZeroJobRun>, String> {
 /// # Errors
 ///
 /// Returns an error for invalid JSON or when `total_count` is absent or is not
-/// an unsigned integer. Zero is a valid count.
+/// an unsigned integer, or when a present `jobs` field is not an array or has
+/// more entries than `total_count`. Zero is a valid count.
 pub fn parse_job_count(body: &str) -> Result<u64, String> {
     let v: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| format!("could not parse actions/jobs response: {e}"))?;
