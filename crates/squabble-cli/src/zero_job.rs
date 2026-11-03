@@ -352,8 +352,9 @@ impl GhRuns {
             let jobs_path = format!("repos/{slug}/actions/runs/{}/jobs?per_page=1", run.id);
             if let Ok(jobs) = transport.get(&jobs_path) {
                 if (200..300).contains(&jobs.status) {
-                    // Absence of a count is recorded as `None`, not as zero.
-                    run.jobs = parse_job_count(&jobs.body).ok();
+                    let count = parse_job_count(&jobs.body)
+                        .map_err(|err| format!("invalid job evidence for `{jobs_path}`: {err}"))?;
+                    run.jobs = Some(count);
                 }
             }
         }
