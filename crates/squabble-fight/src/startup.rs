@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
-//! Host side of zero-job `startup_failure` attribution.
+//! Host side of failed-run startup attribution.
 //!
 //! `squabble-core::startup` owns the taxonomy and the moves; this module does
 //! the estate-aware half: read a run's own workflow file, extract every
@@ -10,7 +10,9 @@
 //! Two rules keep the output honest:
 //!
 //! * **Only observed runs are attributed.** The caller supplies runs that
-//!   actually concluded `STARTUP_FAILURE`; this module never invents one.
+//!   actually failed and supplies their separately read job counts. A source
+//!   attribution also requires the failed run's complete commit ID to match
+//!   the unmodified checkout; this module never invents either fact.
 //! * **A run always reports something.** If no coordinate is moved or
 //!   unadmitted, the run gets one [`StartupFailureClass::Unattributed`] entry
 //!   naming the workflow — never silence, and never a fabricated cause.
@@ -21,8 +23,8 @@
 
 use squabble_core::chains::{Edge, RepoId, WorkflowFile};
 use squabble_core::startup::{
-    attribute_zero_job, AllowList, CanonicalResolution, StartupFailureClass, ZeroJobAttribution,
-    ZeroJobRun,
+    attribute_zero_job, same_source_revision, AllowList, CanonicalResolution, NativeLockStatus,
+    NativeLockVerification, StartupFailureClass, ZeroJobAttribution, ZeroJobRun,
 };
 use std::collections::BTreeMap;
 
@@ -77,28 +79,120 @@ pub fn attribute_workflow(
     out
 }
 
-/// Attribute one zero-job run from the repo's already-read workflow files.
+/// Attribute one failed run from the repo's already-read workflow files.
+///
+/// Attribution requires an observed zero job count and a full run commit ID
+/// matching `checkout_revision`, which the caller must establish from a
+/// checkout with an unmodified workflow tree. Otherwise the result is one
+/// `Unattributed` entry.
+/// Optional `lock` evidence must match that revision: malformed locks and
+/// workflow-specific coverage mismatches take precedence over coordinates,
+/// while evidence from a different source revision leaves the run unattributed.
+/// An unverified optional probe is retained beside independent coordinate
+/// attribution. A verified lock, or a coverage mismatch for another workflow,
+/// also permits coordinate attribution to continue.
 ///
 /// When the run's workflow file is not among `files` (an unreadable checkout, a
 /// workflow deleted since the run), the run still gets an honest
 /// `Unattributed` entry with the reason — absence of evidence is never
 /// evidence of a clean start.
 ///
-/// When no coordinate is moved or unadmitted, the result is a single
-/// `Unattributed` entry rather than one per coordinate: the run failed for a
-/// reason outside this taxonomy, and the report should say that once. The
+/// When coordinate attribution finds no moved or unadmitted coordinate, the
+/// result is a single `Unattributed` entry rather than one per coordinate. The
 /// entry kept is the first by coordinate in lexicographic order. Attributed
 /// results are also sorted by coordinate. The caller supplies the observed
-/// run; this function does not check its job count.
+/// run; only an explicitly observed zero job count permits attribution.
 pub fn attribute_run(
     repo: &str,
     run: &ZeroJobRun,
     files: &[WorkflowFile],
     canonical: &BTreeMap<RepoId, CanonicalResolution>,
     allow_list: Option<&AllowList>,
+    checkout_revision: Option<&str>,
+    lock: Option<&NativeLockVerification>,
 ) -> Vec<ZeroJobAttribution> {
-    let Some(file) = files.iter().find(|f| f.path == run.workflow_file) else {
+    if run.jobs != Some(0) {
+        let evidence = match run.jobs {
+            Some(count) => format!(
+                "run {} created {count} job(s), contradicting zero-job startup attribution; \
+                 inspect the job's execution evidence before proposing a source or settings change",
+                run.id
+            ),
+            None => format!(
+                "run {} has no readable job count, so zero-job startup attribution is unverified; \
+                 recover the run's job evidence before proposing a source or settings change",
+                run.id
+            ),
+        };
+        return vec![unattributed(repo, &run.workflow_file, evidence)];
+    }
+    if !same_source_revision(run.head_sha.as_deref(), checkout_revision) {
         return vec![unattributed(
+            repo,
+            &run.workflow_file,
+            format!(
+                "run {} source {:?} does not match an established, unmodified checkout {:?}; \
+             inspect the run's exact source before proposing a source or settings change",
+                run.id, run.head_sha, checkout_revision
+            ),
+        )];
+    }
+    if let Some(lock) = lock {
+        if !same_source_revision(Some(&lock.head_sha), checkout_revision) {
+            return vec![unattributed(repo, &run.workflow_file,
+                "native lock evidence belongs to a different source revision; no attribution or move inferred".into())];
+        }
+        let class = match lock.status {
+            NativeLockStatus::Malformed => Some(StartupFailureClass::InvalidActionsLock),
+            NativeLockStatus::CoverageMismatch => {
+                let path = format!(".github/workflows/{}", run.workflow_file);
+                let affected = serde_json::from_str::<serde_json::Value>(&lock.stdout)
+                    .ok()
+                    .and_then(|report| report.get("workflows").and_then(|v| v.as_array()).cloned())
+                    .is_some_and(|workflows| {
+                        workflows.iter().any(|workflow| {
+                            workflow.get("path").and_then(|v| v.as_str()) == Some(path.as_str())
+                                && workflow.get("valid").and_then(|v| v.as_bool()) == Some(false)
+                        })
+                    });
+                affected.then_some(StartupFailureClass::ActionsLockMismatch)
+            }
+            NativeLockStatus::Unverified => None,
+            NativeLockStatus::Verified => None,
+        };
+        if let Some(class) = class {
+            let mut finding = unattributed(
+                repo,
+                &run.workflow_file,
+                format!(
+                    "{} at source {} ({} exit {:?}); the complete official output is retained. \
+                    This reproduces a source defect, not proof of the sole GitHub startup cause.",
+                    lock.reason, lock.head_sha, lock.tool_version, lock.exit_code
+                ),
+            );
+            finding.class = class;
+            finding.sequencing = vec![
+                "review a candidate produced by the repository's official lock regeneration chain; do not hand-edit actions.lock or widen Actions permissions".into(),
+                "verify that candidate against the exact workflows, then rerun the failed workflow; this diagnosis satisfies no required check".into(),
+            ];
+            return vec![finding];
+        }
+    }
+    // An optional probe cannot erase independently established coordinate
+    // evidence. Keep its failure alongside that evidence without inferring
+    // any lock repair, permission change or successful verification.
+    let retain_probe_failure = |mut findings: Vec<ZeroJobAttribution>| {
+        if let Some(probe) = lock.filter(|probe| probe.status == NativeLockStatus::Unverified) {
+            findings.push(unattributed(
+                repo,
+                &run.workflow_file,
+                format!("native lock verification is unverified: {}; no repair inferred from that result", probe.reason),
+            ));
+        }
+        findings
+    };
+    let Some(file) = files.iter().find(|f| f.path == run.workflow_file) else {
+        return retain_probe_failure(vec![unattributed(
             repo,
             &run.workflow_file,
             format!(
@@ -107,7 +201,7 @@ pub fn attribute_run(
                  the run's commit before changing anything.",
                 run.workflow_file
             ),
-        )];
+        )]);
     };
 
     let all = attribute_workflow(repo, &run.workflow_file, &file.text, canonical, allow_list);
@@ -119,7 +213,7 @@ pub fn attribute_run(
         // coordinate or an unverified name is a fact the operator can act on,
         // and it must not be flattened into "everything resolved canonically".
         unexplained.sort_by(|a, b| a.coordinate.cmp(&b.coordinate));
-        return match unexplained.into_iter().next() {
+        return retain_probe_failure(match unexplained.into_iter().next() {
             Some(a) => vec![a],
             None => vec![unattributed(
                 repo,
@@ -129,10 +223,10 @@ pub fn attribute_run(
                  from the run's own workflow."
                     .to_string(),
             )],
-        };
+        });
     }
     primary.sort_by(|a, b| a.coordinate.cmp(&b.coordinate));
-    primary
+    retain_probe_failure(primary)
 }
 
 /// Build a workflow-level explanation without blaming a coordinate or
@@ -152,13 +246,14 @@ fn unattributed(repo: &str, workflow: &str, evidence: String) -> ZeroJobAttribut
     }
 }
 
-/// Parse a `GET /repos/{o}/{r}/actions/runs` response, keeping only runs that
-/// concluded `STARTUP_FAILURE`.
+/// Parse a `GET /repos/{o}/{r}/actions/runs` response, retaining failed run
+/// candidates (`startup_failure` or `failure`) for a separate job-count read.
+/// An ordinary failure is not a startup diagnosis by itself.
 ///
 /// `jobs` is left `None` here: the count comes from a second read and is the
 /// host's evidence, not something this parser may assume.
-/// Matching is case-insensitive. Entries without an unsigned integer run ID
-/// are skipped; a missing or non-string path becomes an empty filename,
+/// Matching is case-insensitive. A failed entry without an unsigned integer
+/// run ID is an error; a missing or non-string path becomes an empty filename,
 /// otherwise the ref suffix is dropped and only the final path component is
 /// kept. GitHub reports `path` either as `.github/workflows/ci.yml` or as
 /// `.github/workflows/ci.yml@refs/heads/main`; taking the last slash-separated
@@ -177,13 +272,14 @@ pub fn parse_startup_runs(body: &str) -> Result<Vec<ZeroJobRun>, String> {
         .ok_or_else(|| "actions/runs response has no `workflow_runs` array".to_string())?;
     let mut out = Vec::new();
     for r in runs {
-        if !r
+        let Some(conclusion) = r
             .get("conclusion")
             .and_then(serde_json::Value::as_str)
-            .is_some_and(|c| c.eq_ignore_ascii_case("startup_failure"))
-        {
+            .map(str::to_ascii_lowercase)
+            .filter(|c| matches!(c.as_str(), "startup_failure" | "failure"))
+        else {
             continue;
-        }
+        };
         // A startup failure with no usable id cannot be reported, and dropping
         // it would let the command exit 0 saying it observed none. Fail closed.
         let id = r
@@ -191,7 +287,7 @@ pub fn parse_startup_runs(body: &str) -> Result<Vec<ZeroJobRun>, String> {
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| {
                 format!(
-                    "a `startup_failure` run has no unsigned integer `id`, so it cannot be \
+                    "a `{conclusion}` run has no unsigned integer `id`, so it cannot be \
                      reported: refusing to skip it and claim no failure was observed{}",
                     r.get("path")
                         .and_then(serde_json::Value::as_str)
@@ -214,6 +310,11 @@ pub fn parse_startup_runs(body: &str) -> Result<Vec<ZeroJobRun>, String> {
             .map(str::to_string);
         out.push(ZeroJobRun {
             id,
+            conclusion,
+            head_sha: r
+                .get("head_sha")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
             workflow_file,
             workflow_name,
             jobs: None,
@@ -232,11 +333,14 @@ pub fn parse_startup_runs(body: &str) -> Result<Vec<ZeroJobRun>, String> {
 pub fn parse_job_count(body: &str) -> Result<u64, String> {
     let v: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| format!("could not parse actions/jobs response: {e}"))?;
-    let count = v.get("total_count")
+    let count = v
+        .get("total_count")
         .and_then(serde_json::Value::as_u64)
         .ok_or_else(|| "actions/jobs response has no `total_count`".to_string())?;
     if let Some(jobs) = v.get("jobs") {
-        let jobs = jobs.as_array().ok_or("actions/jobs response has invalid `jobs`")?;
+        let jobs = jobs
+            .as_array()
+            .ok_or("actions/jobs response has invalid `jobs`")?;
         if jobs.len() as u64 > count {
             return Err("actions/jobs response lists more jobs than its total_count".to_string());
         }
@@ -253,6 +357,242 @@ mod tests {
     const CALLER: &str = "hyperpolymath/hypatia";
     const SHA: &str = "8f2ee50841e216cd8c192eeb68953118190f105c";
 
+    #[test]
+    fn missing_or_different_source_cannot_borrow_current_workflow_attribution() {
+        let files = [wf("ci.yml", WORKFLOW)];
+        let names = canonical(&[(
+            "old/standards",
+            CanonicalResolution::Moved {
+                canonical: "new/standards".into(),
+            },
+        )]);
+        for checkout in [
+            None,
+            Some("main"),
+            Some(&SHA[..8]),
+            Some("0000000000000000000000000000000000000000"),
+        ] {
+            let out = attribute_run(
+                CALLER,
+                &run(42, "ci.yml"),
+                &files,
+                &names,
+                Some(&AllowList::default()),
+                checkout,
+                None,
+            );
+            assert_eq!(out[0].class, StartupFailureClass::Unattributed);
+            assert!(out[0].proposed_move().is_none());
+            assert!(out[0].required_allow_list_pattern.is_none());
+            assert!(out[0].evidence.contains("source"));
+        }
+        let mut observed = run(42, "ci.yml");
+        observed.head_sha = None;
+        assert_eq!(
+            attribute_run(CALLER, &observed, &files, &names, None, Some(SHA), None)[0].class,
+            StartupFailureClass::Unattributed
+        );
+    }
+
+    fn native_lock(status: NativeLockStatus) -> NativeLockVerification {
+        NativeLockVerification {
+            head_sha: SHA.into(),
+            verifier: "/verified/gh-actions-lock".into(),
+            tool_version: "actions-lock version v0.2.0".into(),
+            exit_code: Some(2),
+            status,
+            stdout: String::new(),
+            stderr: "recorded native parser error".into(),
+            reason: "native parser rejected this source lock".into(),
+        }
+    }
+
+    #[test]
+    fn native_lock_defect_is_source_evidence_without_a_permission_move_or_green() {
+        let lock = native_lock(NativeLockStatus::Malformed);
+        let out = attribute_run(
+            CALLER,
+            &run(42, "ci.yml"),
+            &[],
+            &BTreeMap::new(),
+            Some(&AllowList::default()),
+            Some(SHA),
+            Some(&lock),
+        );
+        assert_eq!(out[0].class, StartupFailureClass::InvalidActionsLock);
+        assert!(out[0].proposed_move().is_none());
+        assert!(out[0].missing_cause().is_none());
+        assert!(out[0].required_allow_list_pattern.is_none());
+        assert!(out[0]
+            .evidence
+            .contains("not proof of the sole GitHub startup cause"));
+        assert!(out[0].sequencing[0].contains("do not hand-edit"));
+
+        let mut stale = lock.clone();
+        stale.head_sha = "0000000000000000000000000000000000000000".into();
+        assert_eq!(
+            attribute_run(
+                CALLER,
+                &run(42, "ci.yml"),
+                &[],
+                &BTreeMap::new(),
+                None,
+                Some(SHA),
+                Some(&stale)
+            )[0]
+            .class,
+            StartupFailureClass::Unattributed
+        );
+        let mut unknown = run(42, "ci.yml");
+        unknown.jobs = None;
+        assert_eq!(
+            attribute_run(
+                CALLER,
+                &unknown,
+                &[],
+                &BTreeMap::new(),
+                None,
+                Some(SHA),
+                Some(&lock)
+            )[0]
+            .class,
+            StartupFailureClass::Unattributed
+        );
+    }
+
+    #[test]
+    fn coverage_mismatch_is_workflow_specific_and_probe_failure_is_not_clean() {
+        let mut lock = native_lock(NativeLockStatus::CoverageMismatch);
+        lock.exit_code = Some(1);
+        lock.stdout = serde_json::json!({"workflows": [
+            {"path": ".github/workflows/ci.yml", "valid": false},
+            {"path": ".github/workflows/other.yml", "valid": true}
+        ]})
+        .to_string();
+        let out = attribute_run(
+            CALLER,
+            &run(42, "ci.yml"),
+            &[],
+            &BTreeMap::new(),
+            None,
+            Some(SHA),
+            Some(&lock),
+        );
+        assert_eq!(out[0].class, StartupFailureClass::ActionsLockMismatch);
+        assert!(out[0].proposed_move().is_none());
+        let other = attribute_run(
+            CALLER,
+            &run(43, "other.yml"),
+            &[],
+            &BTreeMap::new(),
+            None,
+            Some(SHA),
+            Some(&lock),
+        );
+        assert_eq!(other[0].class, StartupFailureClass::Unattributed);
+        lock.status = NativeLockStatus::Unverified;
+        assert_eq!(
+            attribute_run(
+                CALLER,
+                &run(42, "ci.yml"),
+                &[],
+                &BTreeMap::new(),
+                None,
+                Some(SHA),
+                Some(&lock)
+            )[0]
+            .class,
+            StartupFailureClass::Unattributed
+        );
+    }
+
+    #[test]
+    fn absent_or_positive_job_counts_cannot_propose_admission_or_repointing() {
+        let files = [wf(
+            "ci.yml",
+            &format!("jobs:\n  scan:\n    uses: old/standards/.github/workflows/ci.yml@{SHA}\n"),
+        )];
+        let canonical = BTreeMap::from([(
+            RepoId::new("old/standards"),
+            CanonicalResolution::Moved {
+                canonical: "new/standards".into(),
+            },
+        )]);
+        let allow = AllowList::default();
+        for count in [None, Some(1), Some(3)] {
+            let mut observed = run(42, "ci.yml");
+            observed.jobs = count;
+            let findings = attribute_run(
+                CALLER,
+                &observed,
+                &files,
+                &canonical,
+                Some(&allow),
+                Some(SHA),
+                None,
+            );
+            assert_eq!(findings.len(), 1);
+            assert_eq!(findings[0].class, StartupFailureClass::Unattributed);
+            assert!(findings[0].proposed_move().is_none());
+            assert!(findings[0].required_allow_list_pattern.is_none());
+            assert!(findings[0].evidence.contains(if count.is_some() {
+                "contradicting"
+            } else {
+                "unverified"
+            }));
+        }
+    }
+
+    #[test]
+    fn optional_probe_failure_preserves_independent_coordinate_attribution() {
+        let files = [wf(
+            "ci.yml",
+            &format!("jobs:\n  scan:\n    uses: old/standards/.github/workflows/ci.yml@{SHA}\n"),
+        )];
+        let moved = BTreeMap::from([(
+            RepoId::new("old/standards"),
+            CanonicalResolution::Moved {
+                canonical: "new/standards".into(),
+            },
+        )]);
+        let unchanged = BTreeMap::new();
+        let allow = AllowList::default();
+        for names in [&moved, &unchanged] {
+            let expected = attribute_run(
+                CALLER,
+                &run(42, "ci.yml"),
+                &files,
+                names,
+                Some(&allow),
+                Some(SHA),
+                None,
+            );
+            for reason in [
+                "verified binary is unavailable",
+                "unrelated untracked file prevents full-input qualification",
+            ] {
+                let mut probe = native_lock(NativeLockStatus::Unverified);
+                probe.reason = reason.into();
+                let actual = attribute_run(
+                    CALLER,
+                    &run(42, "ci.yml"),
+                    &files,
+                    names,
+                    Some(&allow),
+                    Some(SHA),
+                    Some(&probe),
+                );
+                assert_eq!(&actual[..expected.len()], expected.as_slice());
+                let retained = actual.last().unwrap();
+                assert_eq!(actual.len(), expected.len() + 1);
+                assert_eq!(retained.class, StartupFailureClass::Unattributed);
+                assert!(retained.evidence.contains(reason));
+                assert!(retained.proposed_move().is_none());
+                assert!(retained.required_allow_list_pattern.is_none());
+            }
+        }
+    }
+
     fn wf(path: &str, text: &str) -> WorkflowFile {
         WorkflowFile {
             path: path.into(),
@@ -263,6 +603,8 @@ mod tests {
     fn run(id: u64, file: &str) -> ZeroJobRun {
         ZeroJobRun {
             id,
+            conclusion: "startup_failure".into(),
+            head_sha: Some(SHA.into()),
             workflow_file: file.into(),
             workflow_name: None,
             jobs: Some(0),
@@ -300,6 +642,8 @@ jobs:
             &run(40_451_601_571, "hypatia-scan.yml"),
             &files,
             &names,
+            None,
+            Some(SHA),
             None,
         );
         assert_eq!(out.len(), 1, "{out:#?}");
@@ -341,6 +685,8 @@ jobs:
             &files,
             &names,
             Some(&allow),
+            Some(SHA),
+            None,
         );
         // The moved reusable wins, but the admission pattern is carried so the
         // sequencing is visible in one report.
@@ -369,6 +715,8 @@ jobs:
             &files,
             &BTreeMap::new(),
             Some(&allow),
+            Some(SHA),
+            None,
         );
         assert_eq!(out.len(), 1);
         assert_eq!(
@@ -396,6 +744,8 @@ jobs:
             &files,
             &BTreeMap::new(),
             Some(&allow),
+            Some(SHA),
+            None,
         );
         assert_eq!(out.len(), 1, "{out:#?}");
         assert_eq!(out[0].class, StartupFailureClass::Unattributed);
@@ -405,7 +755,15 @@ jobs:
 
     #[test]
     fn a_missing_workflow_file_is_unattributed_not_clean() {
-        let out = attribute_run(CALLER, &run(3, "deleted.yml"), &[], &BTreeMap::new(), None);
+        let out = attribute_run(
+            CALLER,
+            &run(3, "deleted.yml"),
+            &[],
+            &BTreeMap::new(),
+            None,
+            Some(SHA),
+            None,
+        );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].class, StartupFailureClass::Unattributed);
         assert!(out[0].evidence.contains("not in the local checkout"));
@@ -431,7 +789,7 @@ jobs:
     }
 
     #[test]
-    fn run_parsing_keeps_only_startup_failures() {
+    fn run_parsing_keeps_failed_candidates_without_inventing_job_counts() {
         let body = serde_json::json!({
             "total_count": 3,
             "workflow_runs": [
@@ -443,11 +801,13 @@ jobs:
         })
         .to_string();
         let runs = parse_startup_runs(&body).expect("parse");
-        assert_eq!(runs.len(), 2);
+        assert_eq!(runs.len(), 3);
         assert_eq!(runs[0].id, 11);
         assert_eq!(runs[0].workflow_file, "hypatia-scan.yml");
         assert_eq!(runs[0].workflow_name.as_deref(), Some("Hypatia scan"));
-        assert_eq!(runs[1].workflow_file, "gov.yml");
+        assert_eq!(runs[1].workflow_file, "ci.yml");
+        assert_eq!(runs[1].conclusion, "failure");
+        assert_eq!(runs[2].workflow_file, "gov.yml");
         assert!(runs.iter().all(|r| r.jobs.is_none()));
     }
 
@@ -488,8 +848,8 @@ jobs:
             "the error must name the run: {err}"
         );
 
-        // A non-integer id is refused the same way, and a healthy run without an
-        // id is still ignored: it is not a startup failure.
+        // A non-integer id is refused the same way. A regular failure without
+        // an id cannot have its job count checked either, so it is not skipped.
         let quoted = serde_json::json!({
             "workflow_runs": [{"id": "12", "conclusion": "startup_failure"}]
         })
@@ -499,7 +859,12 @@ jobs:
             "workflow_runs": [{"conclusion": "failure"}]
         })
         .to_string();
-        assert!(parse_startup_runs(&fine).expect("parse").is_empty());
+        assert!(parse_startup_runs(&fine).is_err());
+        let healthy = serde_json::json!({
+            "workflow_runs": [{"conclusion": "success"}]
+        })
+        .to_string();
+        assert!(parse_startup_runs(&healthy).unwrap().is_empty());
     }
 
     #[test]

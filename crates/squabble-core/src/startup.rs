@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
-//! Zero-job `startup_failure` attribution — the class that is invisible in PR
+//! Zero-job failure attribution — the class that is invisible in PR
 //! check lists.
 //!
 //! A workflow that fails *before any job exists* creates no check run at all,
@@ -26,6 +26,10 @@
 //! path to [`crate::gate::GateState::Green`] and constructs no
 //! [`crate::gate::CheckRun`] — it produces a diagnosis and sequencing advice,
 //! nothing else.
+//!
+//! Native lock parser/coverage findings are separate source diagnoses. They
+//! retain official verifier output at the matching source revision and never
+//! mint a settings move, a CI pass or a qualified learning outcome.
 //!
 //! # Why names, not pins
 //!
@@ -236,7 +240,7 @@ impl CanonicalResolution {
 // Attribution
 // ---------------------------------------------------------------------------
 
-/// The two first-class zero-job classes, plus the honest non-answer.
+/// Evidence-backed startup diagnoses, plus the honest non-answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StartupFailureClass {
@@ -248,6 +252,12 @@ pub enum StartupFailureClass {
     /// refuses the run at startup (jobs=0). Move: admit the `owner/repo@*`
     /// pattern the report names.
     AllowListAdmissionRequired,
+    /// The official native lock parser rejected the lock at the run's source
+    /// revision. This is a reproduced source blocker, not a settings failure.
+    InvalidActionsLock,
+    /// The official offline verifier found a workflow/lock coverage mismatch
+    /// in this run's workflow at the same source revision.
+    ActionsLockMismatch,
     /// A zero-job startup failure was observed but cannot be attributed from
     /// the facts available. No move is proposed (fail-closed).
     Unattributed,
@@ -259,6 +269,8 @@ impl StartupFailureClass {
         match self {
             Self::MovedCoordinate => "moved coordinate",
             Self::AllowListAdmissionRequired => "allow-list admission required",
+            Self::InvalidActionsLock => "invalid native Actions lock",
+            Self::ActionsLockMismatch => "Actions lock/workflow mismatch",
             Self::Unattributed => "unattributed",
         }
     }
@@ -292,8 +304,9 @@ pub struct ZeroJobAttribution {
 impl ZeroJobAttribution {
     /// The single legitimate move for this class, if one is proposable.
     ///
-    /// `None` for [`StartupFailureClass::Unattributed`], and for a
-    /// `MovedCoordinate` without a canonical target or a parseable coordinate.
+    /// `None` for lock diagnoses and [`StartupFailureClass::Unattributed`],
+    /// and for a `MovedCoordinate` without a canonical target or a parseable
+    /// coordinate.
     /// Admission also requires a recorded allow-list pattern.
     pub fn proposed_move(&self) -> Option<Move> {
         match self.class {
@@ -319,7 +332,9 @@ impl ZeroJobAttribution {
                     pattern,
                 })
             }
-            StartupFailureClass::Unattributed => None,
+            StartupFailureClass::InvalidActionsLock
+            | StartupFailureClass::ActionsLockMismatch
+            | StartupFailureClass::Unattributed => None,
         }
     }
 
@@ -329,14 +344,16 @@ impl ZeroJobAttribution {
     /// This is the bridge between the zero-job report and the gate model: a
     /// diagnosed cause can explain a `Missing` requirement, but (as
     /// `squabble-core::gate` proves) no cause is a path to `Green`. `None` for
-    /// an unattributed run — an unknown cause is not invented.
+    /// lock diagnoses and unattributed runs.
     pub fn missing_cause(&self) -> Option<MissingCause> {
         match self.class {
             StartupFailureClass::MovedCoordinate => Some(MissingCause::MovedUpstreamCoordinate),
             StartupFailureClass::AllowListAdmissionRequired => {
                 Some(MissingCause::AllowListAdmissionRequired)
             }
-            StartupFailureClass::Unattributed => None,
+            StartupFailureClass::InvalidActionsLock
+            | StartupFailureClass::ActionsLockMismatch
+            | StartupFailureClass::Unattributed => None,
         }
     }
 
@@ -577,11 +594,51 @@ pub fn attribute_zero_job(
 // Runs and reports
 // ---------------------------------------------------------------------------
 
-/// One Actions run that concluded `STARTUP_FAILURE` — a run with no jobs, which
-/// therefore cannot appear as a red check on any PR.
+/// Outcome of the official `gh-actions-lock --verify-local --json` reader.
+/// A successful local check is coverage evidence only, never a CI pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NativeLockStatus {
+    Verified,
+    Malformed,
+    CoverageMismatch,
+    Unverified,
+}
+
+/// Unmodified output and source identity of an offline native lock probe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeLockVerification {
+    pub head_sha: String,
+    pub verifier: String,
+    pub tool_version: String,
+    pub exit_code: Option<i32>,
+    pub status: NativeLockStatus,
+    pub stdout: String,
+    pub stderr: String,
+    pub reason: String,
+}
+
+/// Compare two full 40-character hexadecimal commit IDs, ignoring ASCII case.
+/// Missing, abbreviated or malformed IDs never match.
+pub fn same_source_revision(observed: Option<&str>, checkout: Option<&str>) -> bool {
+    let is_sha = |s: &str| s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit());
+    matches!((observed, checkout), (Some(a), Some(b))
+        if is_sha(a) && is_sha(b) && a.eq_ignore_ascii_case(b))
+}
+
+/// One failed Actions run to investigate for startup failure. GitHub also
+/// reports ordinary `failure` for some runs with zero jobs; the separately
+/// fetched job count, not the conclusion spelling, establishes that fact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ZeroJobRun {
     pub id: u64,
+    /// The observed conclusion, retained so a job-level `failure` can be
+    /// excluded without silently dropping contradictory `startup_failure`.
+    #[serde(default)]
+    pub conclusion: String,
+    /// The failed run's immutable source revision, when supplied by GitHub.
+    #[serde(default)]
+    pub head_sha: Option<String>,
     /// Workflow file relative to `.github/workflows/`.
     pub workflow_file: String,
     /// The workflow's display name, when the API reports one.
@@ -593,10 +650,12 @@ pub struct ZeroJobRun {
     pub jobs: Option<u64>,
 }
 
-/// One zero-job run and every coordinate attribution made for its workflow.
+/// One failed candidate and every attribution made from its available evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ZeroJobRunAttribution {
     pub run_id: u64,
+    #[serde(default)]
+    pub head_sha: Option<String>,
     pub workflow: String,
     #[serde(default)]
     pub jobs: Option<u64>,
@@ -609,6 +668,11 @@ pub struct ZeroJobRunAttribution {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ZeroJobReport {
     pub repo: String,
+    /// Present only when the local workflow tree matches this commit.
+    #[serde(default)]
+    pub checkout_head_sha: Option<String>,
+    #[serde(default)]
+    pub lock_verification: Option<NativeLockVerification>,
     #[serde(default)]
     pub runs: Vec<ZeroJobRunAttribution>,
     #[serde(default)]
@@ -616,9 +680,8 @@ pub struct ZeroJobReport {
 }
 
 impl ZeroJobReport {
-    /// True when at least one zero-job run was observed. Always a finding,
-    /// whatever the attribution quality: an unrecorded run is still a run that
-    /// never reported.
+    /// True when a failed candidate remains in the report. Unknown or
+    /// contradictory job evidence still blocks; it does not establish zero.
     pub fn has_findings(&self) -> bool {
         !self.runs.is_empty()
     }
@@ -1014,8 +1077,11 @@ mod tests {
         );
         let report = ZeroJobReport {
             repo: CALLER.into(),
+            checkout_head_sha: Some(SHA.into()),
+            lock_verification: None,
             runs: vec![ZeroJobRunAttribution {
                 run_id: 40_451_601_571,
+                head_sha: Some(SHA.into()),
                 workflow: WF.into(),
                 jobs: Some(0),
                 attributions: vec![a],
@@ -1029,10 +1095,31 @@ mod tests {
         assert_eq!(report, back);
         assert!(ZeroJobReport {
             repo: CALLER.into(),
+            checkout_head_sha: None,
+            lock_verification: None,
             runs: Vec::new(),
             notes: Vec::new(),
         }
         .runs
         .is_empty());
+    }
+
+    #[test]
+    fn source_matching_requires_complete_commit_ids() {
+        assert!(same_source_revision(
+            Some(SHA),
+            Some(&SHA.to_ascii_uppercase())
+        ));
+        for other in [
+            None,
+            Some(""),
+            Some("main"),
+            Some(&SHA[..8]),
+            Some("0000000000000000000000000000000000000000"),
+        ] {
+            assert!(!same_source_revision(Some(SHA), other));
+            assert!(!same_source_revision(other, Some(SHA)));
+        }
+        assert!(!same_source_revision(Some("main"), Some("main")));
     }
 }

@@ -123,7 +123,7 @@ impl PhaseSignatures {
     /// GitHub's own trailing cleanup steps — never a policy step.
     pub fn is_post(&self, name: &str) -> bool {
         let n = name.trim();
-        POST_JOB_STEPS.iter().any(|s| *s == n)
+        POST_JOB_STEPS.contains(&n)
     }
 
     /// A step that is not preflight, not a prerequisite and not cleanup: the
@@ -460,7 +460,8 @@ mod tests {
             }
         );
         assert_eq!(c.handoff(), Handoff::Provisioning);
-        assert!(!c.explain().contains("finding"));
+        assert!(c.explain().contains("not a policy finding"));
+        assert!(!c.is_evidence_bearing_success());
     }
 
     #[test]

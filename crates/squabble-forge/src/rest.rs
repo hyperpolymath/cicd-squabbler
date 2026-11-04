@@ -70,12 +70,14 @@ pub trait RestTransport {
 const PATH_ALLOWED: &[u8] =
     b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/=@+~:";
 
-/// Check an API path before it becomes an argument to `gh`.
+/// Check an API path before it becomes an argument to `gh`. An optional query
+/// must be exactly `per_page=N`, with decimal `N` from 1 to 100 inclusive.
 ///
 /// # Errors
 ///
-/// Returns the reason the path was refused: empty, too long, an option-looking
-/// leading `-`, a `..` segment, or any byte outside [`PATH_ALLOWED`].
+/// Returns the reason the path was refused: empty, over 512 bytes, an
+/// option-looking leading `-`, a `..` segment, a byte outside [`PATH_ALLOWED`]
+/// in the path, or an invalid query.
 pub fn check_api_path(path: &str) -> Result<(), String> {
     if path.is_empty() {
         return Err("empty API path".to_string());
@@ -86,6 +88,22 @@ pub fn check_api_path(path: &str) -> Result<(), String> {
     if path.starts_with('-') {
         return Err(format!("API path '{path}' looks like an option; refusing"));
     }
+    // The zero-job reader already requests bounded run/job pages. Validate
+    // that one query form separately; do not admit arbitrary query syntax or
+    // weaken the path/argv checks below.
+    let path = if let Some((base, query)) = path.split_once('?') {
+        let page_size = query
+            .strip_prefix("per_page=")
+            .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            .and_then(|n| n.parse::<u32>().ok())
+            .filter(|n| (1..=100).contains(n));
+        if base.is_empty() || page_size.is_none() {
+            return Err("API query must be exactly per_page=N with N from 1 to 100".into());
+        }
+        base
+    } else {
+        path
+    };
     for seg in path.split('/') {
         if seg == ".." {
             return Err(format!("API path '{path}' traverses upward; refusing"));
@@ -626,6 +644,35 @@ mod tests {
     fn a_plain_repository_path_is_accepted() {
         assert!(check_api_path("repos/hyperpolymath/cicd-squabbler").is_ok());
         assert!(check_api_path("repos/a/b/commits/main").is_ok());
+    }
+
+    #[test]
+    fn bounded_pagination_used_by_zero_job_is_accepted() {
+        for page_size in [1, 30, 100] {
+            assert!(check_api_path(&format!(
+                "repos/hyperpolymath/cicd-squabbler/actions/runs?per_page={page_size}"
+            ))
+            .is_ok());
+        }
+        assert!(check_api_path("repos/a/b/actions/runs/42/jobs?per_page=1").is_ok());
+    }
+
+    #[test]
+    fn pagination_does_not_admit_other_queries_or_unsafe_paths() {
+        for path in [
+            "repos/a/b/actions/runs?per_page=0",
+            "repos/a/b/actions/runs?per_page=101",
+            "repos/a/b/actions/runs?per_page=30&other=1",
+            "repos/a/b/actions/runs?per_page=30?per_page=1",
+            "repos/a/b/actions/runs?per_page=+1",
+            "repos/a/b/actions/runs?per_page=1\n",
+            "repos/a/b/actions/runs?filter=all",
+            "repos/a/../b?per_page=1",
+            "--help?per_page=1",
+            "?per_page=1",
+        ] {
+            assert!(check_api_path(path).is_err(), "accepted {path:?}");
+        }
     }
 
     #[test]

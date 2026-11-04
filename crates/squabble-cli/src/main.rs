@@ -17,8 +17,8 @@
 //! - `0` — success.
 //! - `2` — a genuine failure: bad usage, `gh` failed, unparseable input.
 //! - `4` — **blocking finding** (`squabble chains` or `squabble zero-job`): a
-//!   dependency cycle, a dead upstream, or any observed zero-job run (a moved
-//!   upstream in `chains` is a warning). Like `3`, a reportable finding, not a
+//!   dependency cycle, a dead or moved upstream, or any observed zero-job
+//!   failure candidate. Like `3`, a reportable finding, not a
 //!   tool failure.
 //! - `5` — **not done** (`squabble verify-satisfied`): agent items remain on
 //!   the PR (unresolved threads, a failing required check, automerge unarmed…).
@@ -48,6 +48,7 @@ mod chains;
 mod fetch;
 mod fight;
 mod inbox;
+mod lock_verifier;
 mod phase;
 mod verify;
 mod zero_job;

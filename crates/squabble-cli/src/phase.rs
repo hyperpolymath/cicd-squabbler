@@ -88,8 +88,8 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
 /// and parses to an empty list (which the classifier treats as absence of
 /// evidence, never as evidence of anything).
 /// A non-array `steps` value also yields an empty list. Job status and conclusion
-/// are passed unchanged to `CheckRun::from_github`, which recognises uppercase
-/// values; unrecognised values can result in a pending job.
+/// are converted to uppercase before `CheckRun::from_github`; unrecognised
+/// values can result in a pending job.
 ///
 /// Returns an error for invalid JSON, a non-object value other than null, or a
 /// non-empty object without a string `status` or `conclusion`.
@@ -99,8 +99,8 @@ fn parse_job(text: &str) -> Result<(Option<CheckRun>, Vec<StepOutcome>), String>
 
     if let serde_json::Value::Object(o) = &v {
         let is_job = !o.is_empty()
-            && (o.get("status").map_or(false, |s| s.is_string())
-                || o.get("conclusion").map_or(false, |s| s.is_string()));
+            && (o.get("status").is_some_and(|s| s.is_string())
+                || o.get("conclusion").is_some_and(|s| s.is_string()));
         if !o.is_empty() && !is_job {
             return Err("not a jobs-API job object (no `status` or `conclusion`)".to_string());
         }
