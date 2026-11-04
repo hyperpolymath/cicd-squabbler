@@ -67,8 +67,9 @@ struct SourceEvidence {
 }
 
 /// Parse one checkout path with an optional `=owner/repo` identity, a run
-/// limit (default `30`) and JSON output. Returns an error for a missing path,
-/// extra paths, unknown flags or a missing or invalid limit (must be 1–100).
+/// limit (default `30`), JSON output and an optional absolute verifier path.
+/// Returns an error for a missing path, extra paths, unknown flags, a missing
+/// or invalid limit (must be 1–100), or a missing or relative verifier path.
 fn parse_args(rest: &[String]) -> Result<Args, String> {
     let mut a = Args {
         path: String::new(),
@@ -116,11 +117,11 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
     Ok(a)
 }
 
-/// Scan recent runs and print startup-failure attributions as text or JSON.
-/// Returns `4` when any startup failure is listed, even if its job count could
-/// not be read; `0` means none in the returned page. Usage, checkout, run
-/// listing and serialisation failures return `2`; policy and name-resolution
-/// failures are retained as report notes.
+/// Scan recent failed runs and print attributions as text or JSON.
+/// Returns `4` when any candidate remains, including one with unreadable or
+/// contradictory job evidence; `0` means none remain in the returned page.
+/// Usage, checkout, run listing, job evidence parsing and serialisation failures
+/// return `2`; policy and name-resolution failures are retained as report notes.
 pub fn run(rest: &[String]) -> ExitCode {
     let args = match parse_args(rest) {
         Ok(a) => a,
@@ -267,9 +268,10 @@ fn probe_allow_list(slug: &str, notes: &mut Vec<String>) -> Option<AllowList> {
     }
 }
 
-/// Pure assembly: resolve canonical names for every coordinate the failing
-/// workflows use, then attribute each run. No IO beyond `rest`, so the whole
-/// report shape is unit-testable.
+/// Assemble a report, resolving names for workflows of runs with zero jobs
+/// and matching source revisions, then attributing each candidate. Resolution
+/// failures are retained as notes; `source` supplies the checkout and optional
+/// native lock evidence used for attribution. No IO occurs beyond `rest`.
 fn collect(
     slug: &str,
     files: &[WorkflowFile],
@@ -428,14 +430,21 @@ impl GhRuns {
     ///
     /// # Errors
     ///
-    /// Propagates transport and parsing errors from the run listing, and
-    /// returns an error for any non-success HTTP status on that listing.
+    /// Propagates transport and parsing errors from the run listing, returns an
+    /// error for a non-success listing status, and rejects malformed job counts
+    /// from successful jobs responses.
     fn startup_runs(&self, slug: &str, limit: usize) -> Result<Vec<ZeroJobRun>, String> {
         fetch_startup_runs(&GhRest, slug, limit)
     }
 }
 
-/// Transport seam used by the live reader and its recorded-response controls.
+/// Read one page of failed run candidates and their job counts through `transport`.
+/// Ordinary failures with positive counts are excluded; startup failures with
+/// positive counts remain as contradictory evidence. Job request errors and
+/// non-success statuses leave the count unknown.
+///
+/// Returns an error for a failed or non-successful run listing, invalid run
+/// data, or malformed job evidence from a successful jobs response.
 fn fetch_startup_runs(
     transport: &dyn RestTransport,
     slug: &str,

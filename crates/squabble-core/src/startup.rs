@@ -304,8 +304,9 @@ pub struct ZeroJobAttribution {
 impl ZeroJobAttribution {
     /// The single legitimate move for this class, if one is proposable.
     ///
-    /// `None` for [`StartupFailureClass::Unattributed`], and for a
-    /// `MovedCoordinate` without a canonical target or a parseable coordinate.
+    /// `None` for lock diagnoses and [`StartupFailureClass::Unattributed`],
+    /// and for a `MovedCoordinate` without a canonical target or a parseable
+    /// coordinate.
     /// Admission also requires a recorded allow-list pattern.
     pub fn proposed_move(&self) -> Option<Move> {
         match self.class {
@@ -343,7 +344,7 @@ impl ZeroJobAttribution {
     /// This is the bridge between the zero-job report and the gate model: a
     /// diagnosed cause can explain a `Missing` requirement, but (as
     /// `squabble-core::gate` proves) no cause is a path to `Green`. `None` for
-    /// an unattributed run — an unknown cause is not invented.
+    /// lock diagnoses and unattributed runs.
     pub fn missing_cause(&self) -> Option<MissingCause> {
         match self.class {
             StartupFailureClass::MovedCoordinate => Some(MissingCause::MovedUpstreamCoordinate),
@@ -617,7 +618,8 @@ pub struct NativeLockVerification {
     pub reason: String,
 }
 
-/// Only complete commit IDs may bind a local observation to a failed run.
+/// Compare two full 40-character hexadecimal commit IDs, ignoring ASCII case.
+/// Missing, abbreviated or malformed IDs never match.
 pub fn same_source_revision(observed: Option<&str>, checkout: Option<&str>) -> bool {
     let is_sha = |s: &str| s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit());
     matches!((observed, checkout), (Some(a), Some(b))

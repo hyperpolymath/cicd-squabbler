@@ -88,8 +88,8 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
 /// and parses to an empty list (which the classifier treats as absence of
 /// evidence, never as evidence of anything).
 /// A non-array `steps` value also yields an empty list. Job status and conclusion
-/// are passed unchanged to `CheckRun::from_github`, which recognises uppercase
-/// values; unrecognised values can result in a pending job.
+/// are converted to uppercase before `CheckRun::from_github`; unrecognised
+/// values can result in a pending job.
 ///
 /// Returns an error for invalid JSON, a non-object value other than null, or a
 /// non-empty object without a string `status` or `conclusion`.

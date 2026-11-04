@@ -70,12 +70,14 @@ pub trait RestTransport {
 const PATH_ALLOWED: &[u8] =
     b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/=@+~:";
 
-/// Check an API path before it becomes an argument to `gh`.
+/// Check an API path before it becomes an argument to `gh`. An optional query
+/// must be exactly `per_page=N`, with decimal `N` from 1 to 100 inclusive.
 ///
 /// # Errors
 ///
-/// Returns the reason the path was refused: empty, too long, an option-looking
-/// leading `-`, a `..` segment, or any byte outside [`PATH_ALLOWED`].
+/// Returns the reason the path was refused: empty, over 512 bytes, an
+/// option-looking leading `-`, a `..` segment, a byte outside [`PATH_ALLOWED`]
+/// in the path, or an invalid query.
 pub fn check_api_path(path: &str) -> Result<(), String> {
     if path.is_empty() {
         return Err("empty API path".to_string());

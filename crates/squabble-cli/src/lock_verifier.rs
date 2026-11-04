@@ -11,14 +11,21 @@ use std::process::{Command, Output};
 
 const SUPPORTED_VERSION: &str = "actions-lock version v0.2.0";
 
-/// Bind the workflow tree to a complete commit ID. Uncommitted or unreadable
-/// workflow inputs cannot explain a historical run at that commit.
+/// Return the checkout's full commit ID when its workflow tree is unmodified.
+///
+/// Returns an error if `root` is not the repository root, Git or the checkout
+/// cannot be read, or the workflow inputs are dirty or unsuitable for binding.
 pub(crate) fn checkout_revision(root: &Path) -> Result<String, String> {
     source_revision(root, false)
 }
 
-/// The official reader also follows same-repository action definitions. A
-/// pristine full checkout closes that input set without a second action parser.
+/// Return the full commit ID after checking the selected source scope.
+/// `full_tree` checks the whole checkout, including same-repository action
+/// definitions; otherwise only the workflow tree is checked.
+///
+/// Returns an error if the root, Git identity, index or selected source cannot
+/// be established as an unmodified checkout, including ignored and untracked
+/// inputs and symlinks or gitlinks in the selected tree.
 fn source_revision(root: &Path, full_tree: bool) -> Result<String, String> {
     let git = |args: &[&str]| -> Result<Output, String> {
         Command::new("git")
@@ -89,6 +96,8 @@ fn source_revision(root: &Path, full_tree: bool) -> Result<String, String> {
     Ok(sha)
 }
 
+/// Prepare a verifier command in `root` without the supported GitHub token
+/// and verifier directory override environment variables.
 fn command(binary: &Path, root: &Path) -> Command {
     let mut cmd = Command::new(binary);
     cmd.current_dir(root);
@@ -107,6 +116,11 @@ fn command(binary: &Path, root: &Path) -> Command {
 
 /// Invoke an explicitly selected, operator-verified official binary. There
 /// is no download, resolver, credential requirement, write mode or fallback.
+///
+/// `head_sha` identifies the expected checkout and `workflows` lists the
+/// expected workflow paths. A dirty or mismatched checkout, unsupported version,
+/// execution failure or inconclusive output yields unverified evidence. The
+/// result retains the verifier's output and exit code when available.
 pub(crate) fn verify(
     binary: &Path,
     root: &Path,
@@ -206,6 +220,8 @@ struct NativeFinding {
 /// Source: github/gh-actions-lock d5dca22a06ff8590d50b41612038996800cfb336,
 /// cmd/gh-actions-lock/{root,verify}.go. Only a parser diagnostic within exit
 /// 2 establishes malformed syntax; an IO error must remain unverified.
+/// `workflows` is the expected set of workflow paths; incomplete or
+/// contradictory reports are unverified.
 fn classify(
     exit: Option<i32>,
     stdout: &str,

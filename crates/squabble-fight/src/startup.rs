@@ -79,16 +79,25 @@ pub fn attribute_workflow(
     out
 }
 
-/// Attribute one zero-job run from the repo's already-read workflow files.
+/// Attribute one failed run from the repo's already-read workflow files.
+///
+/// Attribution requires an observed zero job count and a full run commit ID
+/// matching `checkout_revision`, which the caller must establish from a
+/// checkout with an unmodified workflow tree. Otherwise the result is one
+/// `Unattributed` entry.
+/// Optional `lock` evidence must match that revision: malformed locks and
+/// workflow-specific coverage mismatches take precedence over coordinates,
+/// while unverified or mismatched evidence leaves the run unattributed.
+/// A verified lock, or a mismatch for another workflow, permits coordinate
+/// attribution to continue.
 ///
 /// When the run's workflow file is not among `files` (an unreadable checkout, a
 /// workflow deleted since the run), the run still gets an honest
 /// `Unattributed` entry with the reason — absence of evidence is never
 /// evidence of a clean start.
 ///
-/// When no coordinate is moved or unadmitted, the result is a single
-/// `Unattributed` entry rather than one per coordinate: the run failed for a
-/// reason outside this taxonomy, and the report should say that once. The
+/// When coordinate attribution finds no moved or unadmitted coordinate, the
+/// result is a single `Unattributed` entry rather than one per coordinate. The
 /// entry kept is the first by coordinate in lexicographic order. Attributed
 /// results are also sorted by coordinate. The caller supplies the observed
 /// run; only an explicitly observed zero job count permits attribution.
