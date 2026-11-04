@@ -743,7 +743,15 @@ impl Finding {
                 } else {
                     format!("{} confirmed reference(s) still name the old coordinate. Actions does not redirect `uses:`; a moved reusable can cause a zero-job `startup_failure`. Review repointing while retaining the pin", consumers.len())
                 };
-                format!("moved upstream `{written}` → canonical `{canonical}`: {confirmed}; {} reference(s) were observed only at an unconfirmed upstream revision and require inspection at the caller's exact pin", unconfirmed_consumers.len())
+                let unconfirmed = if unconfirmed_consumers.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "; {} reference(s) were observed only at an unconfirmed upstream revision and require inspection at the caller's exact pin",
+                        unconfirmed_consumers.len()
+                    )
+                };
+                format!("moved upstream `{written}` → canonical `{canonical}`: {confirmed}{unconfirmed}")
             }
             Finding::Diamond {
                 consumer,
