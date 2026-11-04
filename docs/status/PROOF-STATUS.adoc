@@ -10,9 +10,11 @@ On 2026-11-04,
 https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438/job/126852164109[proof job 126852164109]
 rejected the planted false control, proved the true control, and discharged
 the contracts in `verification/squabble-creusot` at merge checkout
-`f9499a8de0b8c525459a669e2cdbcacf83a49b85`. It reported `Proved (13 files)`;
-the gate reported zero trusted axioms. The exact head, base and gate source
-are recorded in `../CREUSOT.adoc`.
+`f9499a8de0b8c525459a669e2cdbcacf83a49b85`. Its `Proved (13 files)` result
+counts files, not independent theorems. The gate's zero trusted-axiom field
+counts only tracked Rust lines containing the literal `#[trusted]`; it does
+not count axioms from dependencies or the prover. The exact head, base and
+gate source are recorded in `../CREUSOT.adoc`.
 
 This result applies to that contract crate and source revision. It does not
 complete the ABI/typing template obligations below or certify later source,

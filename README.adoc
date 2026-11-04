@@ -221,8 +221,11 @@ just verify-creusot   # the prover: discharge the obligations
 https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438/job/126852164109[job 126852164109]
 rejected the planted false contract, proved the true control, then discharged
 the obligations in `verification/squabble-creusot` at merge checkout
-`f9499a8de0b8c525459a669e2cdbcacf83a49b85` (`Proved (13 files)`; the gate
-reported zero trusted axioms). That checkout combines PR head
+`f9499a8de0b8c525459a669e2cdbcacf83a49b85`. `Proved (13 files)` is the
+prover's file-level result, not a theorem count. The gate's zero trusted-axiom
+field counts only tracked Rust lines containing the literal `#[trusted]`;
+it does not count axioms from dependencies or the prover. That checkout combines
+PR head
 `1fd9db9bb94d9ac8ed54f7a6ef4f8c51ff35a848` with base
 `17284299184fd31a10c7bf382f02262cd0ab308c`. This receipt covers the separate
 contract crate at that revision; later revisions and the operational engine

@@ -43,8 +43,9 @@ records the following source and execution evidence:
 
 | Calling crate
 | `verification/squabble-creusot`: `Proved (13 files)` at
-  20:55:09 UTC; the gate reported every obligation discharged and zero
-  trusted axioms.
+  20:55:09 UTC; the gate reported every obligation discharged. Its
+  `trusted axioms: 0` field counted lines containing the literal `#[trusted]`
+  in tracked Rust files, not axioms from dependencies or the prover.
 
 | Aggregate verdict (separate from prover execution)
 | https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438/job/126858835478[Verdict job 126858835478]
@@ -54,8 +55,9 @@ records the following source and execution evidence:
   linked above.
 |===
 
-This receipt discharges the contracts in the separate verification crate at
-the named merge revision. It is not a proof of all operational Rust code, and
+`Proved (13 files)` is the prover's file-level result for this crate, not a
+count of independent theorems. This receipt discharges the contracts in the
+separate verification crate at the named merge revision. It is not a proof of all operational Rust code, and
 it does not certify later commits or the default branch merely because they
 contain this document. The stable mirror tests, which compare the model with
 `squabble-core`, remain a separate validation step; this proof receipt does

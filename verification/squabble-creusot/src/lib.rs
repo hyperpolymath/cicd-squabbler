@@ -23,8 +23,11 @@
 //!
 //! Run 41909189438, proof job 126852164109, discharged this verification crate
 //! at merge revision f9499a8de0b8c525459a669e2cdbcacf83a49b85. It rejected the
-//! false control, proved the true control, and reported Proved (13 files) with
-//! zero trusted axioms. See docs/CREUSOT.adoc for the full source and gate pins:
+//! false control, proved the true control, and reported Proved (13 files), a
+//! file-level result rather than a theorem count. The gate's zero trusted-axiom
+//! field counts lines with the exact trusted-attribute spelling in tracked Rust
+//! files only; it does not count dependency or prover axioms. See docs/CREUSOT.adoc
+//! for the spelling, full source and gate pins:
 //! <https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438/job/126852164109>.
 //!
 //! That receipt does not prove the whole operational engine or later source.
