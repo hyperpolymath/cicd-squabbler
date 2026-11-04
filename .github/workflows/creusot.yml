@@ -9,10 +9,10 @@
 # can say no, proves a planted TRUE one, and only then runs
 # `cargo creusot prove` in every crate that carries contracts.
 #
-# What it covers here: verification/squabble-creusot. Obligations are
-# **stated, not discharged** — no run has reached Why3 yet (see
-# docs/CREUSOT.adoc). A green on this check means the obligations were
-# discharged on that run, not that they were ever stated before.
+# What it covers here: verification/squabble-creusot. Hosted run 41909189438
+# discharged its obligations at merge checkout f9499a8de0b8c525459a669e2cdbcacf83a49b85
+# after rejecting the false control and proving the true one (docs/CREUSOT.adoc).
+# Each later source still needs its own proof run; this is not a whole-engine proof.
 #
 # Full-SHA pin, DE-ONBOARDED from actions.lock — same rule as rust-ci.yml: the
 # gate scripts are pinned by the caller's own `uses:` SHA, so this line is the

@@ -217,12 +217,18 @@ just verify-mirror    # stable Rust: the model vs the real engine
 just verify-creusot   # the prover: discharge the obligations
 ----
 
-**Stated, not proved.** No obligation has been discharged, and this repository's
-own `Rust CI` currently ends as a zero-job `startup_failure`, so CI has not
-compiled the workspace either. `.github/workflows/creusot.yml` calls the estate's
-`creusot-gate.yml`, which fails a claim of proof with no contracts behind it and
-reports *no proof performed* rather than a verdict when the prover cannot be
-shown to work. Details and the licence note: `docs/CREUSOT.adoc`.
+**Hosted proof recorded for an exact source revision.** On 2026-11-04,
+https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438/job/126852164109[job 126852164109]
+rejected the planted false contract, proved the true control, then discharged
+the obligations in `verification/squabble-creusot` at merge checkout
+`f9499a8de0b8c525459a669e2cdbcacf83a49b85` (`Proved (13 files)`; the gate
+reported zero trusted axioms). That checkout combines PR head
+`1fd9db9bb94d9ac8ed54f7a6ef4f8c51ff35a848` with base
+`17284299184fd31a10c7bf382f02262cd0ab308c`. This receipt covers the separate
+contract crate at that revision; later revisions and the operational engine
+need their own validation. The gate still reports *no proof performed* when
+it cannot establish a working prover. Scope, historical environment failures
+and the licence note: `docs/CREUSOT.adoc`.
 
 == Downstream integration contracts (pinned, immutable revisions)
 
@@ -280,7 +286,7 @@ check away, or any override are provably *not* paths to green.
 | `crates/squabble-app`  | The loopback HTTP backend (axum, `127.0.0.1:7741`): serves the shared planner to the boj-server `cicd-squabbler-mcp` cartridge. The GitHub App *webhook* leg (trigger button + octocrab) is still to come — no webhook route is registered.
 | `crates/squabble-forge`| Forge access: GitHub GraphQL via `gh api graphql`, batched, validated against a committed schema snapshot. REST where GraphQL has no equivalent — notably `repos/{o}/{n}` for canonical `full_name` resolution (redirects followed, names compared).
 | `spark/`               | The formal heart. `Gate_Machine` + the proved theorem `green ⇔ (non-empty ∧ all passed)`.
-| `verification/squabble-creusot` | The Rust twin of `spark/`: Creusot contracts for the same invariants, plus a stable-Rust mirror that fails if the engine drifts from them. **Stated, not proved** — no obligation has been discharged yet. See `docs/CREUSOT.adoc`.
+| `verification/squabble-creusot` | Creusot contracts for the scalar invariants, plus a stable-Rust mirror that tests for drift from the engine. A hosted proof discharged the contract crate at merge checkout `f9499a8…` on 2026-11-04; this does not certify later source or the whole engine. Exact receipt and scope: `docs/CREUSOT.adoc`.
 |===
 
 == Verify it yourself

@@ -299,10 +299,12 @@ pub fn parse_startup_runs(body: &str) -> Result<Vec<ZeroJobRun>, String> {
             .get("path")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("");
-        // Drop a `@ref` suffix before taking the filename: `.github/
-        // workflows/ci.yml@refs/heads/main` must yield `ci.yml`, not
-        // `main`. The ref is not evidence of which file ran.
-        let path = path.split('@').next().unwrap_or(path);
+        // Drop only an explicit `@refs/` suffix before taking the filename.
+        // `release@nightly.yml` is a valid filename, including when followed
+        // by `@refs/heads/main`. The ref is not source-revision evidence.
+        let path = path
+            .split_once("@refs/")
+            .map_or(path, |(workflow, _)| workflow);
         let workflow_file = path.rsplit('/').next().unwrap_or(path).to_string();
         let workflow_name = r
             .get("name")
@@ -829,6 +831,87 @@ jobs:
         assert_eq!(runs.len(), 2);
         assert_eq!(runs[0].workflow_file, "gov.yml");
         assert_eq!(runs[1].workflow_file, "ci.yml");
+    }
+
+    #[test]
+    fn an_at_sign_in_the_workflow_filename_survives_ref_suffix_removal() {
+        let body = serde_json::json!({
+            "workflow_runs": [
+                {"id": 31, "conclusion": "startup_failure",
+                 "path": ".github/workflows/release@nightly.yml"},
+                {"id": 32, "conclusion": "startup_failure",
+                 "path": ".github/workflows/release@nightly.yml@refs/heads/main"},
+                {"id": 33, "conclusion": "startup_failure",
+                 "path": ".github/workflows/release@refs.yml"},
+                {"id": 34, "conclusion": "startup_failure",
+                 "path": ".github/workflows/release@nightly.yml@refs/heads/topic@refs/heads/main"}
+            ]
+        })
+        .to_string();
+        let runs = parse_startup_runs(&body).expect("parse");
+        let files: Vec<_> = runs.iter().map(|r| r.workflow_file.as_str()).collect();
+        assert_eq!(
+            files,
+            [
+                "release@nightly.yml",
+                "release@nightly.yml",
+                "release@refs.yml",
+                "release@nightly.yml",
+            ]
+        );
+        assert!(runs.iter().all(|r| r.jobs.is_none()));
+    }
+
+    #[test]
+    fn an_at_named_workflow_still_requires_matching_source_and_zero_jobs() {
+        let files = [wf("release@nightly.yml", WORKFLOW)];
+        let names = canonical(&[(
+            "old/standards",
+            CanonicalResolution::Moved {
+                canonical: "new/standards".into(),
+            },
+        )]);
+        for path in [
+            ".github/workflows/release@nightly.yml",
+            ".github/workflows/release@nightly.yml@refs/heads/main",
+        ] {
+            let body = serde_json::json!({
+                "workflow_runs": [{
+                    "id": 35, "conclusion": "startup_failure",
+                    "head_sha": SHA, "path": path
+                }]
+            })
+            .to_string();
+            let mut observed = parse_startup_runs(&body).expect("parse").remove(0);
+            for jobs in [None, Some(0), Some(1)] {
+                observed.jobs = jobs;
+                for checkout in [
+                    None,
+                    Some("0000000000000000000000000000000000000000"),
+                    Some(SHA),
+                ] {
+                    let out =
+                        attribute_run(CALLER, &observed, &files, &names, None, checkout, None);
+                    assert_eq!(out.len(), 1, "{path}: {out:#?}");
+                    if jobs == Some(0) && checkout == Some(SHA) {
+                        assert_eq!(out[0].workflow, "release@nightly.yml");
+                        assert_eq!(out[0].class, StartupFailureClass::MovedCoordinate);
+                        assert_eq!(
+                            out[0].coordinate,
+                            format!("old/standards/.github/workflows/hypatia-scan.yml@{SHA}")
+                        );
+                        assert!(matches!(
+                            out[0].proposed_move(),
+                            Some(Move::RepointToCanonical { pin, .. }) if pin == SHA
+                        ));
+                    } else {
+                        assert_eq!(out[0].class, StartupFailureClass::Unattributed);
+                        assert!(out[0].proposed_move().is_none());
+                        assert!(out[0].required_allow_list_pattern.is_none());
+                    }
+                }
+            }
+        }
     }
 
     #[test]

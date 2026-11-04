@@ -5,7 +5,16 @@
 The Rust twin of `spark/`: a parallel verification artefact that states the
 engine's load-bearing invariants to a prover instead of only testing them.
 
-**Status: stated, not proved.** No obligation has been discharged.
+**Status: obligations discharged at the recorded merge checkout.**
+https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438/job/126852164109[Hosted job 126852164109]
+on 2026-11-04 rejected the false control, proved the true control, and reported
+`Proved (13 files)` for this crate at
+`f9499a8de0b8c525459a669e2cdbcacf83a49b85`, with zero trusted axioms reported
+by the gate. This is the merge of PR head
+`1fd9db9bb94d9ac8ed54f7a6ef4f8c51ff35a848` into base
+`17284299184fd31a10c7bf382f02262cd0ab308c`. The receipt covers these contracts
+at that source, not later revisions or the full operational engine. The stable
+mirror tests are a separate validation step.
 
 * `src/model.rs` — the invariants as ordinary Rust, plus `#[test]`s that compare
   them with the real `squabble-core`. Runs on **stable** Rust; no Creusot

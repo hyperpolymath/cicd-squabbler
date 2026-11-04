@@ -2,9 +2,23 @@
 // Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 // Template: rsr-template-repo/docs/status/PROOF-STATUS.adoc
 // Tracks proof completion. Requirements defined in PROOF-NEEDS.adoc
-= Proof Status — {{PROJECT}}
+= Proof Status — cicd-squabbler
 
-== Summary
+== Recorded Creusot result
+
+On 2026-11-04,
+https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438/job/126852164109[proof job 126852164109]
+rejected the planted false control, proved the true control, and discharged
+the contracts in `verification/squabble-creusot` at merge checkout
+`f9499a8de0b8c525459a669e2cdbcacf83a49b85`. It reported `Proved (13 files)`;
+the gate reported zero trusted axioms. The exact head, base and gate source
+are recorded in `../CREUSOT.adoc`.
+
+This result applies to that contract crate and source revision. It does not
+complete the ABI/typing template obligations below or certify later source,
+the whole operational engine, or separate mirror-test execution.
+
+== Template obligation summary
 
 [cols="2,1,1,1,1,1", options="header"]
 |===
@@ -20,7 +34,8 @@
 | *Total* | *7* | *0* | *0* | *0* | *7*
 |===
 
-*Overall*: 0% proven
+*Template obligations*: 0 of 7 recorded complete. The separate Creusot receipt
+above is not counted as completion of any template obligation.
 
 == Proofs Done
 
@@ -32,7 +47,7 @@
 |===
 | ID | Proof | Prover | File | Date | Verified By
 
-| — | No proofs completed yet | — | — | — | —
+| — | No template obligations recorded complete | — | — | — | —
 |===
 
 == Proofs In Progress
@@ -98,4 +113,5 @@ panic-attack assail --proofs-only
 | Date | Change | By
 
 | 2026-04-04 | Initial proof status tracking | Template
+| 2026-11-04 | Record bounded Creusot hosted receipt; retain template obligations as uncompleted | Hosted run 41909189438
 |===
