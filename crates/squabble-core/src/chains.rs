@@ -1548,7 +1548,8 @@ mod tests {
             ),
             edge(
                 "me/shared",
-                ".github/workflows/ci.yml",
+                // Edge.file is relative to .github/workflows; Edge.path below is not.
+                "ci.yml",
                 "me/inner",
                 EdgeKind::ReusableWorkflow,
                 Some(".github/workflows/ci.yml"),

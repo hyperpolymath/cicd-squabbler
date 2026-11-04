@@ -297,7 +297,7 @@ fn is_sha(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use squabble_core::chains::{analyse, Finding};
+    use squabble_core::chains::{analyse, Finding, Severity};
 
     const SHA: &str = "8f2ee50841e216cd8c192eeb68953118190f105c";
 
@@ -421,6 +421,116 @@ jobs:
             .findings
             .iter()
             .any(|f| matches!(f, Finding::Diamond { target, .. } if target == &RepoId::new("actions/checkout"))));
+    }
+
+    #[test]
+    fn extracted_two_hop_routes_require_both_pins_and_the_called_file() {
+        let other_sha = "0000000000000000000000000000000000000000";
+        let at_revision = |repo: &str, files: Vec<WorkflowFile>, revision: &str| {
+            let mut snapshot = snap(repo, files);
+            snapshot.status = ScanStatus::Scanned {
+                revision: Some(revision.to_string()),
+                workflow_files: snapshot.files.len(),
+            };
+            snapshot
+        };
+        for (shared_revision, inner_revision, called_file, expected) in [
+            (SHA, SHA, "leaf.yml", Some(Severity::Blocking)),
+            (other_sha, SHA, "leaf.yml", Some(Severity::Warning)),
+            (SHA, other_sha, "leaf.yml", Some(Severity::Warning)),
+            (SHA, SHA, "other.yml", None),
+        ] {
+            let app = at_revision(
+                "me/app",
+                vec![wf(
+                    "ci.yml",
+                    &format!(
+                        "jobs:\n  call:\n    uses: me/shared/.github/workflows/reuse.yml@{SHA}\n"
+                    ),
+                )],
+                SHA,
+            );
+            let shared = at_revision(
+                "me/shared",
+                vec![wf(
+                    "reuse.yml",
+                    &format!(
+                        "jobs:\n  call:\n    uses: me/inner/.github/workflows/{called_file}@{SHA}\n"
+                    ),
+                )],
+                shared_revision,
+            );
+            let inner = at_revision(
+                "me/inner",
+                vec![
+                    wf(
+                        "leaf.yml",
+                        &format!(
+                            "jobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: old/tool@{SHA}\n"
+                        ),
+                    ),
+                    wf(
+                        "other.yml",
+                        "jobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo no external action\n",
+                    ),
+                ],
+                inner_revision,
+            );
+
+            let first = graph_from_snapshots([(&app, Role::Subject)]);
+            let shared_role = upstream_roles(&first)
+                .into_iter()
+                .find(|(repo, _)| repo == &RepoId::new("me/shared"))
+                .expect("outer reusable")
+                .1;
+            let second =
+                graph_from_snapshots([(&app, Role::Subject), (&shared, shared_role.clone())]);
+            let inner_role = upstream_roles(&second)
+                .into_iter()
+                .find(|(repo, _)| repo == &RepoId::new("me/inner"))
+                .expect("inner reusable")
+                .1;
+            let mut graph = graph_from_snapshots([
+                (&app, Role::Subject),
+                (&shared, shared_role),
+                (&inner, inner_role),
+            ]);
+            graph.record_canonical(RepoId::new("old/tool"), RepoId::new("new/tool"));
+            let report = analyse(&graph, None);
+            let finding = report
+                .findings
+                .iter()
+                .find(|finding| matches!(finding, Finding::MovedUpstream { .. }));
+            assert_eq!(
+                finding.map(Finding::severity),
+                expected,
+                "{shared_revision} {inner_revision} {called_file}"
+            );
+            assert_eq!(report.has_blocking(), expected == Some(Severity::Blocking));
+            if let Some(Finding::MovedUpstream {
+                consumers,
+                unconfirmed_consumers,
+                ..
+            }) = finding
+            {
+                assert_eq!(
+                    consumers.len(),
+                    usize::from(expected == Some(Severity::Blocking))
+                );
+                assert_eq!(
+                    unconfirmed_consumers.len(),
+                    usize::from(expected == Some(Severity::Warning))
+                );
+                let observed = consumers.first().or(unconfirmed_consumers.first()).unwrap();
+                assert_eq!(observed.from, RepoId::new("me/inner"));
+                assert_eq!(observed.file, "leaf.yml");
+            } else {
+                assert!(graph
+                    .edges
+                    .iter()
+                    .all(|edge| edge.to != RepoId::new("old/tool")));
+            }
+        }
     }
 
     #[test]

@@ -729,14 +729,7 @@ mod tests {
             .to_string();
             let mut observed = parse_startup_runs(&body).unwrap().remove(0);
             observed.jobs = Some(0);
-            let report = collect(
-                "me/app",
-                &files,
-                vec![observed],
-                &rest,
-                None,
-                Vec::new(),
-            );
+            let report = collect("me/app", &files, vec![observed], &rest, None, Vec::new());
             let finding = &report.runs[0].attributions[0];
             assert_eq!(finding.workflow, "release@nightly.yml");
             assert_eq!(finding.class, StartupFailureClass::MovedCoordinate);

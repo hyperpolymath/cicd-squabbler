@@ -100,8 +100,7 @@ pub fn resolve_run_workflow<'a>(
 ) -> Result<&'a WorkflowFile, String> {
     let mut candidates = files.iter().filter(|file| {
         // Actions workflow files live directly in .github/workflows.
-        if file.path.contains('/')
-            || !(file.path.ends_with(".yml") || file.path.ends_with(".yaml"))
+        if file.path.contains('/') || !(file.path.ends_with(".yml") || file.path.ends_with(".yaml"))
         {
             return false;
         }
@@ -198,11 +197,14 @@ pub fn attribute_run(
                     let path = format!(".github/workflows/{}", file.path);
                     serde_json::from_str::<serde_json::Value>(&lock.stdout)
                         .ok()
-                        .and_then(|report| report.get("workflows").and_then(|v| v.as_array()).cloned())
+                        .and_then(|report| {
+                            report.get("workflows").and_then(|v| v.as_array()).cloned()
+                        })
                         .is_some_and(|workflows| {
                             workflows.iter().any(|workflow| {
                                 workflow.get("path").and_then(|v| v.as_str()) == Some(path.as_str())
-                                    && workflow.get("valid").and_then(|v| v.as_bool()) == Some(false)
+                                    && workflow.get("valid").and_then(|v| v.as_bool())
+                                        == Some(false)
                             })
                         })
                 });
@@ -1007,7 +1009,10 @@ jobs:
             None,
         );
         assert_eq!(literal_result[0].workflow, "release.yml@nightly.yml");
-        assert_eq!(literal_result[0].class, StartupFailureClass::MovedCoordinate);
+        assert_eq!(
+            literal_result[0].class,
+            StartupFailureClass::MovedCoordinate
+        );
 
         let files = [short, literal];
         for path in [
@@ -1052,10 +1057,7 @@ jobs:
             }]})
             .to_string();
             let observed = parse_startup_runs(&body).unwrap().remove(0);
-            assert!(
-                resolve_run_workflow(&observed, &files).is_err(),
-                "{path}"
-            );
+            assert!(resolve_run_workflow(&observed, &files).is_err(), "{path}");
         }
     }
 
