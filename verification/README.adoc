@@ -5,8 +5,15 @@
 == Rust: the Creusot complement
 
 Rust obligations live in `squabble-creusot/` (the Rust twin of `spark/` and of
-the proofs under `proofs/`). They are **stated, not proved**: no obligation has
-been discharged yet. See `../docs/CREUSOT.adoc` and `squabble-creusot/README.adoc`.
+the proofs under `proofs/`). A hosted proof run discharged the verification
+crate's obligations at merge revision
+`f9499a8de0b8c525459a669e2cdbcacf83a49b85`:
+https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438/job/126852164109[the proof job]
+rejected the false control, proved the true control and reported
+`Proved (13 files)` with zero trusted axioms. This receipt applies to that
+source, not every later commit or the whole operational engine. Stable mirror
+execution is a separate obligation. See link:../docs/CREUSOT.adoc[the source-bound
+receipt] and link:squabble-creusot/README.adoc[the crate's scope].
 
 [source,sh]
 ----

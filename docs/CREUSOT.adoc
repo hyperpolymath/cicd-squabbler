@@ -46,9 +46,12 @@ records the following source and execution evidence:
   20:55:09 UTC; the gate reported every obligation discharged and zero
   trusted axioms.
 
-| Verdict
-| Job `126858835478` concluded success after detection, theatre and proof jobs
-  succeeded.
+| Aggregate verdict (separate from prover execution)
+| https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438/job/126858835478[Verdict job 126858835478]
+  adjudicated the successful detection, theatre and proof results. The actual
+  planted controls and caller proof ran in
+  https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438/job/126852164109[proof job 126852164109]
+  linked above.
 |===
 
 This receipt discharges the contracts in the separate verification crate at

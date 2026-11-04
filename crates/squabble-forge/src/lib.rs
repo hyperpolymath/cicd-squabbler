@@ -25,6 +25,7 @@ pub mod pr_done;
 
 use serde_json::{json, Value};
 use squabble_core::chains::{RepoId, RepoSnapshot, ScanStatus, SourceCost, WorkflowFile};
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -140,6 +141,15 @@ pub fn parse_chains_response(
         })
     });
 
+    if resp.get("errors").is_some_and(|errors| !errors.is_array()) {
+        return (
+            batch
+                .iter()
+                .map(|repo| unavailable(repo, "malformed GraphQL error population".into()))
+                .collect(),
+            rate,
+        );
+    }
     let errors: Vec<&Value> = resp
         .get("errors")
         .and_then(Value::as_array)
@@ -151,7 +161,7 @@ pub fn parse_chains_response(
                 .and_then(Value::as_array)
                 .and_then(|p| p.first())
                 .and_then(Value::as_str)
-                == Some(alias)
+                .is_none_or(|first| first == alias)
         })
     };
     let top_level_reason = || {
@@ -176,7 +186,19 @@ pub fn parse_chains_response(
                 return unavailable(repo, top_level_reason());
             };
             match data.get(&alias) {
-                Some(node) if node.is_object() => parse_repo(repo, node),
+                Some(node) if node.is_object() => {
+                    let mut snapshot = parse_repo(repo, node);
+                    if let Some(error) = error_for(&alias) {
+                        let reason = error
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("GraphQL field error without a message");
+                        let reason = format!("workflow source has a GraphQL read error: {reason}");
+                        snapshot.notes.push(reason.clone());
+                        snapshot.status = ScanStatus::Unavailable { reason };
+                    }
+                    snapshot
+                }
                 _ => match error_for(&alias) {
                     Some(e) if e.get("type").and_then(Value::as_str) == Some("NOT_FOUND") => {
                         RepoSnapshot {
@@ -214,12 +236,13 @@ fn unavailable(repo: &RepoId, reason: String) -> RepoSnapshot {
     }
 }
 
-/// Build a scanned snapshot from a repository node, retaining the requested
-/// identity and any different canonical name. Missing branches or workflow
-/// entries yield no files; unreadable blobs are skipped with notes, while
-/// truncated text is retained with a caveat.
+/// Build a snapshot from the complete workflow-directory response. Explicitly
+/// absent branches or directories are empty reads. Missing/malformed entries,
+/// unreadable or binary blobs and truncated text are unavailable reads; retain
+/// partial text, canonical identity and diagnostics without qualifying edges.
 fn parse_repo(repo: &RepoId, node: &Value) -> RepoSnapshot {
     let mut notes = Vec::new();
+    let mut incomplete = Vec::new();
     let mut canonical = None;
     if let Some(canon) = node.get("nameWithOwner").and_then(Value::as_str) {
         if RepoId::new(canon) != *repo {
@@ -232,58 +255,116 @@ fn parse_repo(repo: &RepoId, node: &Value) -> RepoSnapshot {
             ));
         }
     }
-    let commit = node.pointer("/defaultBranchRef/target");
+    let branch = node.get("defaultBranchRef");
+    let commit = branch
+        .and_then(|branch| branch.get("target"))
+        .filter(|target| target.is_object());
     let revision = commit
-        .and_then(|c| c.get("oid"))
+        .and_then(|commit| commit.get("oid"))
         .and_then(Value::as_str)
         .map(str::to_ascii_lowercase);
-    if node.get("defaultBranchRef").is_none_or(Value::is_null) {
-        notes.push("no default branch (empty repository?)".into());
-    }
+    let entries = match branch {
+        Some(Value::Null) => {
+            notes.push("no default branch (empty repository?)".into());
+            None
+        }
+        Some(Value::Object(_)) => match commit {
+            Some(commit) => match commit.get("file") {
+                Some(Value::Null) => None,
+                Some(file) => match file.pointer("/object/entries").and_then(Value::as_array) {
+                    Some(entries) => Some(entries),
+                    None => {
+                        incomplete
+                            .push("workflow directory entries are missing or malformed".into());
+                        None
+                    }
+                },
+                None => {
+                    incomplete.push("workflow directory result is missing".into());
+                    None
+                }
+            },
+            None => {
+                incomplete.push("default branch commit is missing or malformed".into());
+                None
+            }
+        },
+        _ => {
+            incomplete.push("default branch result is missing or malformed".into());
+            None
+        }
+    };
 
     let mut files = Vec::new();
-    let entries = commit
-        .and_then(|c| c.pointer("/file/object/entries"))
-        .and_then(Value::as_array);
+    let mut names = BTreeSet::new();
     for entry in entries.into_iter().flatten() {
-        let name = entry
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let is_blob = entry.get("type").and_then(Value::as_str) == Some("blob");
-        if !is_blob || !(name.ends_with(".yml") || name.ends_with(".yaml")) {
+        let name = match entry.get("name").and_then(Value::as_str) {
+            Some(name) if !name.is_empty() && !name.contains('/') => name,
+            _ => {
+                incomplete.push("workflow directory entry has no valid filename".into());
+                continue;
+            }
+        };
+        if !names.insert(name) {
+            incomplete.push(format!("{name}: duplicate workflow directory entry"));
+            continue;
+        }
+        match entry.get("type").and_then(Value::as_str) {
+            Some("blob") => {}
+            Some("tree" | "commit") => continue,
+            _ => {
+                incomplete.push(format!("{name}: workflow directory entry has an unknown type"));
+                continue;
+            }
+        }
+        if !(name.ends_with(".yml") || name.ends_with(".yaml")) {
             continue;
         }
         let blob = entry.get("object");
-        let text = blob.and_then(|b| b.get("text")).and_then(Value::as_str);
+        let text = blob.and_then(|blob| blob.get("text")).and_then(Value::as_str);
+        let binary = blob
+            .and_then(|blob| blob.get("isBinary"))
+            .and_then(Value::as_bool);
         let truncated = blob
-            .and_then(|b| b.get("isTruncated"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+            .and_then(|blob| blob.get("isTruncated"))
+            .and_then(Value::as_bool);
+        match truncated {
+            Some(false) => {}
+            Some(true) => incomplete.push(format!(
+                "{name}: text truncated by the API; references past the cut are missing"
+            )),
+            None => incomplete.push(format!("{name}: truncation status is missing or malformed")),
+        }
+        match binary {
+            Some(false) => {}
+            Some(true) => incomplete.push(format!("{name}: workflow blob is binary")),
+            None => incomplete.push(format!("{name}: binary status is missing or malformed")),
+        }
         match text {
-            Some(t) => {
-                if truncated {
-                    notes.push(format!(
-                        "{name}: text truncated by the API; references past the cut are missing"
-                    ));
-                }
-                files.push(WorkflowFile {
-                    path: name.to_string(),
-                    text: t.to_string(),
-                });
-            }
-            None => notes.push(format!(
+            Some(text) => files.push(WorkflowFile {
+                path: name.to_string(),
+                text: text.to_string(),
+            }),
+            None => incomplete.push(format!(
                 "{name}: no text returned (binary or unreadable); skipped"
             )),
         }
     }
 
-    RepoSnapshot {
-        repo: repo.clone(),
-        status: ScanStatus::Scanned {
+    let status = if incomplete.is_empty() {
+        ScanStatus::Scanned {
             revision,
             workflow_files: files.len(),
-        },
+        }
+    } else {
+        ScanStatus::Unavailable {
+            reason: incomplete.join("; "),
+        }
+    };
+    notes.extend(incomplete);
+    RepoSnapshot {
+        repo: repo.clone(),
+        status,
         files,
         notes,
         canonical,
@@ -457,6 +538,77 @@ mod tests {
         assert!(notes.contains("big.yml: text truncated"));
         assert!(notes.contains("odd.yml: no text returned"));
         assert_eq!(snaps[0].files.len(), 1);
+        assert!(matches!(snaps[0].status, ScanStatus::Unavailable { .. }));
+        assert!(snaps[0].workflow_files().is_err());
+    }
+
+    #[test]
+    fn malformed_or_omitted_population_fields_are_not_complete_empty_reads() {
+        let valid = json!({
+            "name": "release.yml", "type": "blob",
+            "object": {"text": "jobs: {}\n", "isBinary": false, "isTruncated": false}
+        });
+        let mut missing_file = tree(json!([]));
+        missing_file["defaultBranchRef"]["target"]
+            .as_object_mut()
+            .unwrap()
+            .remove("file");
+        let mut missing_flag = valid.clone();
+        missing_flag["object"]
+            .as_object_mut()
+            .unwrap()
+            .remove("isTruncated");
+        for node in [
+            json!({}),
+            json!({"defaultBranchRef": {}}),
+            missing_file,
+            tree(Value::Null),
+            tree(json!([null])),
+            tree(json!([{"name": "release.yml", "object": {}}])),
+            tree(json!([{"name": "../release.yml", "type": "blob", "object": {}}])),
+            tree(json!([valid.clone(), valid.clone()])),
+            tree(json!([missing_flag])),
+        ] {
+            let response = json!({"data": {"r0": node}});
+            let (snapshots, _) = parse_chains_response(&repos(&["me/app"]), &response);
+            assert!(matches!(snapshots[0].status, ScanStatus::Unavailable { .. }));
+            assert!(snapshots[0].workflow_files().is_err());
+            assert!(!snapshots[0].notes.is_empty());
+        }
+    }
+
+    #[test]
+    fn graphql_field_errors_disqualify_partial_data_without_losing_identity_or_text() {
+        let mut node = tree(json!([{
+            "name": "release.yml", "type": "blob",
+            "object": {"text": "jobs: {}\n", "isBinary": false, "isTruncated": false}
+        }]));
+        node["nameWithOwner"] = json!("me/new-name");
+        for path in [json!(["r0", "defaultBranchRef", "target", "file"]), Value::Null] {
+            let response = json!({
+                "data": {"r0": node.clone()},
+                "errors": [{"path": path, "message": "workflow read interrupted"}]
+            });
+            let (snapshots, _) = parse_chains_response(&repos(&["me/old-name"]), &response);
+            let snapshot = &snapshots[0];
+            assert_eq!(snapshot.repo, RepoId::new("me/old-name"));
+            assert_eq!(snapshot.canonical.as_deref(), Some("me/new-name"));
+            assert_eq!(snapshot.files.len(), 1);
+            assert!(matches!(snapshot.status, ScanStatus::Unavailable { .. }));
+            assert!(snapshot.notes.iter().any(|note| note.contains("read interrupted")));
+            assert!(snapshot.workflow_files().is_err());
+        }
+    }
+
+    #[test]
+    fn malformed_error_populations_cannot_qualify_apparently_complete_data() {
+        let response = json!({
+            "data": {"r0": tree(json!([]))},
+            "errors": {"message": "wrong shape"}
+        });
+        let (snapshots, _) = parse_chains_response(&repos(&["me/app"]), &response);
+        assert!(matches!(snapshots[0].status, ScanStatus::Unavailable { .. }));
+        assert!(snapshots[0].workflow_files().is_err());
     }
 
     #[test]

@@ -21,7 +21,7 @@
 //! gate. The attribution feeds a report; the run stays failed until the
 //! workflow genuinely starts and passes.
 
-use squabble_core::chains::{Edge, RepoId, WorkflowFile};
+use squabble_core::chains::{Edge, RepoId, RepoSnapshot, WorkflowFile};
 use squabble_core::startup::{
     attribute_zero_job, same_source_revision, AllowList, CanonicalResolution, NativeLockStatus,
     NativeLockVerification, StartupFailureClass, ZeroJobAttribution, ZeroJobRun,
@@ -87,18 +87,20 @@ pub fn attribute_workflow(
 /// `@ref` interpretation and require exactly one match. A collision such as
 /// `release.yml@nightly.yml` when both it and `release.yml` exist is ambiguous.
 ///
-/// The caller must supply the complete, unmodified workflow tree and establish
-/// the run's zero job count and matching source revision before attribution. This function does not
-/// resolve or trust the ref suffix as a source revision.
+/// The snapshot must report a complete population with consistent metadata.
+/// The caller must separately establish the unmodified workflow tree, the run's
+/// zero job count and its matching source revision before attribution. This
+/// function does not resolve or trust the ref suffix as a source revision.
 ///
 /// # Errors
 ///
-/// Returns an error when no source workflow matches or more than one matches.
+/// Returns an error for an incomplete source population, no matching workflow
+/// or more than one filename/ref interpretation.
 pub fn resolve_run_workflow<'a>(
     run: &ZeroJobRun,
-    files: &'a [WorkflowFile],
+    source: &'a RepoSnapshot,
 ) -> Result<&'a WorkflowFile, String> {
-    let mut candidates = files.iter().filter(|file| {
+    let mut candidates = source.workflow_files()?.iter().filter(|file| {
         // Actions workflow files live directly in .github/workflows.
         if file.path.contains('/') || !(file.path.ends_with(".yml") || file.path.ends_with(".yaml"))
         {
@@ -126,7 +128,7 @@ pub fn resolve_run_workflow<'a>(
     }
 }
 
-/// Attribute one failed run from the repo's already-read workflow files.
+/// Attribute one failed run from the repo's already-read workflow snapshot.
 ///
 /// Attribution requires an observed zero job count and a full run commit ID
 /// matching `checkout_revision`, which the caller must establish from a
@@ -152,7 +154,7 @@ pub fn resolve_run_workflow<'a>(
 pub fn attribute_run(
     repo: &str,
     run: &ZeroJobRun,
-    files: &[WorkflowFile],
+    source: &RepoSnapshot,
     canonical: &BTreeMap<RepoId, CanonicalResolution>,
     allow_list: Option<&AllowList>,
     checkout_revision: Option<&str>,
@@ -184,7 +186,7 @@ pub fn attribute_run(
             ),
         )];
     }
-    let workflow = resolve_run_workflow(run, files);
+    let workflow = resolve_run_workflow(run, source);
     if let Some(lock) = lock {
         if !same_source_revision(Some(&lock.head_sha), checkout_revision) {
             return vec![unattributed(repo, &run.workflow_file,
@@ -401,11 +403,83 @@ pub fn parse_job_count(body: &str) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use squabble_core::chains::EdgeKind;
+    use squabble_core::chains::{EdgeKind, ScanStatus};
     use squabble_core::moves::Move;
 
     const CALLER: &str = "hyperpolymath/hypatia";
     const SHA: &str = "8f2ee50841e216cd8c192eeb68953118190f105c";
+
+    /// Synthetic complete populations for policy tests, not filesystem receipts.
+    fn snapshot(files: &[WorkflowFile]) -> RepoSnapshot {
+        RepoSnapshot {
+            repo: RepoId::new(CALLER),
+            status: ScanStatus::Scanned {
+                revision: Some(SHA.into()),
+                workflow_files: files.len(),
+            },
+            files: files.to_vec(),
+            notes: Vec::new(),
+            canonical: None,
+        }
+    }
+
+    fn attribute_run(
+        repo: &str,
+        run: &ZeroJobRun,
+        files: &[WorkflowFile],
+        canonical: &BTreeMap<RepoId, CanonicalResolution>,
+        allow_list: Option<&AllowList>,
+        checkout_revision: Option<&str>,
+        lock: Option<&NativeLockVerification>,
+    ) -> Vec<ZeroJobAttribution> {
+        super::attribute_run(
+            repo,
+            run,
+            &snapshot(files),
+            canonical,
+            allow_list,
+            checkout_revision,
+            lock,
+        )
+    }
+
+    #[test]
+    fn incomplete_population_cannot_select_coordinates_or_workflow_lock_findings() {
+        let mut source = snapshot(&[wf("release.yml", WORKFLOW)]);
+        source.status = ScanStatus::Unavailable {
+            reason: "release.yml@nightly.yml could not be decoded".into(),
+        };
+        let observed = run(42, "release.yml@nightly.yml");
+        let names = canonical(&[(
+            "old/standards",
+            CanonicalResolution::Moved {
+                canonical: "new/standards".into(),
+            },
+        )]);
+        assert!(resolve_run_workflow(&observed, &source)
+            .unwrap_err()
+            .contains("incomplete"));
+
+        let mut coverage = native_lock(NativeLockStatus::CoverageMismatch);
+        coverage.exit_code = Some(1);
+        coverage.stdout =
+            r#"{"workflows":[{"path":".github/workflows/release.yml","valid":false}]}"#.into();
+        for lock in [None, Some(&coverage)] {
+            let out = super::attribute_run(
+                CALLER,
+                &observed,
+                &source,
+                &names,
+                Some(&AllowList::default()),
+                Some(SHA),
+                lock,
+            );
+            assert_eq!(out[0].class, StartupFailureClass::Unattributed);
+            assert!(out[0].evidence.contains("incomplete"));
+            assert!(out[0].proposed_move().is_none());
+            assert!(out[0].required_allow_list_pattern.is_none());
+        }
+    }
 
     #[test]
     fn missing_or_different_source_cannot_borrow_current_workflow_attribution() {
@@ -891,9 +965,10 @@ jobs:
             wf("ci.yml", WORKFLOW),
             wf("build.yml", WORKFLOW),
         ];
+        let source = snapshot(&files);
         let resolved: Vec<_> = runs
             .iter()
-            .map(|run| resolve_run_workflow(run, &files).unwrap().path.as_str())
+            .map(|run| resolve_run_workflow(run, &source).unwrap().path.as_str())
             .collect();
         assert_eq!(resolved, ["gov.yml", "ci.yml", "build.yml", "build.yml"]);
     }
@@ -989,7 +1064,7 @@ jobs:
         let observed = run(36, "release.yml@nightly.yml");
         let literal_only = [literal.clone()];
         assert_eq!(
-            resolve_run_workflow(&observed, &literal_only).unwrap().path,
+            resolve_run_workflow(&observed, &snapshot(&literal_only)).unwrap().path,
             "release.yml@nightly.yml"
         );
 
@@ -1021,7 +1096,7 @@ jobs:
             "release.yml@nightly.yml@refs/heads/main",
         ] {
             let observed = run(37, path);
-            assert!(resolve_run_workflow(&observed, &files)
+            assert!(resolve_run_workflow(&observed, &snapshot(&files))
                 .unwrap_err()
                 .contains("ambiguous"));
             let out = attribute_run(
@@ -1057,7 +1132,7 @@ jobs:
             }]})
             .to_string();
             let observed = parse_startup_runs(&body).unwrap().remove(0);
-            assert!(resolve_run_workflow(&observed, &files).is_err(), "{path}");
+            assert!(resolve_run_workflow(&observed, &snapshot(&files)).is_err(), "{path}");
         }
     }
 

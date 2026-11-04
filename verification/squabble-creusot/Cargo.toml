@@ -4,7 +4,7 @@
 name = "squabble-creusot"
 version = "0.1.0"
 edition = "2021"
-description = "Creusot contracts for the squabbler's load-bearing invariants — stated, not yet discharged"
+description = "Creusot contracts for the squabbler's load-bearing invariants; source-bound proof receipt in docs/CREUSOT.adoc"
 license = "MPL-2.0"
 authors = ["Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>"]
 repository = "https://github.com/hyperpolymath/cicd-squabbler"

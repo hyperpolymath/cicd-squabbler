@@ -38,7 +38,7 @@
 use crate::chains::BLOCKING_EXIT;
 use crate::fetch;
 use crate::lock_verifier;
-use squabble_core::chains::{RepoId, ScanStatus, WorkflowFile};
+use squabble_core::chains::{RepoId, RepoSnapshot};
 use squabble_core::startup::{
     same_source_revision, AllowList, CanonicalResolution, NativeLockVerification, ZeroJobReport,
     ZeroJobRun, ZeroJobRunAttribution,
@@ -137,11 +137,7 @@ pub fn run(rest: &[String]) -> ExitCode {
     let before = lock_verifier::checkout_revision(root);
     let snapshot = snapshot_local(root, args.slug.as_deref());
     let slug = snapshot.repo.as_str().to_string();
-    if !matches!(snapshot.status, ScanStatus::Scanned { .. }) {
-        let reason = match &snapshot.status {
-            ScanStatus::Unavailable { reason } => reason.clone(),
-            other => format!("{other:?}"),
-        };
+    if let Err(reason) = snapshot.workflow_files() {
         eprintln!("squabble zero-job: cannot read workflows for `{slug}`: {reason}");
         return ExitCode::from(2);
     }
@@ -216,7 +212,7 @@ pub fn run(rest: &[String]) -> ExitCode {
     } else {
         collect(
             &slug,
-            &snapshot.files,
+            &snapshot,
             runs,
             &GhRest,
             allow_list.as_ref(),
@@ -276,7 +272,7 @@ fn probe_allow_list(slug: &str, notes: &mut Vec<String>) -> Option<AllowList> {
 /// native lock evidence used for attribution. No IO occurs beyond `rest`.
 fn collect(
     slug: &str,
-    files: &[WorkflowFile],
+    snapshot: &RepoSnapshot,
     runs: Vec<ZeroJobRun>,
     rest: &dyn RestTransport,
     allow_list: Option<&AllowList>,
@@ -290,7 +286,7 @@ fn collect(
         {
             continue;
         }
-        if let Ok(file) = resolve_run_workflow(run, files) {
+        if let Ok(file) = resolve_run_workflow(run, snapshot) {
             for edge in extract_edges(&RepoId::new(slug), file) {
                 repos.insert(edge.to);
             }
@@ -327,7 +323,7 @@ fn collect(
             attributions: attribute_run(
                 slug,
                 &run,
-                files,
+                snapshot,
                 &canonical,
                 allow_list,
                 source.head_sha.as_deref(),
@@ -492,6 +488,7 @@ fn fetch_startup_runs(
 mod tests {
     use super::*;
     use serde_json::json;
+    use squabble_core::chains::{ScanStatus, WorkflowFile};
     use squabble_core::moves::Move;
     use squabble_core::startup::StartupFailureClass;
     use squabble_forge::rest::RestResponse;
@@ -508,9 +505,19 @@ mod tests {
         allow_list: Option<&AllowList>,
         notes: Vec<String>,
     ) -> ZeroJobReport {
+        let snapshot = RepoSnapshot {
+            repo: RepoId::new(slug),
+            status: ScanStatus::Scanned {
+                revision: Some(SHA.into()),
+                workflow_files: files.len(),
+            },
+            files: files.to_vec(),
+            notes: Vec::new(),
+            canonical: None,
+        };
         super::collect(
             slug,
-            files,
+            &snapshot,
             runs,
             rest,
             allow_list,
@@ -740,6 +747,152 @@ mod tests {
             assert!(report.has_findings());
             assert_eq!(exit_for(&report), ExitCode::from(BLOCKING_EXIT));
         }
+    }
+
+    struct SourceCheckout(std::path::PathBuf);
+
+    impl SourceCheckout {
+        fn new() -> Self {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let root = std::env::temp_dir()
+                .join(format!("squabble-source-{}-{stamp}", std::process::id()));
+            std::fs::create_dir_all(root.join(".github/workflows")).unwrap();
+            let checkout = Self(root);
+            checkout.git(&["init", "-q"]);
+            checkout
+        }
+
+        fn git(&self, args: &[&str]) {
+            let output = std::process::Command::new("git")
+                .current_dir(&self.0)
+                .args(args)
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_INDEX_FILE")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        fn commit(&self) {
+            self.git(&["add", "--all"]);
+            // Disposable fixture only; no real repository configuration changes.
+            self.git(&[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-qm",
+                "fixture",
+            ]);
+        }
+    }
+
+    impl Drop for SourceCheckout {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_clean_tracked_non_utf8_workflow_cannot_make_a_prefix_match_unique() {
+        struct NoCoordinateReads;
+        impl RestTransport for NoCoordinateReads {
+            fn get(&self, path: &str) -> Result<RestResponse, String> {
+                panic!("incomplete workflow population must not resolve a coordinate: {path}");
+            }
+        }
+
+        let checkout = SourceCheckout::new();
+        let workflows = checkout.0.join(".github/workflows");
+        std::fs::write(workflows.join("release.yml"), moved_workflow().text).unwrap();
+        std::fs::write(workflows.join("release.yml@nightly.yml"), [0xff, 0xfe]).unwrap();
+        checkout.commit();
+        let before = lock_verifier::checkout_revision(&checkout.0).unwrap();
+        let snapshot = snapshot_local(&checkout.0, Some("me/app"));
+        let after = lock_verifier::checkout_revision(&checkout.0).unwrap();
+        assert_eq!(before, after);
+        assert!(matches!(snapshot.status, ScanStatus::Unavailable { .. }));
+        assert_eq!(snapshot.files.len(), 1);
+        assert_eq!(snapshot.files[0].path, "release.yml");
+
+        let mut observed = run(46, "release.yml@nightly.yml");
+        observed.head_sha = Some(before.clone());
+        let report = super::collect(
+            "me/app",
+            &snapshot,
+            vec![observed],
+            &NoCoordinateReads,
+            Some(&AllowList::default()),
+            snapshot.notes.clone(),
+            &SourceEvidence {
+                head_sha: Some(before),
+                lock: None,
+            },
+        );
+        let finding = &report.runs[0].attributions[0];
+        assert_eq!(finding.class, StartupFailureClass::Unattributed);
+        assert!(finding.evidence.contains("incomplete"));
+        assert!(finding.proposed_move().is_none());
+        assert!(finding.required_allow_list_pattern.is_none());
+        assert_eq!(exit_for(&report), ExitCode::from(BLOCKING_EXIT));
+    }
+
+    #[test]
+    fn an_incomplete_graphql_population_cannot_authorize_coordinate_probes() {
+        struct NoCoordinateReads;
+        impl RestTransport for NoCoordinateReads {
+            fn get(&self, path: &str) -> Result<RestResponse, String> {
+                panic!("incomplete GraphQL population must not resolve a coordinate: {path}");
+            }
+        }
+
+        let response = json!({"data": {"r0": {
+            "nameWithOwner": "me/app",
+            "defaultBranchRef": {"target": {
+                "oid": SHA,
+                "file": {"object": {"entries": [
+                    {"name": "release.yml", "type": "blob", "object": {
+                        "text": moved_workflow().text, "isBinary": false, "isTruncated": false
+                    }},
+                    {"name": "release.yml@nightly.yml", "type": "blob", "object": {
+                        "text": null, "isBinary": true, "isTruncated": false
+                    }}
+                ]}}
+            }}
+        }}});
+        let (snapshots, _) =
+            squabble_forge::parse_chains_response(&[RepoId::new("me/app")], &response);
+        let snapshot = &snapshots[0];
+        assert!(matches!(snapshot.status, ScanStatus::Unavailable { .. }));
+        assert_eq!(snapshot.files.len(), 1);
+        let report = super::collect(
+            "me/app",
+            snapshot,
+            vec![run(47, "release.yml@nightly.yml")],
+            &NoCoordinateReads,
+            Some(&AllowList::default()),
+            snapshot.notes.clone(),
+            &SourceEvidence {
+                head_sha: Some(SHA.into()),
+                lock: None,
+            },
+        );
+        let finding = &report.runs[0].attributions[0];
+        assert_eq!(finding.class, StartupFailureClass::Unattributed);
+        assert!(finding.proposed_move().is_none());
+        assert!(finding.required_allow_list_pattern.is_none());
+        assert_eq!(exit_for(&report), ExitCode::from(BLOCKING_EXIT));
     }
 
     #[test]

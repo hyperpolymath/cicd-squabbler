@@ -19,16 +19,17 @@
 //!   a **literal** `#[requires]`/`#[ensures]` pair per obligation, which is what
 //!   the estate gate counts.
 //!
-//! # Status: stated, not discharged
+//! # Status: source-bound hosted proof receipt
 //!
-//! These obligations have been **written, never proved**. No run has reached
-//! Why3: the environment this crate was added in has no Rust toolchain, and
-//! this repository's own Rust CI currently dies as a zero-job
-//! `startup_failure`, so CI has not compiled the workspace either. The estate
-//! gate (`hyperpolymath/cicd-suite`'s `creusot-check`) reports exactly that
-//! distinction — it fails a claim of proof that has no contracts behind it, and
-//! refuses to report a verdict when the prover cannot be shown to work. Do not describe this crate as verified until a `prove` run
-//! discharges every obligation; the honest phrase is **stated, not proved**.
+//! Run 41909189438, proof job 126852164109, discharged this verification crate
+//! at merge revision f9499a8de0b8c525459a669e2cdbcacf83a49b85. It rejected the
+//! false control, proved the true control, and reported Proved (13 files) with
+//! zero trusted axioms. See docs/CREUSOT.adoc for the full source and gate pins:
+//! <https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438/job/126852164109>.
+//!
+//! That receipt does not prove the whole operational engine or later source.
+//! The stable mirror tests remain a separate validation step, and a new
+//! revision needs its own qualification before receiving a proof claim.
 //!
 //! # Why a separate crate
 //!
