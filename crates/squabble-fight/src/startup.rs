@@ -87,9 +87,10 @@ pub fn attribute_workflow(
 /// `Unattributed` entry.
 /// Optional `lock` evidence must match that revision: malformed locks and
 /// workflow-specific coverage mismatches take precedence over coordinates,
-/// while unverified or mismatched evidence leaves the run unattributed.
-/// A verified lock, or a mismatch for another workflow, permits coordinate
-/// attribution to continue.
+/// while evidence from a different source revision leaves the run unattributed.
+/// An unverified optional probe is retained beside independent coordinate
+/// attribution. A verified lock, or a coverage mismatch for another workflow,
+/// also permits coordinate attribution to continue.
 ///
 /// When the run's workflow file is not among `files` (an unreadable checkout, a
 /// workflow deleted since the run), the run still gets an honest
@@ -148,13 +149,15 @@ pub fn attribute_run(
                 let affected = serde_json::from_str::<serde_json::Value>(&lock.stdout)
                     .ok()
                     .and_then(|report| report.get("workflows").and_then(|v| v.as_array()).cloned())
-                    .is_some_and(|workflows| workflows.iter().any(|workflow|
-                        workflow.get("path").and_then(|v| v.as_str()) == Some(path.as_str())
-                        && workflow.get("valid").and_then(|v| v.as_bool()) == Some(false)));
+                    .is_some_and(|workflows| {
+                        workflows.iter().any(|workflow| {
+                            workflow.get("path").and_then(|v| v.as_str()) == Some(path.as_str())
+                                && workflow.get("valid").and_then(|v| v.as_bool()) == Some(false)
+                        })
+                    });
                 affected.then_some(StartupFailureClass::ActionsLockMismatch)
             }
-            NativeLockStatus::Unverified => return vec![unattributed(repo, &run.workflow_file,
-                format!("native lock verification is unverified: {}; no repair inferred from that result", lock.reason))],
+            NativeLockStatus::Unverified => None,
             NativeLockStatus::Verified => None,
         };
         if let Some(class) = class {
@@ -175,8 +178,21 @@ pub fn attribute_run(
             return vec![finding];
         }
     }
+    // An optional probe cannot erase independently established coordinate
+    // evidence. Keep its failure alongside that evidence without inferring
+    // any lock repair, permission change or successful verification.
+    let retain_probe_failure = |mut findings: Vec<ZeroJobAttribution>| {
+        if let Some(probe) = lock.filter(|probe| probe.status == NativeLockStatus::Unverified) {
+            findings.push(unattributed(
+                repo,
+                &run.workflow_file,
+                format!("native lock verification is unverified: {}; no repair inferred from that result", probe.reason),
+            ));
+        }
+        findings
+    };
     let Some(file) = files.iter().find(|f| f.path == run.workflow_file) else {
-        return vec![unattributed(
+        return retain_probe_failure(vec![unattributed(
             repo,
             &run.workflow_file,
             format!(
@@ -185,7 +201,7 @@ pub fn attribute_run(
                  the run's commit before changing anything.",
                 run.workflow_file
             ),
-        )];
+        )]);
     };
 
     let all = attribute_workflow(repo, &run.workflow_file, &file.text, canonical, allow_list);
@@ -197,7 +213,7 @@ pub fn attribute_run(
         // coordinate or an unverified name is a fact the operator can act on,
         // and it must not be flattened into "everything resolved canonically".
         unexplained.sort_by(|a, b| a.coordinate.cmp(&b.coordinate));
-        return match unexplained.into_iter().next() {
+        return retain_probe_failure(match unexplained.into_iter().next() {
             Some(a) => vec![a],
             None => vec![unattributed(
                 repo,
@@ -207,10 +223,10 @@ pub fn attribute_run(
                  from the run's own workflow."
                     .to_string(),
             )],
-        };
+        });
     }
     primary.sort_by(|a, b| a.coordinate.cmp(&b.coordinate));
-    primary
+    retain_probe_failure(primary)
 }
 
 /// Build a workflow-level explanation without blaming a coordinate or
@@ -524,6 +540,56 @@ mod tests {
             } else {
                 "unverified"
             }));
+        }
+    }
+
+    #[test]
+    fn optional_probe_failure_preserves_independent_coordinate_attribution() {
+        let files = [wf(
+            "ci.yml",
+            &format!("jobs:\n  scan:\n    uses: old/standards/.github/workflows/ci.yml@{SHA}\n"),
+        )];
+        let moved = BTreeMap::from([(
+            RepoId::new("old/standards"),
+            CanonicalResolution::Moved {
+                canonical: "new/standards".into(),
+            },
+        )]);
+        let unchanged = BTreeMap::new();
+        let allow = AllowList::default();
+        for names in [&moved, &unchanged] {
+            let expected = attribute_run(
+                CALLER,
+                &run(42, "ci.yml"),
+                &files,
+                names,
+                Some(&allow),
+                Some(SHA),
+                None,
+            );
+            for reason in [
+                "verified binary is unavailable",
+                "unrelated untracked file prevents full-input qualification",
+            ] {
+                let mut probe = native_lock(NativeLockStatus::Unverified);
+                probe.reason = reason.into();
+                let actual = attribute_run(
+                    CALLER,
+                    &run(42, "ci.yml"),
+                    &files,
+                    names,
+                    Some(&allow),
+                    Some(SHA),
+                    Some(&probe),
+                );
+                assert_eq!(&actual[..expected.len()], expected.as_slice());
+                let retained = actual.last().unwrap();
+                assert_eq!(actual.len(), expected.len() + 1);
+                assert_eq!(retained.class, StartupFailureClass::Unattributed);
+                assert!(retained.evidence.contains(reason));
+                assert!(retained.proposed_move().is_none());
+                assert!(retained.required_allow_list_pattern.is_none());
+            }
         }
     }
 

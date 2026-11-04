@@ -371,9 +371,20 @@ fn details(f: &Finding) -> Vec<String> {
     };
     match f {
         Finding::Cycle { .. } => Vec::new(),
-        Finding::DeadUpstream { consumers, .. } | Finding::MovedUpstream { consumers, .. } => {
-            consumers.iter().map(at).collect()
-        }
+        Finding::DeadUpstream { consumers, .. } => consumers.iter().map(at).collect(),
+        Finding::MovedUpstream {
+            consumers,
+            unconfirmed_consumers,
+            ..
+        } => consumers
+            .iter()
+            .map(at)
+            .chain(
+                unconfirmed_consumers
+                    .iter()
+                    .map(|edge| format!("{} (upstream revision unconfirmed)", at(edge))),
+            )
+            .collect(),
         Finding::Diamond { routes, .. } => routes
             .iter()
             .map(|r| {
@@ -626,6 +637,7 @@ mod tests {
                     written,
                     canonical,
                     consumers,
+                    ..
                 } => Some((written, canonical, consumers)),
                 _ => None,
             })

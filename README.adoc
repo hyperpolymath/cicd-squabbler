@@ -50,7 +50,8 @@ squabble chains . ../standards gh:hyperpolymath/typed-wasm --follow 1
 ----
 
 * *Blocking* (exit 4): dependency cycles, dead upstreams, and moved upstream
-  coordinates. A deleted reusable workflow can fail before any job reports.
+  coordinates confirmed in requested subjects or through exact pinned
+  dependency routes. A deleted reusable workflow can fail before any job reports.
 * *Warnings*: diamonds (one repo's CI receives an upstream at two pins, one
   of them via a reusable workflow), pin skew across repos, and tag/branch pins.
 * It also prints an upstreams-first landing order and the longest chain.
@@ -60,8 +61,12 @@ its canonical `full_name` is compared with the name as written — names, never
 pins. A difference is reported as a moved upstream: a reusable coordinate under
 a renamed/transferred owner can die as a zero-job `startup_failure` ("workflow
 was not found") that no PR check list shows, so it is named *before* CI goes
-quiet. This blocks even when the repository API follows a redirect: Actions
-does not redirect the `uses:` reference. `squabble zero-job` separately reports
+quiet. A confirmed reference blocks even when the repository API follows a
+redirect: Actions does not redirect the `uses:` reference. A reference found
+only on an upstream's default branch remains an unconfirmed warning unless
+every hop from a requested subject matches the scanned revision and called
+workflow file. The report retains both confirmed and unconfirmed locations.
+`squabble zero-job` separately reports
 the failed runs that were actually observed. The same canonicalisation groups
 pin skew, so the old and new
 spellings of one upstream cannot hide a split. `--no-canonical` skips the REST
@@ -149,6 +154,9 @@ includes same-repository `$/...` action definitions outside workflows: an
 ignored `action.yml` can shadow a committed `action.yaml`. If that complete
 input set cannot be bound to the source, the probe is explicitly unverified.
 The command never removes or changes a dirty file to meet the requirement.
+An unavailable optional lock probe is retained beside any independently
+established coordinate attribution; it neither hides that diagnosis nor
+establishes a lock repair or a successful verification.
 
 The native reader checks the official exit/JSON contract and complete workflow
 population. Empty, malformed, partial, duplicate-key, contradictory or unknown

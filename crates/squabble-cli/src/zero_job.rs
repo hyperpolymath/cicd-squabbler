@@ -361,22 +361,7 @@ fn narrate(r: &ZeroJobReport) -> String {
         r.runs.len()
     );
     if let Some(lock) = &r.lock_verification {
-        o.push_str(&format!(
-            "native lock: {:?} at {} · {} exit {:?}\n  {}\n",
-            lock.status, lock.head_sha, lock.tool_version, lock.exit_code, lock.reason
-        ));
-        for line in lock.stderr.lines() {
-            o.push_str(&format!("  {line}\n"));
-        }
-        if let Ok(report) = serde_json::from_str::<serde_json::Value>(&lock.stdout) {
-            if let Some(findings) = report.get("findings").and_then(|v| v.as_array()) {
-                for finding in findings {
-                    if let Some(detail) = finding.get("detail").and_then(|v| v.as_str()) {
-                        o.push_str(&format!("  {detail}\n"));
-                    }
-                }
-            }
-        }
+        o.push_str(&narrate_lock(lock));
     }
     for run in &r.runs {
         let jobs = match run.jobs {
@@ -416,6 +401,27 @@ fn narrate(r: &ZeroJobReport) -> String {
         );
     }
     o
+}
+
+/// Retain the optional verifier's own diagnostics independently of run output.
+fn narrate_lock(lock: &squabble_core::startup::NativeLockVerification) -> String {
+    let mut output = format!(
+        "native lock: {:?} at {} · {} exit {:?}\n  {}\n",
+        lock.status, lock.head_sha, lock.tool_version, lock.exit_code, lock.reason
+    );
+    for line in lock.stderr.lines() {
+        output.push_str(&format!("  {line}\n"));
+    }
+    if let Ok(report) = serde_json::from_str::<serde_json::Value>(&lock.stdout) {
+        if let Some(findings) = report.get("findings").and_then(|v| v.as_array()) {
+            for finding in findings {
+                if let Some(detail) = finding.get("detail").and_then(|v| v.as_str()) {
+                    output.push_str(&format!("  {detail}\n"));
+                }
+            }
+        }
+    }
+    output
 }
 
 /// Live runs via `gh api --include` (REST). One listing call, plus one jobs

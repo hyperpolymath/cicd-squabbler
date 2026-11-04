@@ -21,7 +21,9 @@
 //!   `uses:` produces no check run at all, so the board reads green while the
 //!   job never ran. *Blocking.*
 //! * [`Finding::MovedUpstream`] — a referenced owner/repo resolves to a
-//!   *different* canonical name (renamed or transferred). *Blocking*: the
+//!   *different* canonical name (renamed or transferred). *Blocking* when
+//!   confirmed in a requested subject or through exact pinned routes; an
+//!   unconfirmed followed revision remains a warning. The
 //!   redirect that resolves the name is an API fact, not a repair — Actions does
 //!   not follow redirects for `uses:`, so the reference fails as written, and
 //!   for a reusable workflow it dies as a zero-job `startup_failure` that no PR
@@ -276,6 +278,11 @@ impl RepoSnapshot {
 pub struct ChainGraph {
     pub scans: BTreeMap<RepoId, ScanStatus>,
     pub edges: Vec<Edge>,
+    /// Repositories explicitly requested by the operator. Followed snapshots
+    /// are not subjects: their edges require an exact pinned route from one.
+    /// Older graphs without this provenance cannot confirm moved edges.
+    #[serde(default)]
+    pub subjects: BTreeSet<RepoId>,
     /// Source caveats carried through to the report verbatim.
     #[serde(default)]
     pub notes: Vec<String>,
@@ -326,6 +333,45 @@ impl ChainGraph {
 
     pub fn add_edges(&mut self, edges: impl IntoIterator<Item = Edge>) {
         self.edges.extend(edges);
+    }
+
+    /// Record an explicitly requested subject, separately from a followed
+    /// upstream whose default branch may differ from the caller's pin.
+    pub fn record_subject(&mut self, repo: RepoId) {
+        self.subjects.insert(repo);
+    }
+
+    fn confirmed_edges(&self) -> BTreeSet<Edge> {
+        let mut confirmed: BTreeSet<Edge> = self
+            .edges
+            .iter()
+            .filter(|edge| self.subjects.contains(&edge.from) && self.is_scanned(&edge.from))
+            .cloned()
+            .collect();
+        loop {
+            let additions: Vec<Edge> = self
+                .edges
+                .iter()
+                .filter(|edge| !confirmed.contains(*edge) && self.is_scanned(&edge.from))
+                .filter(|edge| {
+                    confirmed.iter().any(|caller| {
+                        caller.to == edge.from
+                            && caller.reusable_file() == Some(edge.file.as_str())
+                            && match (&caller.pin, self.scanned_revision(&edge.from)) {
+                                (Pin::Sha(pin), Some(revision)) => {
+                                    crate::startup::same_source_revision(Some(pin), Some(revision))
+                                }
+                                _ => false,
+                            }
+                    })
+                })
+                .cloned()
+                .collect();
+            if additions.is_empty() {
+                return confirmed;
+            }
+            confirmed.extend(additions);
+        }
     }
 
     fn is_scanned(&self, repo: &RepoId) -> bool {
@@ -626,7 +672,7 @@ pub enum Finding {
     },
     /// A referenced owner/repo resolves to a *different* canonical name. The
     /// API's redirect resolves the name, but Actions does not redirect the
-    /// `uses:` reference. This blocks; a failed reusable coordinate can prevent
+    /// `uses:` reference. A confirmed reference blocks; a failed reusable coordinate can prevent
     /// jobs from starting. Observed run evidence is reported separately by
     /// `squabble zero-job`.
     MovedUpstream {
@@ -634,8 +680,12 @@ pub enum Finding {
         written: RepoId,
         /// The canonical `owner/repo` the resolver observed.
         canonical: RepoId,
-        /// Every referencing edge from a scanned consumer.
+        /// References in requested subjects or through fully pinned routes.
         consumers: Vec<Edge>,
+        /// References observed only at an unconfirmed upstream revision.
+        /// They remain visible but cannot make this finding blocking.
+        #[serde(default)]
+        unconfirmed_consumers: Vec<Edge>,
     },
     Diamond {
         consumer: RepoId,
@@ -653,12 +703,17 @@ pub enum Finding {
 }
 
 impl Finding {
-    /// Cycles, dead upstreams and moved coordinates block; other findings warn.
+    /// Cycles, dead upstreams and confirmed moved coordinates block; other findings warn.
     pub fn severity(&self) -> Severity {
         match self {
-            Finding::Cycle { .. }
-            | Finding::DeadUpstream { .. }
-            | Finding::MovedUpstream { .. } => Severity::Blocking,
+            Finding::Cycle { .. } | Finding::DeadUpstream { .. } => Severity::Blocking,
+            Finding::MovedUpstream { consumers, .. } => {
+                if consumers.is_empty() {
+                    Severity::Warning
+                } else {
+                    Severity::Blocking
+                }
+            }
             Finding::Diamond { .. } | Finding::PinSkew { .. } | Finding::MutablePins { .. } => {
                 Severity::Warning
             }
@@ -680,14 +735,16 @@ impl Finding {
                 written,
                 canonical,
                 consumers,
-            } => format!(
-                "moved upstream `{written}` → canonical `{canonical}`: {} reference(s) still name \
-                 the old coordinate. Actions does not redirect `uses:`, so the reference fails as \
-                 written — for a reusable workflow, a zero-job `startup_failure` (\"workflow was \
-                 not found\") that no PR check list shows. Repoint it; the pin is carried \
-                 unchanged.",
-                consumers.len()
-            ),
+                unconfirmed_consumers,
+            } => {
+                let confirmed = if consumers.is_empty() {
+                    "no reference is confirmed in a requested subject or its pinned dependencies"
+                        .to_string()
+                } else {
+                    format!("{} confirmed reference(s) still name the old coordinate. Actions does not redirect `uses:`; a moved reusable can cause a zero-job `startup_failure`. Review repointing while retaining the pin", consumers.len())
+                };
+                format!("moved upstream `{written}` → canonical `{canonical}`: {confirmed}; {} reference(s) were observed only at an unconfirmed upstream revision and require inspection at the caller's exact pin", unconfirmed_consumers.len())
+            }
             Finding::Diamond {
                 consumer,
                 target,
@@ -814,22 +871,28 @@ pub fn analyse(graph: &ChainGraph, cost: Option<SourceCost>) -> ChainsReport {
     // under a moved owner dies as a zero-job `startup_failure` that no PR check
     // list shows. Only edges from scanned consumers count: a frontier repo is
     // never blamed on hearsay (same rule as the warnings below).
-    let mut moved: BTreeMap<RepoId, (RepoId, Vec<Edge>)> = BTreeMap::new();
+    let confirmed_edges = graph.confirmed_edges();
+    let mut moved: BTreeMap<RepoId, (RepoId, Vec<Edge>, Vec<Edge>)> = BTreeMap::new();
     for e in graph.edges.iter().filter(|e| graph.is_scanned(&e.from)) {
         if let Some(canonical) = graph.moved_to(&e.to) {
-            moved
+            let entry = moved
                 .entry(e.to.clone())
-                .or_insert_with(|| (canonical.clone(), Vec::new()))
-                .1
-                .push(e.clone());
+                .or_insert_with(|| (canonical.clone(), Vec::new(), Vec::new()));
+            if confirmed_edges.contains(e) {
+                entry.1.push(e.clone());
+            } else {
+                entry.2.push(e.clone());
+            }
         }
     }
-    for (written, (canonical, mut consumers)) in moved {
+    for (written, (canonical, mut consumers, mut unconfirmed_consumers)) in moved {
         consumers.sort();
+        unconfirmed_consumers.sort();
         findings.push(Finding::MovedUpstream {
             written,
             canonical,
             consumers,
+            unconfirmed_consumers,
         });
     }
 
@@ -1316,6 +1379,7 @@ mod tests {
     #[test]
     fn a_moved_upstream_blocks_and_names_canonical_and_written_coordinates() {
         let mut g = ChainGraph::new();
+        g.record_subject(r("me/app"));
         g.record_scan(r("me/app"), scanned(None));
         g.record_canonical(r("old/stds"), r("hyperpolymath/standards"));
         g.add_edges([edge(
@@ -1340,6 +1404,7 @@ mod tests {
                 written,
                 canonical,
                 consumers,
+                ..
             } => {
                 assert_eq!(written, &r("old/stds"));
                 assert_eq!(canonical, &r("hyperpolymath/standards"));
@@ -1375,6 +1440,100 @@ mod tests {
         let rep = analyse(&g, None);
         assert!(!rep.has_blocking());
         assert!(rep.canonical.is_empty());
+    }
+
+    fn followed_move_graph(
+        revision: Option<&str>,
+        caller_pin: &str,
+        called_file: &str,
+    ) -> ChainGraph {
+        let mut graph = ChainGraph::new();
+        graph.record_subject(r("me/app"));
+        graph.record_scan(r("me/app"), scanned(Some(SHA_A)));
+        graph.record_scan(r("me/shared"), scanned(revision));
+        graph.record_canonical(r("old/tool"), r("new/tool"));
+        graph.add_edges([
+            edge(
+                "me/app",
+                "ci.yml",
+                "me/shared",
+                EdgeKind::ReusableWorkflow,
+                Some(called_file),
+                caller_pin,
+            ),
+            action("me/shared", "old/tool", SHA_A),
+        ]);
+        graph
+    }
+
+    #[test]
+    fn followed_move_requires_the_exact_revision_and_called_workflow() {
+        for (revision, pin, file, blocking) in [
+            (Some(SHA_A), SHA_A, ".github/workflows/ci.yml", true),
+            (Some(SHA_B), SHA_A, ".github/workflows/ci.yml", false),
+            (None, SHA_A, ".github/workflows/ci.yml", false),
+            (Some(SHA_A), "main", ".github/workflows/ci.yml", false),
+            (Some(SHA_A), SHA_A, ".github/workflows/other.yml", false),
+        ] {
+            let report = analyse(&followed_move_graph(revision, pin, file), None);
+            let finding = report
+                .findings
+                .iter()
+                .find(|finding| matches!(finding, Finding::MovedUpstream { .. }))
+                .expect("retained move");
+            assert_eq!(
+                finding.severity() == Severity::Blocking,
+                blocking,
+                "{revision:?} {pin} {file}"
+            );
+            if let Finding::MovedUpstream {
+                consumers,
+                unconfirmed_consumers,
+                ..
+            } = finding
+            {
+                assert_eq!(consumers.len(), usize::from(blocking));
+                assert_eq!(unconfirmed_consumers.len(), usize::from(!blocking));
+            }
+        }
+    }
+
+    #[test]
+    fn a_matching_inner_pin_cannot_qualify_an_unconfirmed_outer_route() {
+        let mut graph = followed_move_graph(Some(SHA_B), SHA_A, ".github/workflows/ci.yml");
+        graph.edges.pop();
+        graph.record_scan(r("me/inner"), scanned(Some(SHA_A)));
+        graph.add_edges([
+            edge(
+                "me/shared",
+                "ci.yml",
+                "me/inner",
+                EdgeKind::ReusableWorkflow,
+                Some(".github/workflows/ci.yml"),
+                SHA_A,
+            ),
+            action("me/inner", "old/tool", SHA_A),
+        ]);
+        let report = analyse(&graph, None);
+        assert!(!report.has_blocking());
+        assert!(report.findings.iter().any(|finding|
+            matches!(finding, Finding::MovedUpstream { consumers, unconfirmed_consumers, .. }
+                if consumers.is_empty() && unconfirmed_consumers.len() == 1)));
+    }
+
+    #[test]
+    fn older_graph_without_subject_provenance_retains_unconfirmed_moves() {
+        let mut graph = followed_move_graph(Some(SHA_A), SHA_A, ".github/workflows/ci.yml");
+        graph.subjects.clear();
+        let mut encoded = serde_json::to_value(&graph).unwrap();
+        encoded.as_object_mut().unwrap().remove("subjects");
+        let restored: ChainGraph = serde_json::from_value(encoded).unwrap();
+        let report = analyse(&restored, None);
+        assert!(!report.has_blocking());
+        assert!(report.findings.iter().any(
+            |finding| matches!(finding, Finding::MovedUpstream { unconfirmed_consumers, .. }
+                if unconfirmed_consumers.len() == 1)
+        ));
     }
 
     #[test]

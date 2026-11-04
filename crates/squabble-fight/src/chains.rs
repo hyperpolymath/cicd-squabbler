@@ -112,6 +112,9 @@ pub fn graph_from_snapshots<'a>(
     let mut g = ChainGraph::new();
     for (snap, role) in snapshots {
         g.record_scan(snap.repo.clone(), snap.status.clone());
+        if matches!(role, Role::Subject) {
+            g.record_subject(snap.repo.clone());
+        }
         let canonical = snap.canonical_id();
         if canonical != snap.repo {
             g.record_canonical(snap.repo.clone(), canonical);
