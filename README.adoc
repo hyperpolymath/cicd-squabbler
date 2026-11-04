@@ -49,11 +49,10 @@ workflows and pinned actions. Nothing is written anywhere.
 squabble chains . ../standards gh:hyperpolymath/typed-wasm --follow 1
 ----
 
-* *Blocking* (exit 4): dependency cycles, and dead upstreams. A deleted action
-  repo produces no check run at all, so the board reads green.
+* *Blocking* (exit 4): dependency cycles, dead upstreams, and moved upstream
+  coordinates. A deleted reusable workflow can fail before any job reports.
 * *Warnings*: diamonds (one repo's CI receives an upstream at two pins, one
-  of them via a reusable workflow), pin skew across repos, tag/branch pins,
-  and **moved upstreams** (see below).
+  of them via a reusable workflow), pin skew across repos, and tag/branch pins.
 * It also prints an upstreams-first landing order and the longest chain.
 
 Every upstream coordinate is resolved through REST with redirects followed, and
@@ -61,9 +60,10 @@ its canonical `full_name` is compared with the name as written — names, never
 pins. A difference is reported as a moved upstream: a reusable coordinate under
 a renamed/transferred owner can die as a zero-job `startup_failure` ("workflow
 was not found") that no PR check list shows, so it is named *before* CI goes
-quiet. It stays a warning while the redirect still works (that is a risk, not an
-observed failure); `squabble zero-job` is what turns an observed failure into a
-blocking finding. The same canonicalisation groups pin skew, so the old and new
+quiet. This blocks even when the repository API follows a redirect: Actions
+does not redirect the `uses:` reference. `squabble zero-job` separately reports
+the failed runs that were actually observed. The same canonicalisation groups
+pin skew, so the old and new
 spellings of one upstream cannot hide a split. `--no-canonical` skips the REST
 reads and says so — a deliberate blind spot, not a clean bill.
 
@@ -76,7 +76,8 @@ layer.
 
 Some workflows fail *before any job exists*. GitHub creates no check run, the PR
 check list stays tidy, and a required context is simply absent. Two first-class
-classes are modelled, each with its own move:
+coordinate classes are modelled, each with its own move. Optional native lock
+verification adds source diagnoses which never propose permission changes:
 
 [cols="2,1,2"]
 |===
@@ -96,20 +97,64 @@ classes are modelled, each with its own move:
   (a different coordinate may already be admitted, and under `verified_allowed`
   an uncovered action is reported `Unattributed` rather than refused, because
   creator status cannot be resolved here).
+
+| *invalid native Actions lock*
+| Diagnosis only
+| The official native parser rejected the lock at the failed run's exact
+  source revision. Retain its exit and diagnostic, then review a candidate
+  produced by the repository's official regeneration chain.
+
+| *Actions lock/workflow mismatch*
+| Diagnosis only
+| The official offline verifier reported coverage findings for this workflow
+  at the failed run's exact source revision. This is separate from malformed
+  lock syntax and from a tool or setup failure.
 |===
 
 [source,sh]
 ----
 squabble zero-job . --limit 30        # attribute the latest zero-job runs
 squabble zero-job . --limit 30 --json # the same, machine-readable
+squabble zero-job . --actions-lock-verifier /verified/gh-actions-lock --json
 ----
 
 Per run it reports the repo, the workflow, the coordinate **as written**, the
 canonical target, and the required allow-list pattern — plus the sequencing: fix
 the repoint first, then admit the canonical pattern if the run is still refused.
-Exit `4` means zero-job runs were observed, attributed or not: a run it cannot
-attribute is still a run that never reported. Exit `0` speaks only for the
-scanned window.
+Both `startup_failure` and ordinary `failure` conclusions are investigated;
+GitHub reports both for runs which created no jobs. The jobs endpoint must
+independently establish a zero count before source attribution. Ordinary
+failures with observed jobs belong to execution-phase diagnosis. Unreadable
+counts and contradictory startup evidence remain visible and blocking without
+inventing a zero count or proposing a repair.
+
+The run's full commit ID must match the local repository root and its
+unmodified workflow tree. A different revision, nested directory, unreadable
+source, or changed workflow stays `Unattributed`; a current checkout cannot
+explain a historical run by coincidence. Exit `4` means a failed candidate
+remains in the report, attributed or not. Exit `0` speaks only for the scanned
+window.
+
+`--actions-lock-verifier` takes an absolute path to an independently verified
+official `gh-actions-lock` v0.2.0 binary. It invokes only `--version` and
+`--verify-local --json --hostname github.com`: no download, resolution, auth,
+network request or write mode. Tokens and subject-override environment variables
+are removed from that child process. The JSON report retains the tool version,
+exact source, exit, stdout, stderr and classification.
+
+The native probe requires a *pristine full checkout*, including ignored and
+untracked files, with no symlink/gitlink inputs or hidden index changes. Use a
+fresh checkout at the failed run's commit. This stricter opt-in requirement
+includes same-repository `$/...` action definitions outside workflows: an
+ignored `action.yml` can shadow a committed `action.yaml`. If that complete
+input set cannot be bound to the source, the probe is explicitly unverified.
+The command never removes or changes a dirty file to meet the requirement.
+
+The native reader checks the official exit/JSON contract and complete workflow
+population. Empty, malformed, partial, duplicate-key, contradictory or unknown
+verifier-version output cannot become verified. A local verification pass is coverage
+evidence only; a reproduced source defect is not proof of the sole GitHub
+startup cause. Neither is a CI pass, repair outcome or training success.
 
 `zero-job` is *outside* `squabble-contract/1.0.0`: that revision's surface stays
 at four subcommands, and nothing here adds meaning to it. Like `chains`, the

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
-//! `squabble zero-job` — attribute every zero-job `startup_failure` run.
+//! `squabble zero-job` — investigate failed runs with separate job evidence.
 //!
 //! A run that dies before any job exists creates **no check run**, so it never
 //! appears red on a PR: the board simply looks quiet. This command finds those
@@ -10,7 +10,7 @@
 //! repo · workflow · coordinate as written · canonical target · required allow-list pattern
 //! ```
 //!
-//! The two classes are first-class and distinct
+//! The two coordinate classes are first-class and distinct
 //! (`squabble_core::startup::StartupFailureClass`):
 //!
 //! * **moved coordinate** — a reusable coordinate under a renamed/transferred
@@ -19,23 +19,29 @@
 //!   the caller's `selected` actions allow-list. Move: admit the reported
 //!   `owner/repo@*` pattern.
 //!
-//! Inputs: a local checkout (`<path[=owner/repo]>`) for the workflow text the
-//! run used, `gh` access for the runs/jobs endpoints, and the live Actions
+//! Optional official native lock verification adds distinct parser and
+//! workflow-coverage diagnoses, bound to a pristine checkout at the failed
+//! run's full commit ID. Neither can prescribe permission changes or green.
+//!
+//! Inputs: a source-matched local checkout (`<path[=owner/repo]>`), `gh` access
+//! for the runs/jobs endpoints, and the live Actions
 //! posture for the allow-list. The REST canonical-name read follows redirects
 //! and compares `full_name`s — names, never pins.
 //!
 //! This command **diagnoses**; it never edits settings, repoints a workflow, or
-//! declares anything green. Exit `4` means zero-job runs were observed (a
-//! blocking finding) — including runs it could not attribute, because silence
+//! declares anything green. Exit `4` means failed candidates remain (a
+//! blocking finding) — including unreadable/contradictory evidence, because silence
 //! is not a clean result. Exit `0` means none were observed in the scanned
 //! window, which is a statement about that window only. Exit `2` is a tool
 //! failure.
 
 use crate::chains::BLOCKING_EXIT;
 use crate::fetch;
+use crate::lock_verifier;
 use squabble_core::chains::{RepoId, ScanStatus, WorkflowFile};
 use squabble_core::startup::{
-    AllowList, CanonicalResolution, ZeroJobReport, ZeroJobRun, ZeroJobRunAttribution,
+    same_source_revision, AllowList, CanonicalResolution, NativeLockVerification, ZeroJobReport,
+    ZeroJobRun, ZeroJobRunAttribution,
 };
 use squabble_fight::chains::{extract_edges, snapshot_local};
 use squabble_fight::startup::{attribute_run, parse_job_count, parse_startup_runs};
@@ -44,7 +50,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::ExitCode;
 
-pub(crate) const USAGE: &str = "usage: squabble zero-job <path[=owner/repo]> [--limit N] [--json]";
+pub(crate) const USAGE: &str = "usage: squabble zero-job <path[=owner/repo]> [--limit N] [--actions-lock-verifier /absolute/path] [--json]";
 
 struct Args {
     path: String,
@@ -52,6 +58,12 @@ struct Args {
     /// How many of the repo's most recent runs to scan for startup failures.
     limit: usize,
     json: bool,
+    lock_verifier: Option<String>,
+}
+
+struct SourceEvidence {
+    head_sha: Option<String>,
+    lock: Option<NativeLockVerification>,
 }
 
 /// Parse one checkout path with an optional `=owner/repo` identity, a run
@@ -63,11 +75,19 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
         slug: None,
         limit: 30,
         json: false,
+        lock_verifier: None,
     };
     let mut it = rest.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--json" => a.json = true,
+            "--actions-lock-verifier" => {
+                let path = it
+                    .next()
+                    .filter(|p| Path::new(p).is_absolute())
+                    .ok_or("--actions-lock-verifier requires an absolute executable path")?;
+                a.lock_verifier = Some(path.clone());
+            }
             "--limit" => {
                 a.limit = it
                     .next()
@@ -110,7 +130,9 @@ pub fn run(rest: &[String]) -> ExitCode {
         }
     };
 
-    let snapshot = snapshot_local(Path::new(&args.path), args.slug.as_deref());
+    let root = Path::new(&args.path);
+    let before = lock_verifier::checkout_revision(root);
+    let snapshot = snapshot_local(root, args.slug.as_deref());
     let slug = snapshot.repo.as_str().to_string();
     if !matches!(snapshot.status, ScanStatus::Scanned { .. }) {
         let reason = match &snapshot.status {
@@ -132,7 +154,42 @@ pub fn run(rest: &[String]) -> ExitCode {
     // Probe the posture only when there is something to attribute — it is an
     // Administration-scoped read and must not be spent for nothing.
     let mut notes = snapshot.notes.clone();
-    let allow_list = if runs.is_empty() {
+    let after = lock_verifier::checkout_revision(root);
+    let head_sha = match (&before, &after) {
+        (Ok(a), Ok(b)) if same_source_revision(Some(a), Some(b)) => Some(a.clone()),
+        _ => {
+            notes.push(format!("local source identity unavailable or changed: before={before:?}; after={after:?}; no source/settings move may be inferred"));
+            None
+        }
+    };
+    let matching_run = runs.iter().any(|run| {
+        run.jobs == Some(0) && same_source_revision(run.head_sha.as_deref(), head_sha.as_deref())
+    });
+    let lock = match (&args.lock_verifier, &head_sha) {
+        (Some(binary), Some(head)) if matching_run => {
+            let workflows = snapshot
+                .files
+                .iter()
+                .map(|file| format!(".github/workflows/{}", file.path))
+                .collect::<Vec<_>>();
+            Some(lock_verifier::verify(
+                Path::new(binary),
+                root,
+                head,
+                &workflows,
+            ))
+        }
+        (Some(_), _) => {
+            notes.push("native lock verifier not run: no observed zero-job candidate matches the established checkout revision".into());
+            None
+        }
+        (None, _) => {
+            notes.push("native Actions lock not checked; supply --actions-lock-verifier with an independently verified official v0.2.0 binary for offline source diagnosis".into());
+            None
+        }
+    };
+    let source = SourceEvidence { head_sha, lock };
+    let allow_list = if !matching_run {
         None
     } else {
         probe_allow_list(&slug, &mut notes)
@@ -141,10 +198,12 @@ pub fn run(rest: &[String]) -> ExitCode {
     let report = if runs.is_empty() {
         ZeroJobReport {
             repo: slug,
+            checkout_head_sha: source.head_sha.clone(),
+            lock_verification: source.lock.clone(),
             runs: Vec::new(),
             notes: {
                 notes.push(format!(
-                    "no `STARTUP_FAILURE` run among the last {} run(s) — the zero-job class was \
+                    "no zero-job failure candidate among the last {} run(s) — the zero-job class was \
                      not observed in this window (that is not a claim that CI works)",
                     args.limit
                 ));
@@ -159,6 +218,7 @@ pub fn run(rest: &[String]) -> ExitCode {
             &GhRest,
             allow_list.as_ref(),
             notes,
+            &source,
         )
     };
 
@@ -217,9 +277,15 @@ fn collect(
     rest: &dyn RestTransport,
     allow_list: Option<&AllowList>,
     mut notes: Vec<String>,
+    source: &SourceEvidence,
 ) -> ZeroJobReport {
     let mut repos: BTreeSet<RepoId> = BTreeSet::new();
     for run in &runs {
+        if run.jobs != Some(0)
+            || !same_source_revision(run.head_sha.as_deref(), source.head_sha.as_deref())
+        {
+            continue;
+        }
         if let Some(file) = files.iter().find(|f| f.path == run.workflow_file) {
             for edge in extract_edges(&RepoId::new(slug), file) {
                 repos.insert(edge.to);
@@ -251,14 +317,25 @@ fn collect(
         .into_iter()
         .map(|run| ZeroJobRunAttribution {
             run_id: run.id,
+            head_sha: run.head_sha.clone(),
             workflow: run.workflow_file.clone(),
             jobs: run.jobs,
-            attributions: attribute_run(slug, &run, files, &canonical, allow_list),
+            attributions: attribute_run(
+                slug,
+                &run,
+                files,
+                &canonical,
+                allow_list,
+                source.head_sha.as_deref(),
+                source.lock.as_ref(),
+            ),
         })
         .collect();
 
     ZeroJobReport {
         repo: slug.to_string(),
+        checkout_head_sha: source.head_sha.clone(),
+        lock_verification: source.lock.clone(),
         runs,
         notes,
     }
@@ -277,18 +354,38 @@ fn exit_for(report: &ZeroJobReport) -> ExitCode {
 /// report, including unreadable job counts.
 fn narrate(r: &ZeroJobReport) -> String {
     let mut o = format!(
-        "zero-job: {} — {} `startup_failure` run(s) (jobs=0, no check run exists)\n",
+        "zero-job: {} — {} failed run candidate(s); job counts are reported individually\n",
         r.repo,
         r.runs.len()
     );
+    if let Some(lock) = &r.lock_verification {
+        o.push_str(&format!(
+            "native lock: {:?} at {} · {} exit {:?}\n  {}\n",
+            lock.status, lock.head_sha, lock.tool_version, lock.exit_code, lock.reason
+        ));
+        for line in lock.stderr.lines() {
+            o.push_str(&format!("  {line}\n"));
+        }
+        if let Ok(report) = serde_json::from_str::<serde_json::Value>(&lock.stdout) {
+            if let Some(findings) = report.get("findings").and_then(|v| v.as_array()) {
+                for finding in findings {
+                    if let Some(detail) = finding.get("detail").and_then(|v| v.as_str()) {
+                        o.push_str(&format!("  {detail}\n"));
+                    }
+                }
+            }
+        }
+    }
     for run in &r.runs {
         let jobs = match run.jobs {
             Some(n) => format!("{n} job(s)"),
             None => "job count unreadable".to_string(),
         };
         o.push_str(&format!(
-            "\nrun {} · {} ({jobs})\n",
-            run.run_id, run.workflow
+            "\nrun {} · {} ({jobs}) · source {}\n",
+            run.run_id,
+            run.workflow,
+            run.head_sha.as_deref().unwrap_or("unreadable")
         ));
         for a in &run.attributions {
             o.push_str(&format!(
@@ -320,46 +417,58 @@ fn narrate(r: &ZeroJobReport) -> String {
 }
 
 /// Live runs via `gh api --include` (REST). One listing call, plus one jobs
-/// call per startup failure to record the zero-job evidence.
+/// call per failed candidate to record the zero-job evidence.
 struct GhRuns;
 
 impl GhRuns {
     /// Request one page of recent runs with `limit` as `per_page`, retaining
-    /// startup failures.
-    /// Read each matching run's job count; a failed jobs request or invalid
-    /// count leaves `jobs` as `None`, and positive counts are retained too.
+    /// `startup_failure` and ordinary `failure` candidates.
+    /// An unreadable jobs request leaves `jobs` as `None`; malformed counts
+    /// fail the read. Ordinary failures with observed jobs are excluded.
     ///
     /// # Errors
     ///
     /// Propagates transport and parsing errors from the run listing, and
     /// returns an error for any non-success HTTP status on that listing.
     fn startup_runs(&self, slug: &str, limit: usize) -> Result<Vec<ZeroJobRun>, String> {
-        let transport = GhRest;
-        let path = format!("repos/{slug}/actions/runs?per_page={limit}");
-        let resp = transport.get(&path)?;
-        match resp.status {
-            404 => {
-                return Err(format!(
-                    "no Actions runs are visible for `{slug}` (HTTP 404) — check the slug and \
-                     the token's Actions read scope"
-                ))
-            }
-            s if !(200..300).contains(&s) => return Err(format!("`{path}` returned HTTP {s}")),
-            _ => {}
-        }
-        let mut runs = parse_startup_runs(&resp.body)?;
-        for run in &mut runs {
-            let jobs_path = format!("repos/{slug}/actions/runs/{}/jobs?per_page=1", run.id);
-            if let Ok(jobs) = transport.get(&jobs_path) {
-                if (200..300).contains(&jobs.status) {
-                    let count = parse_job_count(&jobs.body)
-                        .map_err(|err| format!("invalid job evidence for `{jobs_path}`: {err}"))?;
-                    run.jobs = Some(count);
-                }
-            }
-        }
-        Ok(runs)
+        fetch_startup_runs(&GhRest, slug, limit)
     }
+}
+
+/// Transport seam used by the live reader and its recorded-response controls.
+fn fetch_startup_runs(
+    transport: &dyn RestTransport,
+    slug: &str,
+    limit: usize,
+) -> Result<Vec<ZeroJobRun>, String> {
+    let path = format!("repos/{slug}/actions/runs?per_page={limit}");
+    let resp = transport.get(&path)?;
+    match resp.status {
+        404 => {
+            return Err(format!(
+                "no Actions runs are visible for `{slug}` (HTTP 404) — check the slug and \
+                     the token's Actions read scope"
+            ))
+        }
+        s if !(200..300).contains(&s) => return Err(format!("`{path}` returned HTTP {s}")),
+        _ => {}
+    }
+    let mut runs = parse_startup_runs(&resp.body)?;
+    for run in &mut runs {
+        let jobs_path = format!("repos/{slug}/actions/runs/{}/jobs?per_page=1", run.id);
+        if let Ok(jobs) = transport.get(&jobs_path) {
+            if (200..300).contains(&jobs.status) {
+                let count = parse_job_count(&jobs.body)
+                    .map_err(|err| format!("invalid job evidence for `{jobs_path}`: {err}"))?;
+                run.jobs = Some(count);
+            }
+        }
+    }
+    // A regular failure with observed jobs belongs to execution-phase
+    // diagnosis. Unknown counts remain visible, and a startup_failure
+    // with positive jobs remains as contradictory evidence, never zero.
+    runs.retain(|run| run.conclusion != "failure" || !matches!(run.jobs, Some(n) if n > 0));
+    Ok(runs)
 }
 
 #[cfg(test)]
@@ -369,8 +478,158 @@ mod tests {
     use squabble_core::moves::Move;
     use squabble_core::startup::StartupFailureClass;
     use squabble_forge::rest::RestResponse;
+    use std::collections::BTreeMap;
 
     const SHA: &str = "8f2ee50841e216cd8c192eeb68953118190f105c";
+
+    /// These fixtures represent an unmodified checkout at the observed SHA.
+    fn collect(
+        slug: &str,
+        files: &[WorkflowFile],
+        runs: Vec<ZeroJobRun>,
+        rest: &dyn RestTransport,
+        allow_list: Option<&AllowList>,
+        notes: Vec<String>,
+    ) -> ZeroJobReport {
+        super::collect(
+            slug,
+            files,
+            runs,
+            rest,
+            allow_list,
+            notes,
+            &SourceEvidence {
+                head_sha: Some(SHA.into()),
+                lock: None,
+            },
+        )
+    }
+
+    struct Responses(BTreeMap<String, RestResponse>);
+
+    impl RestTransport for Responses {
+        fn get(&self, path: &str) -> Result<RestResponse, String> {
+            // Exercise the live transport's admission check too: the old
+            // reader generated query strings that this check rejected.
+            squabble_forge::rest::check_api_path(path)?;
+            self.0
+                .get(path)
+                .cloned()
+                .ok_or_else(|| format!("unexpected path {path}"))
+        }
+    }
+
+    fn recorded_runs(conclusion: &str, jobs_status: u16, jobs: serde_json::Value) -> Responses {
+        // Public run41880894104 is a real `failure` with jobs.total_count=0.
+        // Other conclusions/counts below are planted boundary controls.
+        let slug = "hyperpolymath/boj-server-cartridges";
+        Responses(BTreeMap::from([
+            (
+                format!("repos/{slug}/actions/runs?per_page=30"),
+                RestResponse {
+                    status: 200,
+                    location: None,
+                    body: json!({"workflow_runs": [{
+                        "id": 41880894104_u64,
+                        "head_sha": "e9b571a48a9abe1429e9c271f1044e9c9decf574",
+                        "conclusion": conclusion,
+                        "path": ".github/workflows/governance.yml"
+                    }]})
+                    .to_string(),
+                },
+            ),
+            (
+                format!("repos/{slug}/actions/runs/41880894104/jobs?per_page=1"),
+                RestResponse {
+                    status: jobs_status,
+                    location: None,
+                    body: jobs.to_string(),
+                },
+            ),
+        ]))
+    }
+
+    #[test]
+    fn regular_failure_with_observed_zero_jobs_is_not_silently_dropped() {
+        let rest = recorded_runs("failure", 200, json!({"total_count": 0, "jobs": []}));
+        let runs = fetch_startup_runs(&rest, "hyperpolymath/boj-server-cartridges", 30).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].id, 41880894104);
+        assert_eq!(runs[0].jobs, Some(0));
+        assert_eq!(runs[0].conclusion, "failure");
+        assert_eq!(
+            runs[0].head_sha.as_deref(),
+            Some("e9b571a48a9abe1429e9c271f1044e9c9decf574")
+        );
+    }
+
+    #[test]
+    fn ordinary_job_failures_are_left_to_execution_phase_diagnosis() {
+        let rest = recorded_runs(
+            "failure",
+            200,
+            json!({"total_count": 2, "jobs": [{"id": 1}]}),
+        );
+        assert!(
+            fetch_startup_runs(&rest, "hyperpolymath/boj-server-cartridges", 30)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn missing_counts_remain_visible_and_cannot_propose_settings_changes() {
+        let rest = recorded_runs("failure", 403, json!({"message": "not accessible"}));
+        let runs = fetch_startup_runs(&rest, "hyperpolymath/boj-server-cartridges", 30).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].jobs, None);
+        let report = collect(
+            "hyperpolymath/boj-server-cartridges",
+            &[moved_workflow()],
+            runs,
+            &Rest(vec![]),
+            Some(&AllowList::default()),
+            Vec::new(),
+        );
+        assert_eq!(exit_for(&report), ExitCode::from(BLOCKING_EXIT));
+        assert!(report.runs[0].attributions[0].proposed_move().is_none());
+        assert!(narrate(&report).contains("job count unreadable"));
+        assert!(!narrate(&report).contains("jobs=0"));
+    }
+
+    #[test]
+    fn contradictory_job_responses_fail_instead_of_becoming_zero() {
+        let rest = recorded_runs(
+            "startup_failure",
+            200,
+            json!({"total_count": 0, "jobs": [{"id": 1}]}),
+        );
+        assert!(
+            fetch_startup_runs(&rest, "hyperpolymath/boj-server-cartridges", 30)
+                .unwrap_err()
+                .contains("more jobs")
+        );
+        let rest = recorded_runs(
+            "startup_failure",
+            200,
+            json!({"total_count": 2, "jobs": [{"id": 1}]}),
+        );
+        let runs = fetch_startup_runs(&rest, "hyperpolymath/boj-server-cartridges", 30).unwrap();
+        assert_eq!(runs[0].jobs, Some(2));
+        let report = collect(
+            "hyperpolymath/boj-server-cartridges",
+            &[],
+            runs,
+            &Rest(vec![]),
+            None,
+            Vec::new(),
+        );
+        assert_eq!(exit_for(&report), ExitCode::from(BLOCKING_EXIT));
+        assert!(report.runs[0].attributions[0]
+            .evidence
+            .contains("contradicting"));
+        assert!(report.runs[0].attributions[0].proposed_move().is_none());
+    }
 
     fn wf(path: &str, text: &str) -> WorkflowFile {
         WorkflowFile {
@@ -382,6 +641,8 @@ mod tests {
     fn run(id: u64, file: &str) -> ZeroJobRun {
         ZeroJobRun {
             id,
+            conclusion: "startup_failure".into(),
+            head_sha: Some(SHA.into()),
             workflow_file: file.into(),
             workflow_name: None,
             jobs: Some(0),
@@ -560,6 +821,8 @@ mod tests {
     fn no_runs_is_a_success_with_no_claim_about_ci() {
         let report = ZeroJobReport {
             repo: "hyperpolymath/hypatia".into(),
+            checkout_head_sha: None,
+            lock_verification: None,
             runs: Vec::new(),
             notes: vec!["no STARTUP_FAILURE run".into()],
         };
@@ -597,6 +860,23 @@ mod tests {
         assert!(parse_args(&[]).is_err());
         assert!(parse_args(&["x".into(), "--limit".into(), "0".into()]).is_err());
         assert!(parse_args(&["x".into(), "--nope".into()]).is_err());
+        assert!(parse_args(&["x".into(), "--actions-lock-verifier".into()]).is_err());
+        assert!(parse_args(&[
+            "x".into(),
+            "--actions-lock-verifier".into(),
+            "relative".into()
+        ])
+        .is_err());
+        let a = parse_args(&[
+            "x".into(),
+            "--actions-lock-verifier".into(),
+            "/verified/gh-actions-lock".into(),
+        ])
+        .unwrap();
+        assert_eq!(
+            a.lock_verifier.as_deref(),
+            Some("/verified/gh-actions-lock")
+        );
     }
 
     #[test]

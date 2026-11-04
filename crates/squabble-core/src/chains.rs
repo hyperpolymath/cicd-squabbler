@@ -625,16 +625,10 @@ pub enum Finding {
         consumers: Vec<Edge>,
     },
     /// A referenced owner/repo resolves to a *different* canonical name. The
-    /// reference works only through a redirect, and a reusable coordinate
-    /// under a moved owner can fail at startup with zero jobs — invisible in
-    /// PR check lists.
-    ///
-    /// **Warning, deliberately.** A redirect that still works is a risk, not
-    /// an observed failure, and `chains` refuses to overclaim: the blocking
-    /// class is an *observed* zero-job run (`squabble zero-job`, exit 4), where
-    /// the failure is a fact rather than a prediction. Today's redirect is
-    /// tomorrow's lapsed redirect (or a re-registered old name), which is why
-    /// the move is named now rather than after CI goes quiet.
+    /// API's redirect resolves the name, but Actions does not redirect the
+    /// `uses:` reference. This blocks; a failed reusable coordinate can prevent
+    /// jobs from starting. Observed run evidence is reported separately by
+    /// `squabble zero-job`.
     MovedUpstream {
         /// The coordinate as written in the consumer.
         written: RepoId,
@@ -659,14 +653,15 @@ pub enum Finding {
 }
 
 impl Finding {
-    /// Cycles and dead upstreams block; all other findings are warnings.
+    /// Cycles, dead upstreams and moved coordinates block; other findings warn.
     pub fn severity(&self) -> Severity {
         match self {
-            Finding::Cycle { .. } | Finding::DeadUpstream { .. } => Severity::Blocking,
-            Finding::MovedUpstream { .. }
-            | Finding::Diamond { .. }
-            | Finding::PinSkew { .. }
-            | Finding::MutablePins { .. } => Severity::Warning,
+            Finding::Cycle { .. }
+            | Finding::DeadUpstream { .. }
+            | Finding::MovedUpstream { .. } => Severity::Blocking,
+            Finding::Diamond { .. } | Finding::PinSkew { .. } | Finding::MutablePins { .. } => {
+                Severity::Warning
+            }
         }
     }
 
@@ -793,7 +788,7 @@ impl ChainsReport {
 ///
 /// Mutable-pin and skew findings are reported only for edges whose consumer
 /// was actually scanned, so a frontier repo is never blamed on hearsay.
-/// Moved-upstream warnings also require a scanned consumer. Diamond and skew
+/// Moved-upstream findings also require a scanned consumer. Diamond and skew
 /// findings group targets by their recorded canonical names.
 pub fn analyse(graph: &ChainGraph, cost: Option<SourceCost>) -> ChainsReport {
     let mut findings = Vec::new();
@@ -1319,7 +1314,7 @@ mod tests {
     }
 
     #[test]
-    fn a_moved_upstream_is_flagged_as_a_warning_naming_canonical_and_written() {
+    fn a_moved_upstream_blocks_and_names_canonical_and_written_coordinates() {
         let mut g = ChainGraph::new();
         g.record_scan(r("me/app"), scanned(None));
         g.record_canonical(r("old/stds"), r("hyperpolymath/standards"));

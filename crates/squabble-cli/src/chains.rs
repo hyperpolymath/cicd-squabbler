@@ -27,8 +27,8 @@
 //! as it is when `--follow` finds it.
 //!
 //! Nothing is written anywhere. Exit `0` = no blocking finding, `4` = at
-//! least one blocking finding (a cycle or a dead upstream). A moved upstream
-//! is a warning. Exit `2` = usage or tool failure, including a run where no
+//! least one blocking finding (a cycle, dead upstream or moved coordinate).
+//! Exit `2` = usage or tool failure, including a run where no
 //! repository could be read at all.
 
 use squabble_core::chains::{
@@ -648,21 +648,76 @@ mod tests {
             text.contains("zero-job `startup_failure`"),
             "the finding must name the invisible class: {text}"
         );
-        assert_eq!(exit_for(&r), ExitCode::SUCCESS);
-        assert!(r.findings.iter().any(|f| f.severity() == Severity::Warning));
+        assert_eq!(exit_for(&r), ExitCode::from(BLOCKING_EXIT));
+        assert!(r
+            .findings
+            .iter()
+            .any(|f| f.severity() == Severity::Blocking));
     }
 
     #[test]
     fn a_dead_upstream_is_found_by_rest_even_without_follow() {
-        let rest = CanonicalRest(vec![("me/dead-action", CanonicalResolution::NotFound)]);
-        let r = collect(&args(0), &canned(), &rest);
+        let r = collect(
+            &args(0),
+            &gone_owner_fixture(),
+            &AbsentRepository {
+                owner_exists: false,
+            },
+        );
         assert!(r.has_blocking(), "{}", narrate(&r));
         assert!(r.findings.iter().any(|f| matches!(
             f,
-            Finding::DeadUpstream { target, .. } if target == &RepoId::new("me/dead-action")
+            Finding::DeadUpstream { target, .. } if target == &RepoId::new("gone/dead-action")
         )));
         // It was probed, so it is no longer claimed as an unprobed frontier.
-        assert!(!r.frontier.contains(&RepoId::new("me/dead-action")));
+        assert!(!r.frontier.contains(&RepoId::new("gone/dead-action")));
+        assert_eq!(
+            r.cost.as_ref().unwrap().rest_calls,
+            2,
+            "repository and owner absence are both observed"
+        );
+    }
+
+    fn gone_owner_fixture() -> Canned {
+        Canned(vec![("me/app", Some(vec![("ci.yml", "jobs:\n  scan:\n    steps:\n      - uses: gone/dead-action@1111111111111111111111111111111111111111\n")]))])
+    }
+
+    struct AbsentRepository {
+        owner_exists: bool,
+    }
+
+    impl RestTransport for AbsentRepository {
+        fn get(&self, path: &str) -> Result<RestResponse, String> {
+            let status = match path {
+                "repos/gone/dead-action" => 404,
+                "users/gone" if !self.owner_exists => 404,
+                "users/gone" => 200,
+                _ => return Err(format!("unexpected path {path}")),
+            };
+            Ok(RestResponse {
+                status,
+                location: None,
+                body: "{}".into(),
+            })
+        }
+    }
+
+    #[test]
+    fn repository_404_with_an_existing_owner_does_not_prove_a_dead_upstream() {
+        let r = collect(
+            &args(0),
+            &gone_owner_fixture(),
+            &AbsentRepository { owner_exists: true },
+        );
+        assert!(!r.has_blocking());
+        assert!(!r
+            .findings
+            .iter()
+            .any(|f| matches!(f, Finding::DeadUpstream { .. })));
+        assert!(r
+            .notes
+            .iter()
+            .any(|n| n.contains("absence is not established")));
     }
 
     #[test]
