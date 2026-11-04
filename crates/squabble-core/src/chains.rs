@@ -1530,6 +1530,40 @@ mod tests {
     }
 
     #[test]
+    fn a_two_hop_pinned_route_confirms_a_moved_reference() {
+        let mut graph = ChainGraph::new();
+        graph.record_subject(r("me/app"));
+        for repo in ["me/app", "me/shared", "me/inner"] {
+            graph.record_scan(r(repo), scanned(Some(SHA_A)));
+        }
+        graph.record_canonical(r("old/tool"), r("new/tool"));
+        graph.add_edges([
+            edge(
+                "me/app",
+                "ci.yml",
+                "me/shared",
+                EdgeKind::ReusableWorkflow,
+                Some(".github/workflows/ci.yml"),
+                SHA_A,
+            ),
+            edge(
+                "me/shared",
+                ".github/workflows/ci.yml",
+                "me/inner",
+                EdgeKind::ReusableWorkflow,
+                Some(".github/workflows/ci.yml"),
+                SHA_A,
+            ),
+            action("me/inner", "old/tool", SHA_A),
+        ]);
+        let report = analyse(&graph, None);
+        assert!(report.has_blocking());
+        assert!(report.findings.iter().any(|finding|
+            matches!(finding, Finding::MovedUpstream { consumers, unconfirmed_consumers, .. }
+                if consumers.len() == 1 && unconfirmed_consumers.is_empty())));
+    }
+
+    #[test]
     fn older_graph_without_subject_provenance_retains_unconfirmed_moves() {
         let mut graph = followed_move_graph(Some(SHA_A), SHA_A, ".github/workflows/ci.yml");
         graph.subjects.clear();
