@@ -44,7 +44,9 @@ use squabble_core::startup::{
     ZeroJobRun, ZeroJobRunAttribution,
 };
 use squabble_fight::chains::{extract_edges, snapshot_local};
-use squabble_fight::startup::{attribute_run, parse_job_count, parse_startup_runs};
+use squabble_fight::startup::{
+    attribute_run, parse_job_count, parse_startup_runs, resolve_run_workflow,
+};
 use squabble_forge::rest::{resolve_canonical, GhRest, RestTransport};
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -288,7 +290,7 @@ fn collect(
         {
             continue;
         }
-        if let Some(file) = files.iter().find(|f| f.path == run.workflow_file) {
+        if let Ok(file) = resolve_run_workflow(run, files) {
             for edge in extract_edges(&RepoId::new(slug), file) {
                 repos.insert(edge.to);
             }
@@ -703,6 +705,89 @@ mod tests {
                 "jobs:\n  scan:\n    uses: old/standards/.github/workflows/hypatia-scan.yml@{SHA}\n"
             ),
         )
+    }
+
+    #[test]
+    fn ref_suffixes_resolve_the_source_file_before_upstream_collection() {
+        let mut file = moved_workflow();
+        file.path = "release@nightly.yml".into();
+        let files = [file];
+        let rest = Rest(vec![(
+            "old/standards",
+            CanonicalResolution::Moved {
+                canonical: "new/standards".into(),
+            },
+        )]);
+        for path in [
+            ".github/workflows/release@nightly.yml@main",
+            ".github/workflows/release@nightly.yml@feature/topic",
+            ".github/workflows/release@nightly.yml@refs/heads/main",
+        ] {
+            let body = json!({"workflow_runs": [{
+                "id": 44, "head_sha": SHA, "conclusion": "startup_failure", "path": path
+            }]})
+            .to_string();
+            let mut observed = parse_startup_runs(&body).unwrap().remove(0);
+            observed.jobs = Some(0);
+            let report = collect(
+                "me/app",
+                &files,
+                vec![observed],
+                &rest,
+                None,
+                Vec::new(),
+            );
+            let finding = &report.runs[0].attributions[0];
+            assert_eq!(finding.workflow, "release@nightly.yml");
+            assert_eq!(finding.class, StartupFailureClass::MovedCoordinate);
+            assert!(matches!(
+                finding.proposed_move(),
+                Some(Move::RepointToCanonical { pin, .. }) if pin == SHA
+            ));
+            assert!(report.has_findings());
+            assert_eq!(exit_for(&report), ExitCode::from(BLOCKING_EXIT));
+        }
+    }
+
+    #[test]
+    fn ambiguous_workflow_names_cannot_trigger_coordinate_reads_or_moves() {
+        struct NoCoordinateReads;
+        impl RestTransport for NoCoordinateReads {
+            fn get(&self, path: &str) -> Result<RestResponse, String> {
+                panic!("ambiguous workflow must not resolve any coordinate: {path}");
+            }
+        }
+
+        let files = [
+            wf("release.yml", &moved_workflow().text),
+            wf("release.yml@nightly.yml", &moved_workflow().text),
+        ];
+        for path in [
+            ".github/workflows/release.yml@nightly.yml",
+            ".github/workflows/release.yml@nightly.yml@main",
+            ".github/workflows/release.yml@nightly.yml@refs/heads/main",
+        ] {
+            let body = json!({"workflow_runs": [{
+                "id": 45, "head_sha": SHA, "conclusion": "startup_failure", "path": path
+            }]})
+            .to_string();
+            let mut observed = parse_startup_runs(&body).unwrap().remove(0);
+            observed.jobs = Some(0);
+            let report = collect(
+                "me/app",
+                &files,
+                vec![observed],
+                &NoCoordinateReads,
+                Some(&AllowList::default()),
+                Vec::new(),
+            );
+            let finding = &report.runs[0].attributions[0];
+            assert_eq!(finding.class, StartupFailureClass::Unattributed);
+            assert!(finding.evidence.contains("ambiguous"));
+            assert!(finding.proposed_move().is_none());
+            assert!(finding.required_allow_list_pattern.is_none());
+            assert_eq!(exit_for(&report), ExitCode::from(BLOCKING_EXIT));
+        }
     }
 
     #[test]

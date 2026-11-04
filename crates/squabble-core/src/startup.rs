@@ -639,7 +639,9 @@ pub struct ZeroJobRun {
     /// The failed run's immutable source revision, when supplied by GitHub.
     #[serde(default)]
     pub head_sha: Option<String>,
-    /// Workflow file relative to `.github/workflows/`.
+    /// Observed path relative to `.github/workflows/`, retaining any API ref
+    /// suffix. `@` may also belong to the filename: the host must resolve this
+    /// against the matching source tree before attributing a particular file.
     pub workflow_file: String,
     /// The workflow's display name, when the API reports one.
     #[serde(default)]
@@ -656,6 +658,8 @@ pub struct ZeroJobRunAttribution {
     pub run_id: u64,
     #[serde(default)]
     pub head_sha: Option<String>,
+    /// Observed workflow path, including any unresolved API ref suffix.
+    /// Qualified source filenames are recorded in individual attributions.
     pub workflow: String,
     #[serde(default)]
     pub jobs: Option<u64>,

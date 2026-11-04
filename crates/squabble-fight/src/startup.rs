@@ -79,6 +79,54 @@ pub fn attribute_workflow(
     out
 }
 
+/// Resolve an observed workflow path against a source checkout's file names.
+///
+/// GitHub reports both plain paths and paths ending in short or full refs.
+/// Since `@` is legal in a workflow filename, splitting it without the source
+/// tree loses evidence. Retain every exact filename or filename + nonempty
+/// `@ref` interpretation and require exactly one match. A collision such as
+/// `release.yml@nightly.yml` when both it and `release.yml` exist is ambiguous.
+///
+/// The caller must supply the complete, unmodified workflow tree and establish
+/// the run's zero job count and matching source revision before attribution. This function does not
+/// resolve or trust the ref suffix as a source revision.
+///
+/// # Errors
+///
+/// Returns an error when no source workflow matches or more than one matches.
+pub fn resolve_run_workflow<'a>(
+    run: &ZeroJobRun,
+    files: &'a [WorkflowFile],
+) -> Result<&'a WorkflowFile, String> {
+    let mut candidates = files.iter().filter(|file| {
+        // Actions workflow files live directly in .github/workflows.
+        if file.path.contains('/')
+            || !(file.path.ends_with(".yml") || file.path.ends_with(".yaml"))
+        {
+            return false;
+        }
+        run.workflow_file == file.path
+            || run
+                .workflow_file
+                .strip_prefix(file.path.as_str())
+                .and_then(|suffix| suffix.strip_prefix('@'))
+                .is_some_and(|reference| !reference.is_empty())
+    });
+    match (candidates.next(), candidates.next()) {
+        (Some(file), None) => Ok(file),
+        (None, _) => Err(format!(
+            "workflow path `{}` has no matching file in the source checkout; \
+             retain the run and read its exact workflow before attributing coordinates",
+            run.workflow_file
+        )),
+        (Some(_), Some(_)) => Err(format!(
+            "workflow path `{}` is ambiguous between source filenames and ref suffixes; \
+             no particular workflow or coordinate is attributed",
+            run.workflow_file
+        )),
+    }
+}
+
 /// Attribute one failed run from the repo's already-read workflow files.
 ///
 /// Attribution requires an observed zero job count and a full run commit ID
@@ -92,10 +140,10 @@ pub fn attribute_workflow(
 /// attribution. A verified lock, or a coverage mismatch for another workflow,
 /// also permits coordinate attribution to continue.
 ///
-/// When the run's workflow file is not among `files` (an unreadable checkout, a
-/// workflow deleted since the run), the run still gets an honest
-/// `Unattributed` entry with the reason — absence of evidence is never
-/// evidence of a clean start.
+/// A workflow path with no source match or multiple filename/ref interpretations
+/// remains `Unattributed`. A source-bound malformed lock is still an independent
+/// repository-level defect; workflow-specific lock findings require a unique
+/// source filename. Absence or ambiguity is never evidence of a clean start.
 ///
 /// When coordinate attribution finds no moved or unadmitted coordinate, the
 /// result is a single `Unattributed` entry rather than one per coordinate. The
@@ -137,6 +185,7 @@ pub fn attribute_run(
             ),
         )];
     }
+    let workflow = resolve_run_workflow(run, files);
     if let Some(lock) = lock {
         if !same_source_revision(Some(&lock.head_sha), checkout_revision) {
             return vec![unattributed(repo, &run.workflow_file,
@@ -145,16 +194,18 @@ pub fn attribute_run(
         let class = match lock.status {
             NativeLockStatus::Malformed => Some(StartupFailureClass::InvalidActionsLock),
             NativeLockStatus::CoverageMismatch => {
-                let path = format!(".github/workflows/{}", run.workflow_file);
-                let affected = serde_json::from_str::<serde_json::Value>(&lock.stdout)
-                    .ok()
-                    .and_then(|report| report.get("workflows").and_then(|v| v.as_array()).cloned())
-                    .is_some_and(|workflows| {
-                        workflows.iter().any(|workflow| {
-                            workflow.get("path").and_then(|v| v.as_str()) == Some(path.as_str())
-                                && workflow.get("valid").and_then(|v| v.as_bool()) == Some(false)
+                let affected = workflow.as_ref().is_ok_and(|file| {
+                    let path = format!(".github/workflows/{}", file.path);
+                    serde_json::from_str::<serde_json::Value>(&lock.stdout)
+                        .ok()
+                        .and_then(|report| report.get("workflows").and_then(|v| v.as_array()).cloned())
+                        .is_some_and(|workflows| {
+                            workflows.iter().any(|workflow| {
+                                workflow.get("path").and_then(|v| v.as_str()) == Some(path.as_str())
+                                    && workflow.get("valid").and_then(|v| v.as_bool()) == Some(false)
+                            })
                         })
-                    });
+                });
                 affected.then_some(StartupFailureClass::ActionsLockMismatch)
             }
             NativeLockStatus::Unverified => None,
@@ -163,7 +214,9 @@ pub fn attribute_run(
         if let Some(class) = class {
             let mut finding = unattributed(
                 repo,
-                &run.workflow_file,
+                workflow
+                    .as_ref()
+                    .map_or(run.workflow_file.as_str(), |file| file.path.as_str()),
                 format!(
                     "{} at source {} ({} exit {:?}); the complete official output is retained. \
                     This reproduces a source defect, not proof of the sole GitHub startup cause.",
@@ -191,20 +244,14 @@ pub fn attribute_run(
         }
         findings
     };
-    let Some(file) = files.iter().find(|f| f.path == run.workflow_file) else {
-        return retain_probe_failure(vec![unattributed(
-            repo,
-            &run.workflow_file,
-            format!(
-                "workflow `{}` is not in the local checkout, so its `uses:` coordinates cannot \
-                 be read. The run is still a zero-job startup failure — read the workflow at \
-                 the run's commit before changing anything.",
-                run.workflow_file
-            ),
-        )]);
+    let file = match workflow {
+        Ok(file) => file,
+        Err(reason) => {
+            return retain_probe_failure(vec![unattributed(repo, &run.workflow_file, reason)]);
+        }
     };
 
-    let all = attribute_workflow(repo, &run.workflow_file, &file.text, canonical, allow_list);
+    let all = attribute_workflow(repo, &file.path, &file.text, canonical, allow_list);
     let (mut primary, mut unexplained): (Vec<ZeroJobAttribution>, Vec<ZeroJobAttribution>) = all
         .into_iter()
         .partition(|a| a.class != StartupFailureClass::Unattributed);
@@ -253,12 +300,12 @@ fn unattributed(repo: &str, workflow: &str, evidence: String) -> ZeroJobAttribut
 /// `jobs` is left `None` here: the count comes from a second read and is the
 /// host's evidence, not something this parser may assume.
 /// Matching is case-insensitive. A failed entry without an unsigned integer
-/// run ID is an error; a missing or non-string path becomes an empty filename,
-/// otherwise the ref suffix is dropped and only the final path component is
-/// kept. GitHub reports `path` either as `.github/workflows/ci.yml` or as
-/// `.github/workflows/ci.yml@refs/heads/main`; taking the last slash-separated
-/// component of the second form would name the file `main`, so every run would
-/// fail to match the checkout and be attributed to nothing.
+/// run ID is an error; a missing or non-string path becomes an empty string.
+/// Only the literal `.github/workflows/` prefix is removed. The remaining
+/// filename and optional suffix are retained losslessly: GitHub documents
+/// `build.yml@main` and also returns full refs. Filenames and refs can both
+/// contain `@`, and refs can contain slashes. Source-backed disambiguation
+/// belongs to [`resolve_run_workflow`], after revision and job evidence checks.
 ///
 /// # Errors
 ///
@@ -299,13 +346,12 @@ pub fn parse_startup_runs(body: &str) -> Result<Vec<ZeroJobRun>, String> {
             .get("path")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("");
-        // Drop only an explicit `@refs/` suffix before taking the filename.
-        // `release@nightly.yml` is a valid filename, including when followed
-        // by `@refs/heads/main`. The ref is not source-revision evidence.
-        let path = path
-            .split_once("@refs/")
-            .map_or(path, |(workflow, _)| workflow);
-        let workflow_file = path.rsplit('/').next().unwrap_or(path).to_string();
+        // Preserve both the filename and any short/full ref suffix. Neither
+        // an '@' split nor a basename operation can distinguish them safely.
+        let workflow_file = path
+            .strip_prefix(".github/workflows/")
+            .unwrap_or(path)
+            .to_string();
         let workflow_name = r
             .get("name")
             .and_then(serde_json::Value::as_str)
@@ -471,10 +517,11 @@ mod tests {
             {"path": ".github/workflows/other.yml", "valid": true}
         ]})
         .to_string();
+        let files = [wf("ci.yml", "jobs: {}"), wf("other.yml", "jobs: {}")];
         let out = attribute_run(
             CALLER,
             &run(42, "ci.yml"),
-            &[],
+            &files,
             &BTreeMap::new(),
             None,
             Some(SHA),
@@ -485,7 +532,7 @@ mod tests {
         let other = attribute_run(
             CALLER,
             &run(43, "other.yml"),
-            &[],
+            &files,
             &BTreeMap::new(),
             None,
             Some(SHA),
@@ -497,7 +544,7 @@ mod tests {
             attribute_run(
                 CALLER,
                 &run(42, "ci.yml"),
-                &[],
+                &files,
                 &BTreeMap::new(),
                 None,
                 Some(SHA),
@@ -768,7 +815,7 @@ jobs:
         );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].class, StartupFailureClass::Unattributed);
-        assert!(out[0].evidence.contains("not in the local checkout"));
+        assert!(out[0].evidence.contains("no matching file"));
     }
 
     #[test]
@@ -814,27 +861,43 @@ jobs:
     }
 
     #[test]
-    fn a_run_path_carrying_a_ref_suffix_still_names_the_workflow_file() {
-        // GitHub reports `path` both ways. Taking the last slash-separated
-        // component of the suffixed form would name the file after the ref and
-        // silently attribute nothing, so the suffix must go first.
+    fn run_paths_retain_short_and_full_refs_until_source_resolution() {
+        // The official workflow-runs example uses build.yml@main. Branches
+        // can contain slashes, so basename extraction also loses evidence.
         let body = serde_json::json!({
             "workflow_runs": [
                 {"id": 21, "conclusion": "startup_failure",
                  "path": ".github/workflows/gov.yml@refs/heads/main"},
                 {"id": 22, "conclusion": "startup_failure",
-                 "path": ".github/workflows/ci.yml@refs/pull/140/merge"}
+                 "path": ".github/workflows/ci.yml@refs/pull/140/merge"},
+                {"id": 23, "conclusion": "startup_failure",
+                 "path": ".github/workflows/build.yml@main"},
+                {"id": 24, "conclusion": "startup_failure",
+                 "path": ".github/workflows/build.yml@feature/topic"}
             ]
         })
         .to_string();
         let runs = parse_startup_runs(&body).expect("parse");
-        assert_eq!(runs.len(), 2);
-        assert_eq!(runs[0].workflow_file, "gov.yml");
-        assert_eq!(runs[1].workflow_file, "ci.yml");
+        assert_eq!(runs.len(), 4);
+        assert_eq!(runs[0].workflow_file, "gov.yml@refs/heads/main");
+        assert_eq!(runs[1].workflow_file, "ci.yml@refs/pull/140/merge");
+        assert_eq!(runs[2].workflow_file, "build.yml@main");
+        assert_eq!(runs[3].workflow_file, "build.yml@feature/topic");
+
+        let files = [
+            wf("gov.yml", WORKFLOW),
+            wf("ci.yml", WORKFLOW),
+            wf("build.yml", WORKFLOW),
+        ];
+        let resolved: Vec<_> = runs
+            .iter()
+            .map(|run| resolve_run_workflow(run, &files).unwrap().path.as_str())
+            .collect();
+        assert_eq!(resolved, ["gov.yml", "ci.yml", "build.yml", "build.yml"]);
     }
 
     #[test]
-    fn an_at_sign_in_the_workflow_filename_survives_ref_suffix_removal() {
+    fn an_at_sign_in_the_filename_and_the_ref_suffix_are_both_preserved() {
         let body = serde_json::json!({
             "workflow_runs": [
                 {"id": 31, "conclusion": "startup_failure",
@@ -854,9 +917,9 @@ jobs:
             files,
             [
                 "release@nightly.yml",
-                "release@nightly.yml",
+                "release@nightly.yml@refs/heads/main",
                 "release@refs.yml",
-                "release@nightly.yml",
+                "release@nightly.yml@refs/heads/topic@refs/heads/main",
             ]
         );
         assert!(runs.iter().all(|r| r.jobs.is_none()));
@@ -873,7 +936,10 @@ jobs:
         )]);
         for path in [
             ".github/workflows/release@nightly.yml",
+            ".github/workflows/release@nightly.yml@main",
+            ".github/workflows/release@nightly.yml@feature/topic",
             ".github/workflows/release@nightly.yml@refs/heads/main",
+            ".github/workflows/release@nightly.yml@refs/tags/v1",
         ] {
             let body = serde_json::json!({
                 "workflow_runs": [{
@@ -912,6 +978,125 @@ jobs:
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_literal_at_filename_is_preserved_and_collisions_are_unattributed() {
+        let literal = wf("release.yml@nightly.yml", WORKFLOW);
+        let short = wf("release.yml", WORKFLOW);
+        let observed = run(36, "release.yml@nightly.yml");
+        let literal_only = [literal.clone()];
+        assert_eq!(
+            resolve_run_workflow(&observed, &literal_only).unwrap().path,
+            "release.yml@nightly.yml"
+        );
+
+        let names = canonical(&[(
+            "old/standards",
+            CanonicalResolution::Moved {
+                canonical: "new/standards".into(),
+            },
+        )]);
+        let literal_result = attribute_run(
+            CALLER,
+            &observed,
+            &literal_only,
+            &names,
+            None,
+            Some(SHA),
+            None,
+        );
+        assert_eq!(literal_result[0].workflow, "release.yml@nightly.yml");
+        assert_eq!(literal_result[0].class, StartupFailureClass::MovedCoordinate);
+
+        let files = [short, literal];
+        for path in [
+            "release.yml@nightly.yml",
+            "release.yml@nightly.yml@main",
+            "release.yml@nightly.yml@refs/heads/main",
+        ] {
+            let observed = run(37, path);
+            assert!(resolve_run_workflow(&observed, &files)
+                .unwrap_err()
+                .contains("ambiguous"));
+            let out = attribute_run(
+                CALLER,
+                &observed,
+                &files,
+                &names,
+                Some(&AllowList::default()),
+                Some(SHA),
+                None,
+            );
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0].class, StartupFailureClass::Unattributed);
+            assert!(out[0].evidence.contains("ambiguous"));
+            assert!(out[0].proposed_move().is_none());
+            assert!(out[0].required_allow_list_pattern.is_none());
+        }
+    }
+
+    #[test]
+    fn unmatched_paths_and_empty_refs_do_not_borrow_a_source_basename() {
+        let files = [wf("build.yml", WORKFLOW)];
+        for path in [
+            ".github/workflows/missing.yml@main",
+            ".github/workflows/build.yml@",
+            ".github/workflows/nested/build.yml",
+            ".github/workflows/../build.yml",
+            "somewhere/build.yml",
+        ] {
+            let body = serde_json::json!({"workflow_runs": [{
+                "id": 38, "conclusion": "startup_failure",
+                "head_sha": SHA, "path": path
+            }]})
+            .to_string();
+            let observed = parse_startup_runs(&body).unwrap().remove(0);
+            assert!(
+                resolve_run_workflow(&observed, &files).is_err(),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_coverage_uses_only_a_uniquely_resolved_source_filename() {
+        let mut lock = native_lock(NativeLockStatus::CoverageMismatch);
+        lock.exit_code = Some(1);
+        lock.stdout = serde_json::json!({"workflows": [
+            {"path": ".github/workflows/ci.yml", "valid": false}
+        ]})
+        .to_string();
+        let files = [wf("ci.yml", WORKFLOW)];
+        for path in ["ci.yml@main", "ci.yml@refs/heads/main"] {
+            let out = attribute_run(
+                CALLER,
+                &run(39, path),
+                &files,
+                &BTreeMap::new(),
+                None,
+                Some(SHA),
+                Some(&lock),
+            );
+            assert_eq!(out[0].workflow, "ci.yml");
+            assert_eq!(out[0].class, StartupFailureClass::ActionsLockMismatch);
+            assert!(out[0].proposed_move().is_none());
+        }
+
+        let ambiguous = [wf("ci.yml", WORKFLOW), wf("ci.yml@nightly.yml", WORKFLOW)];
+        let out = attribute_run(
+            CALLER,
+            &run(40, "ci.yml@nightly.yml"),
+            &ambiguous,
+            &BTreeMap::new(),
+            Some(&AllowList::default()),
+            Some(SHA),
+            Some(&lock),
+        );
+        assert_eq!(out[0].class, StartupFailureClass::Unattributed);
+        assert!(out[0].evidence.contains("ambiguous"));
+        assert!(out[0].proposed_move().is_none());
+        assert!(out[0].required_allow_list_pattern.is_none());
     }
 
     #[test]
