@@ -295,6 +295,35 @@ fn parse_repo(repo: &RepoId, node: &Value) -> RepoSnapshot {
         }
     };
 
+    let files = read_workflow_entries(entries.map(Vec::as_slice), &mut incomplete);
+
+    let status = if incomplete.is_empty() {
+        ScanStatus::Scanned {
+            revision,
+            workflow_files: files.len(),
+        }
+    } else {
+        ScanStatus::Unavailable {
+            reason: incomplete.join("; "),
+        }
+    };
+    notes.extend(incomplete);
+    RepoSnapshot {
+        repo: repo.clone(),
+        status,
+        files,
+        notes,
+        canonical,
+    }
+}
+
+/// Read each workflow blob while retaining every population-completeness error.
+/// Partial text remains diagnostic input; the caller refuses a scanned status
+/// whenever this helper records a missing, duplicate, binary or truncated entry.
+fn read_workflow_entries(
+    entries: Option<&[Value]>,
+    incomplete: &mut Vec<String>,
+) -> Vec<WorkflowFile> {
     let mut files = Vec::new();
     let mut names = BTreeSet::new();
     for entry in entries.into_iter().flatten() {
@@ -354,25 +383,7 @@ fn parse_repo(repo: &RepoId, node: &Value) -> RepoSnapshot {
             )),
         }
     }
-
-    let status = if incomplete.is_empty() {
-        ScanStatus::Scanned {
-            revision,
-            workflow_files: files.len(),
-        }
-    } else {
-        ScanStatus::Unavailable {
-            reason: incomplete.join("; "),
-        }
-    };
-    notes.extend(incomplete);
-    RepoSnapshot {
-        repo: repo.clone(),
-        status,
-        files,
-        notes,
-        canonical,
-    }
+    files
 }
 
 /// Read the workflow directories of `repos` in batches. Returns one snapshot
