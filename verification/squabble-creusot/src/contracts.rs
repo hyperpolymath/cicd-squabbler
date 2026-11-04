@@ -7,9 +7,12 @@
 //! mirrors one function in [`crate::model`] — keep the pair in step; the model
 //! carries the tests that fail when the real implementation drifts.
 //!
-//! **Status: stated, not discharged.** No obligation here has been proved: this
-//! environment has no Rust toolchain at all, and the repository's own Rust CI
-//! does not start (zero-job `startup_failure`). See `../../docs/CREUSOT.adoc`.
+//! **Status: source-bound hosted proof recorded.** Proof job 126852164109
+//! discharged this verification crate at merge revision
+//! f9499a8de0b8c525459a669e2cdbcacf83a49b85. That historical receipt qualifies
+//! that checkout only; later revisions require their own proof evidence.
+//! See docs/CREUSOT.adoc for the recorded source, gate and scope:
+//! <https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438/job/126852164109>.
 
 use creusot_std::prelude::*;
 

@@ -668,6 +668,42 @@ mod tests {
     }
 
     #[test]
+    fn moved_details_label_only_unconfirmed_consumers() {
+        use squabble_core::chains::{Edge, EdgeKind, Pin};
+
+        let edge = |from: &str, file: &str, pin: &str| Edge {
+            from: RepoId::new(from),
+            file: file.into(),
+            to: RepoId::new("old/tool"),
+            kind: EdgeKind::Action,
+            path: None,
+            pin: Pin::parse(pin),
+            version_hint: None,
+        };
+        let finding = Finding::MovedUpstream {
+            written: RepoId::new("old/tool"),
+            canonical: RepoId::new("new/tool"),
+            consumers: vec![edge(
+                "me/app",
+                "ci.yml",
+                "1111111111111111111111111111111111111111",
+            )],
+            unconfirmed_consumers: vec![edge(
+                "me/shared",
+                "build.yml",
+                "2222222222222222222222222222222222222222",
+            )],
+        };
+        assert_eq!(
+            details(&finding),
+            [
+                "me/app:ci.yml @111111111111",
+                "me/shared:build.yml @222222222222 (upstream revision unconfirmed)",
+            ]
+        );
+    }
+
+    #[test]
     fn a_dead_upstream_is_found_by_rest_even_without_follow() {
         let r = collect(
             &args(0),

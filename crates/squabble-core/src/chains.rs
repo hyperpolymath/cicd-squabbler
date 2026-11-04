@@ -215,7 +215,8 @@ impl Edge {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum ScanStatus {
-    /// Read successfully. `revision` is the commit the files came from, when
+    /// The complete workflow population was read successfully. `revision` is
+    /// the commit the files came from, when
     /// the source knows it (GraphQL always does; a local tree may not).
     Scanned {
         #[serde(default)]
@@ -259,6 +260,48 @@ pub struct RepoSnapshot {
 }
 
 impl RepoSnapshot {
+    /// Access workflow files only when the producer reports a complete read and
+    /// its count agrees with the retained population. A missing Git revision
+    /// does not make an otherwise complete local read unavailable.
+    ///
+    /// This validates snapshot metadata, not the producer's honesty: source
+    /// adapters must report enumeration, decoding and truncation failures.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unavailable reads, inconsistent counts, duplicate
+    /// filenames or entries outside the workflow-directory filename contract.
+    pub fn workflow_files(&self) -> Result<&[WorkflowFile], String> {
+        match &self.status {
+            ScanStatus::Scanned { workflow_files, .. } if *workflow_files == self.files.len() => {}
+            ScanStatus::Scanned { .. } => {
+                return Err(
+                    "workflow source population count does not match the retained files".into(),
+                );
+            }
+            ScanStatus::Unavailable { reason } => {
+                return Err(format!(
+                    "workflow source population is incomplete: {reason}"
+                ));
+            }
+            ScanStatus::NotFound => {
+                return Err(
+                    "workflow source population is unavailable: repository not found".into(),
+                );
+            }
+        }
+        let mut names = BTreeSet::new();
+        for file in &self.files {
+            if file.path.contains('/')
+                || !(file.path.ends_with(".yml") || file.path.ends_with(".yaml"))
+                || !names.insert(file.path.as_str())
+            {
+                return Err("workflow source population has invalid or duplicate filenames".into());
+            }
+        }
+        Ok(&self.files)
+    }
+
     /// The canonical identity, defaulting to the requested one when the source
     /// could not tell.
     pub fn canonical_id(&self) -> RepoId {
@@ -1077,6 +1120,40 @@ mod tests {
     }
 
     #[test]
+    fn workflow_population_requires_complete_consistent_metadata_not_a_git_revision() {
+        let mut snapshot = RepoSnapshot {
+            repo: r("me/app"),
+            status: ScanStatus::Scanned {
+                revision: None,
+                workflow_files: 1,
+            },
+            files: vec![WorkflowFile {
+                path: "release.yml".into(),
+                text: "jobs: {}\n".into(),
+            }],
+            notes: Vec::new(),
+            canonical: None,
+        };
+        assert_eq!(snapshot.workflow_files().unwrap().len(), 1);
+        snapshot.status = ScanStatus::Scanned {
+            revision: None,
+            workflow_files: 2,
+        };
+        assert!(snapshot.workflow_files().unwrap_err().contains("count"));
+        snapshot.files.push(snapshot.files[0].clone());
+        assert!(snapshot.workflow_files().unwrap_err().contains("duplicate"));
+        snapshot.status = ScanStatus::Unavailable {
+            reason: "literal workflow could not be decoded".into(),
+        };
+        assert!(snapshot
+            .workflow_files()
+            .unwrap_err()
+            .contains("incomplete"));
+        snapshot.status = ScanStatus::NotFound;
+        assert!(snapshot.workflow_files().is_err());
+    }
+
+    #[test]
     fn repo_identity_is_case_insensitive_but_keeps_spelling() {
         let a = r("Hyperpolymath/MetaManifold-WebUI");
         let b = r("hyperpolymath/metamanifold-webui");
@@ -1548,7 +1625,8 @@ mod tests {
             ),
             edge(
                 "me/shared",
-                ".github/workflows/ci.yml",
+                // Edge.file is relative to .github/workflows; Edge.path below is not.
+                "ci.yml",
                 "me/inner",
                 EdgeKind::ReusableWorkflow,
                 Some(".github/workflows/ci.yml"),

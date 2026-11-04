@@ -9,46 +9,69 @@ The estate requires Rust that carries deductive-verification obligations, the
 Rust twin of the SPARK proofs in `spark/`. This page records what exists here,
 what it means, and — plainly — what has *not* happened yet.
 
-== Status: stated, not proved
+== Hosted proof receipt: 2026-11-04
 
-[cols="2,1,3"]
+https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438[Run 41909189438]
+completed successfully. Its
+https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438/job/126852164109[proof job 126852164109]
+records the following source and execution evidence:
+
+[cols="2,3",options="header"]
 |===
-| Item | State | Meaning
+| Evidence | Observed value
 
-| Contracts in `verification/squabble-creusot`
-| written
-| Six obligations state the engine's load-bearing invariants to Creusot.
+| Checked-out merge revision
+| `f9499a8de0b8c525459a669e2cdbcacf83a49b85`
 
-| Stable-Rust mirror (`src/model.rs`)
-| written, not yet run
-| The same statements as ordinary functions — one mirror function per contract
-  (`accepted`, `has_evidence`, `after_diagnosis`, `after_admission`, `admits`,
-  `requires_admission`) — with `#[test]`s that compare them to the real
-  `squabble-core`, that check the post-event statements over *both* values of
-  `diagnosed` and of `admitted`, and that pin the arithmetic at the `u32`
-  boundaries. Needs only a stable toolchain.
+| Pull-request head
+| `1fd9db9bb94d9ac8ed54f7a6ef4f8c51ff35a848`
 
-| `cargo creusot prove`
-| **never run**
-| No obligation has reached Why3. No run has discharged anything.
+| Merge base
+| `17284299184fd31a10c7bf382f02262cd0ab308c`
 
-| Estate gate (`Creusot Gate` workflow)
-| wired
-| Calls `hyperpolymath/cicd-suite`'s `creusot-gate.yml`, phase-verified locally
-  (see <<_what_was_actually_checked>>). It cannot pass until a runner installs
-  the toolchain and the obligations discharge.
+| Gate source checked out by the job
+| `hyperpolymath/cicd-suite@47a5fe0aa1039ad8a6a0614137d575e66649a174`
 
-| Rust CI on this repository
-| **not running at all**
-| `Rust CI` concludes `startup_failure` with **zero jobs** on `main` and on
-  branches, so nothing here has been compiled in CI either. That is the class
-  `squabble zero-job` exists to name (see `README.adoc`); until it is fixed, no
-  Rust in this repository is built by CI.
+| Toolchain
+| Creusot 0.14.0 with `nightly-2026-08-03`
+
+| False control
+| The planted false postcondition was refused.
+
+| True control
+| The planted true postcondition was proved.
+
+| Calling crate
+| `verification/squabble-creusot`: `Proved (13 files)` at
+  20:55:09 UTC; the gate reported every obligation discharged. Its
+  `trusted axioms: 0` field counted lines containing the literal `#[trusted]`
+  in tracked Rust files, not axioms from dependencies or the prover.
+
+| Aggregate verdict (separate from prover execution)
+| https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438/job/126858835478[Verdict job 126858835478]
+  adjudicated the successful detection, theatre and proof results. The actual
+  planted controls and caller proof ran in
+  https://github.com/hyperpolymath/cicd-squabbler/actions/runs/41909189438/job/126852164109[proof job 126852164109]
+  linked above.
 |===
 
-The honest phrase is **stated, not proved**. Do not upgrade it until a `prove`
-run discharges every obligation on a real toolchain; the estate gate fails a
-claim of proof that has no contracts behind it, and that gate is right to.
+`Proved (13 files)` is the prover's file-level result for this crate, not a
+count of independent theorems. This receipt discharges the contracts in the
+separate verification crate at the named merge revision. It is not a proof of all operational Rust code, and
+it does not certify later commits or the default branch merely because they
+contain this document. The stable mirror tests, which compare the model with
+`squabble-core`, remain a separate validation step; this proof receipt does
+not report their execution. The ABI/Idris2/Lean4 template obligations in
+`docs/status/PROOF-STATUS.adoc` are also outside this receipt.
+
+The contract crate has six scalar obligations and a stable-Rust mirror
+(`src/model.rs`). The mirror contains one function per contract
+(`accepted`, `has_evidence`, `after_diagnosis`, `after_admission`, `admits`,
+`requires_admission`), tests both values of `diagnosed` and `admitted`, and
+checks `u32` arithmetic boundaries. Those executable comparisons must pass
+when validating later source; the recorded prover result does not replace
+them. Earlier local toolchain failures are preserved below as historical
+receipts, not as the current status of the hosted proof.
 
 == What the obligations say
 
@@ -229,13 +252,12 @@ prebuilt image. `apt-get update` cannot write `/var/lib/apt/lists` and the
 Debian mirrors are not on the allow-list. `why3` does not exist on PyPI or npm
 (HTTP 404), so layer 4 cannot be improvised from the reachable channels either.
 
-**What this means for a verdict: nothing, which is the point.** With no
-toolchain, `just verify-status` reports every layer MISSING and exits `2`; the
-estate gate's prove phase exits `2` with NO PROOF WAS PERFORMED; and the status
-of the obligations is unchanged — STATED, NOT PROVED. What must *not* happen,
-and did not, is an installer that reports success because it skipped a layer.
-Run `just verify-install` on a host with dist access to move any of this
-forward.
+That 2026-10-28 environment produced no proof verdict: `just verify-status`
+reported every layer MISSING and exited `2`; the estate gate's prove phase
+exited `2` with NO PROOF WAS PERFORMED. The obligations remained stated but
+unproved in that local attempt. The installer did not report success by
+skipping a layer. This historical failure is distinct from the successful
+hosted receipt recorded above; other hosts still require the full toolchain.
 
 == Running the obligations
 
@@ -252,10 +274,10 @@ just verify-gate $(grep -oE 'cicd-suite/\.github/workflows/creusot-gate\.yml@[0-
     .github/workflows/creusot.yml | head -1 | sed 's/.*@//')
 ----
 
-== What was actually checked
+== Historical local gate-wiring check
 
-Run against this tree with the estate script
-(`cicd-suite/actions/creusot-check/check.sh`), tracked files only:
+Before the hosted proof receipt above, a local attempt exercised the estate
+script (`cicd-suite/actions/creusot-check/check.sh`) over tracked files:
 
 [source,text]
 ----
@@ -265,9 +287,10 @@ $ CREUSOT_GATE_PHASE=prove   ... -> exit 2: 'cargo creusot' is not available
                                     — NO PROOF WAS PERFORMED.
 ----
 
-So: the wiring is exercised end to end, the anti-theatre checks pass honestly,
-and the prove phase fails closed rather than reporting a verdict it cannot
-support. **No obligation has been discharged.**
+That attempt exercised detection and anti-theatre checks, then the prove phase
+failed closed because its toolchain was unavailable. It discharged no
+obligation. The later hosted proof receipt above supplies the separate,
+source-bound execution evidence.
 
 == Why a separate crate, and the licence position
 
