@@ -1064,7 +1064,9 @@ jobs:
         let observed = run(36, "release.yml@nightly.yml");
         let literal_only = [literal.clone()];
         assert_eq!(
-            resolve_run_workflow(&observed, &snapshot(&literal_only)).unwrap().path,
+            resolve_run_workflow(&observed, &snapshot(&literal_only))
+                .unwrap()
+                .path,
             "release.yml@nightly.yml"
         );
 
@@ -1132,7 +1134,10 @@ jobs:
             }]})
             .to_string();
             let observed = parse_startup_runs(&body).unwrap().remove(0);
-            assert!(resolve_run_workflow(&observed, &snapshot(&files)).is_err(), "{path}");
+            assert!(
+                resolve_run_workflow(&observed, &snapshot(&files)).is_err(),
+                "{path}"
+            );
         }
     }
 

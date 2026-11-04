@@ -285,7 +285,10 @@ fn read_local_workflows(root: &Path) -> (Vec<WorkflowFile>, Vec<String>) {
         }
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
-            notes.push(format!("workflow filename is not UTF-8: {}", path.display()));
+            notes.push(format!(
+                "workflow filename is not UTF-8: {}",
+                path.display()
+            ));
             continue;
         };
         match entry.file_type() {
@@ -656,8 +659,10 @@ jobs:
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let root = std::env::temp_dir()
-                .join(format!("squabble-population-{}-{stamp}", std::process::id()));
+            let root = std::env::temp_dir().join(format!(
+                "squabble-population-{}-{stamp}",
+                std::process::id()
+            ));
             std::fs::create_dir(&root).unwrap();
             Self(root)
         }
@@ -703,7 +708,9 @@ jobs:
             }
         ));
         assert_eq!(complete.workflow_files().unwrap().len(), 1);
-        assert!(!graph_from_snapshots([(&complete, Role::Subject)]).edges.is_empty());
+        assert!(!graph_from_snapshots([(&complete, Role::Subject)])
+            .edges
+            .is_empty());
     }
 
     #[test]
@@ -717,9 +724,14 @@ jobs:
         assert!(matches!(snapshot.status, ScanStatus::Unavailable { .. }));
         assert_eq!(snapshot.files.len(), 1);
         assert_eq!(snapshot.files[0].path, "release.yml");
-        assert!(snapshot.notes.iter().any(|note| note.contains("release.yml@nightly.yml")));
+        assert!(snapshot
+            .notes
+            .iter()
+            .any(|note| note.contains("release.yml@nightly.yml")));
         assert!(snapshot.workflow_files().is_err());
-        assert!(graph_from_snapshots([(&snapshot, Role::Subject)]).edges.is_empty());
+        assert!(graph_from_snapshots([(&snapshot, Role::Subject)])
+            .edges
+            .is_empty());
     }
 
     #[cfg(unix)]
@@ -732,7 +744,10 @@ jobs:
         std::fs::write(source.workflows().join(name), CALLER).unwrap();
         let snapshot = snapshot_local(&source.0, Some("me/app"));
         assert!(matches!(snapshot.status, ScanStatus::Unavailable { .. }));
-        assert!(snapshot.notes.iter().any(|note| note.contains("filename is not UTF-8")));
+        assert!(snapshot
+            .notes
+            .iter()
+            .any(|note| note.contains("filename is not UTF-8")));
         assert!(snapshot.workflow_files().is_err());
     }
 
@@ -752,11 +767,8 @@ jobs:
         let source = LocalSource::new();
         let workflows = source.workflows();
         std::fs::write(workflows.join("release.yml"), CALLER).unwrap();
-        std::os::unix::fs::symlink(
-            "missing-target",
-            workflows.join("release.yml@nightly.yml"),
-        )
-        .unwrap();
+        std::os::unix::fs::symlink("missing-target", workflows.join("release.yml@nightly.yml"))
+            .unwrap();
         let snapshot = snapshot_local(&source.0, Some("me/app"));
         assert!(matches!(snapshot.status, ScanStatus::Unavailable { .. }));
         assert!(snapshot.workflow_files().is_err());

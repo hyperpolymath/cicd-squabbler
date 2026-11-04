@@ -313,7 +313,9 @@ fn parse_repo(repo: &RepoId, node: &Value) -> RepoSnapshot {
             Some("blob") => {}
             Some("tree" | "commit") => continue,
             _ => {
-                incomplete.push(format!("{name}: workflow directory entry has an unknown type"));
+                incomplete.push(format!(
+                    "{name}: workflow directory entry has an unknown type"
+                ));
                 continue;
             }
         }
@@ -321,7 +323,9 @@ fn parse_repo(repo: &RepoId, node: &Value) -> RepoSnapshot {
             continue;
         }
         let blob = entry.get("object");
-        let text = blob.and_then(|blob| blob.get("text")).and_then(Value::as_str);
+        let text = blob
+            .and_then(|blob| blob.get("text"))
+            .and_then(Value::as_str);
         let binary = blob
             .and_then(|blob| blob.get("isBinary"))
             .and_then(Value::as_bool);
@@ -571,7 +575,10 @@ mod tests {
         ] {
             let response = json!({"data": {"r0": node}});
             let (snapshots, _) = parse_chains_response(&repos(&["me/app"]), &response);
-            assert!(matches!(snapshots[0].status, ScanStatus::Unavailable { .. }));
+            assert!(matches!(
+                snapshots[0].status,
+                ScanStatus::Unavailable { .. }
+            ));
             assert!(snapshots[0].workflow_files().is_err());
             assert!(!snapshots[0].notes.is_empty());
         }
@@ -584,7 +591,10 @@ mod tests {
             "object": {"text": "jobs: {}\n", "isBinary": false, "isTruncated": false}
         }]));
         node["nameWithOwner"] = json!("me/new-name");
-        for path in [json!(["r0", "defaultBranchRef", "target", "file"]), Value::Null] {
+        for path in [
+            json!(["r0", "defaultBranchRef", "target", "file"]),
+            Value::Null,
+        ] {
             let response = json!({
                 "data": {"r0": node.clone()},
                 "errors": [{"path": path, "message": "workflow read interrupted"}]
@@ -595,7 +605,10 @@ mod tests {
             assert_eq!(snapshot.canonical.as_deref(), Some("me/new-name"));
             assert_eq!(snapshot.files.len(), 1);
             assert!(matches!(snapshot.status, ScanStatus::Unavailable { .. }));
-            assert!(snapshot.notes.iter().any(|note| note.contains("read interrupted")));
+            assert!(snapshot
+                .notes
+                .iter()
+                .any(|note| note.contains("read interrupted")));
             assert!(snapshot.workflow_files().is_err());
         }
     }
@@ -607,7 +620,10 @@ mod tests {
             "errors": {"message": "wrong shape"}
         });
         let (snapshots, _) = parse_chains_response(&repos(&["me/app"]), &response);
-        assert!(matches!(snapshots[0].status, ScanStatus::Unavailable { .. }));
+        assert!(matches!(
+            snapshots[0].status,
+            ScanStatus::Unavailable { .. }
+        ));
         assert!(snapshots[0].workflow_files().is_err());
     }
 

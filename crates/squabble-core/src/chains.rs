@@ -280,7 +280,9 @@ impl RepoSnapshot {
                 );
             }
             ScanStatus::Unavailable { reason } => {
-                return Err(format!("workflow source population is incomplete: {reason}"));
+                return Err(format!(
+                    "workflow source population is incomplete: {reason}"
+                ));
             }
             ScanStatus::NotFound => {
                 return Err(
@@ -1143,7 +1145,10 @@ mod tests {
         snapshot.status = ScanStatus::Unavailable {
             reason: "literal workflow could not be decoded".into(),
         };
-        assert!(snapshot.workflow_files().unwrap_err().contains("incomplete"));
+        assert!(snapshot
+            .workflow_files()
+            .unwrap_err()
+            .contains("incomplete"));
         snapshot.status = ScanStatus::NotFound;
         assert!(snapshot.workflow_files().is_err());
     }
