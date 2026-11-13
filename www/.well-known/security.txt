@@ -2,10 +2,8 @@
 # RFC 9116 - security.txt
 # https://securitytxt.org/
 
-Contact: mailto:{{SECURITY_EMAIL}}
-Expires: {{CURRENT_YEAR}}-12-31T23:59:59.000Z
-Encryption: {{PGP_KEY_URL}}
+Contact: https://github.com/hyperpolymath/cicd-squabbler/security/advisories/new
+Expires: 2027-11-13T00:00:00.000Z
 Preferred-Languages: en
-Canonical: https://{{FORGE}}/{{OWNER}}/{{REPO}}/.well-known/security.txt
-Policy: https://{{FORGE}}/{{OWNER}}/{{REPO}}/blob/main/SECURITY.md
-Hiring: https://{{WEBSITE}}/careers
+Canonical: https://github.com/hyperpolymath/cicd-squabbler/.well-known/security.txt
+Policy: https://github.com/hyperpolymath/cicd-squabbler/blob/main/SECURITY.adoc
