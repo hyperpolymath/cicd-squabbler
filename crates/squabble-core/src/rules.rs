@@ -11,7 +11,7 @@
 //! rules have none and are left out of it: SQ-LOCK-03, SQ-PIN-01, SQ-PIN-04,
 //! SQ-PIN-05, SQ-TOOL-01, SQ-CANON-01, SQ-RUN-02, SQ-CODE-02, SQ-CODE-03,
 //! SQ-CODE-04, SQ-REF-08, SQ-OWN-03, SQ-OWN-05, SQ-OWN-06, SQ-OWN-07,
-//! SQ-OWN-08, SQ-OWN-11, SQ-OWN-12 and SQ-NOI-03. Their evidence is the
+//! SQ-OWN-08, SQ-OWN-11, SQ-OWN-12, SQ-OWN-16 and SQ-NOI-03. Their evidence is the
 //! workflow source, run metadata or PR state, not a log line. SQ-LOCK-01,
 //! SQ-PIN-03 and SQ-GEN-03 also have static detectors below.
 
@@ -51,7 +51,7 @@ use RuleClass::{Act, Fix, Noise, Owner, Refer};
 /// here.
 const CATALOGUE_TSV: &str = include_str!("../data/first-line-rules.tsv");
 
-/// The 44 catalogue rows, in ADR 0004 order.
+/// The 45 catalogue rows, in ADR 0004 order.
 ///
 /// The data file ships inside the crate, so a malformed row is a defect in
 /// this crate that a caller cannot repair. The catalogue never loads short:
@@ -188,6 +188,7 @@ static LOG_MATCHERS: &[LogMatcher] = &[
     ("SQ-RUN-01", |c| c.rate_limited()),
     ("SQ-RUN-03", |c| {
         c.http_5xx_after("gh: HTTP ")
+            || c.http_5xx_after("gh: Server Error (HTTP ")
             || c.http_5xx_after("returned error: ")
             || c.has("Could not resolve host")
             || c.has("Failed to connect to")
@@ -856,19 +857,19 @@ mod tests {
     #[test]
     fn shipped_catalogue_file_parses() {
         let parsed = parse_catalogue(CATALOGUE_TSV).expect("the shipped data file is well formed");
-        assert_eq!(parsed.len(), 44);
+        assert_eq!(parsed.len(), 45);
     }
 
     #[test]
     fn catalogue_shape() {
-        assert_eq!(CATALOGUE.len(), 44);
+        assert_eq!(CATALOGUE.len(), 45);
         let uniq: HashSet<_> = CATALOGUE.iter().map(|r| r.id).collect();
-        assert_eq!(uniq.len(), 44);
+        assert_eq!(uniq.len(), 45);
         let n = |c| CATALOGUE.iter().filter(|r| r.class == c).count();
         assert_eq!(n(Fix), 20);
         assert_eq!(n(Act), 4);
         assert_eq!(n(Refer), 2);
-        assert_eq!(n(Owner), 15);
+        assert_eq!(n(Owner), 16);
         assert_eq!(n(Noise), 3);
         assert!(rule("SQ-OWN-04").is_some());
         for gone in [
@@ -918,6 +919,8 @@ mod tests {
                 "##[error]lockfile verification did not produce a result for this action. Unable to resolve action `dtolnay/rust-toolchain@v1`",
             ),
             ("SQ-RUN-03", "gh: HTTP 502 (https://api.github.com/graphql)"),
+            // standards run 43446385277, Rust coverage (playbook-to-recipe).
+            ("SQ-RUN-03", "gh: Server Error (HTTP 502)"),
             ("SQ-RUN-03", "fatal: unable to access 'https://git.sr.ht/x': The requested URL returned error: 503"),
             ("SQ-RUN-03", "fatal: unable to access 'https://x/': Could not resolve host: x"),
             (
@@ -970,6 +973,7 @@ mod tests {
             "gh: HTTP 404",
             "gh: HTTP 5",
             "gh: HTTP 5x2",
+            "gh: Server Error (HTTP 404)",
             "returned error: 403",
         ] {
             assert!(!ids(log, None).contains(&"SQ-RUN-03"), "{log}");

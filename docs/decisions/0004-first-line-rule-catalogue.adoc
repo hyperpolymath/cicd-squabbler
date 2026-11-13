@@ -14,7 +14,7 @@ evidence from one or more repositories, not yet a verified general rule. When
 the implementation lands, its rule table in code is authoritative and this
 record lists the decisions behind it.
 
-Amended 2026-11-13 (increment 2): twelve rules and one widened rule were added
+Amended 2026-11-13 (increment 2): thirteen rules and three widened rules (SQ-LOCK-02, SQ-RUN-03, SQ-CODE-03) were added
 from the evidence that the rule reconciliation thread sent after #156 merged
 (hypatia#1064). The rows quote that evidence; rows marked "reconstructed" have
 no run URL yet.
@@ -173,7 +173,7 @@ holds, or when its check does not pass on the PR head.
 | Merge conflict, or still blocked on an up-to-date head.
 
 | SQ-RUN-03 | ACT
-| A step fails on a transient host or API error: `gh: HTTP 5xx` (hypatia run 43358533401: `gh: HTTP 502` on an owner-wide GraphQL query), a git remote answering `returned error: 5xx`, `Could not resolve host`, or `Failed to connect to`.
+| A step fails on a transient host or API error: `gh: HTTP 5xx` (hypatia run 43358533401: `gh: HTTP 502` on an owner-wide GraphQL query), `gh: Server Error (HTTP 5xx)` (standards run 43446385277: `gh: Server Error (HTTP 502)` while the coverage job read the workflow catalogue), a git remote answering `returned error: 5xx`, `Could not resolve host`, or `Failed to connect to`.
 | Re-run the failed job once, only if that commit is still the head.
 | The re-run passes.
 | It fails twice on the same commit, or the status is 401 or 403 (a token problem is SQ-OWN-09; a rate limit is SQ-RUN-01).
@@ -197,10 +197,10 @@ holds, or when its check does not pass on the PR head.
 | The fix would hit the code-fix unsafe list (guard 6), the code is vendored or third-party, or the check does not pass on the PR head.
 
 | SQ-CODE-03 | FIX
-| Sonar S7688 or S7679 in shell scripts.
-| Make the mechanical edit. Decline S1192 in test files, where repetition is a convention.
+| Sonar S7688, S7679 or S131 in shell scripts.
+| Make the mechanical edit. For S7688 rewrite `[ … ]` to `[[ … ]]` only in files with a bash shebang, never in `/bin/sh` or POSIX scripts. For S131 add a no-op default case `*) ;;`, which changes nothing in shell. Decline S1192 in test files, where repetition is a convention.
 | `bash -n`, shellcheck and the repository's shell tests pass.
-| The fix would hit the code-fix unsafe list (guard 6), the code is vendored or third-party, or the check does not pass on the PR head.
+| An S7688 test uses `-a` or `-o` or relies on word splitting, the fix would hit the code-fix unsafe list (guard 6), the code is vendored or third-party, or the check does not pass on the PR head.
 
 | SQ-REF-06 | REFER
 | The DEED job fails `could not read Username for 'https://github.com'` on a private repository (checkout with `persist-credentials: false`, then an anonymous fetch).
@@ -310,6 +310,12 @@ holds, or when its check does not pass on the PR head.
 | (owner)
 | (owner)
 
+| SQ-OWN-16 | OWNER
+| A workflow force- or mirror-pushes to a forge, gated on a `*_MIRROR_ENABLED` variable, with no check of the source repository's visibility anywhere in the file (Hypatia WF030, found statically). Standards `mirror-reusable.yml` gates the job at line 93 and runs `git push --force gitlab main` at line 144, with the same shape per forge (bitbucket 196, codeberg 248); `github-backup-mirror-reusable.yml` too. It fires on nothing in hypatia, gitbot-fleet or this repository.
+| Report: the owner decides the guard (refuse, or skip loudly, when the source is private and the forge copy is not confirmed private; escalate when the forge visibility cannot be read). The squabbler never edits a mirror workflow, never pushes to a forge and never changes a visibility setting. Hypatia detects and refers it; this row only reports.
+| (owner)
+| (owner)
+
 | SQ-NOI-01 | NOISE
 | `Fork governance failed (deed=cancelled)` on a head that a newer commit replaced.
 | Label superseded; read the newest head.
@@ -365,6 +371,7 @@ and fix belongs to the squabbler.
 | `ruleset_blocks_push` | SQ-OWN-13 | owner
 | `uuid_conformance` | SQ-OWN-14 | owner
 | `sonar_not_authorized` | SQ-OWN-15 | owner
+| `mirror_without_visibility_guard` (WF030) | SQ-OWN-16 | owner, report only; static detection
 | `generated_file_stale` | none | a referral: the squabbler never runs a command named in a log; each new generated file becomes its own row
 | `bench_regression` | SQ-OWN-11 | owner
 | `scanner_pin_drift` | SQ-OWN-12 | owner
@@ -379,8 +386,8 @@ base).
 
 == Consequences
 
-* 24 rules are first-line (20 `FIX`, 4 `ACT`), 2 are referrals, 15 are
-  owner-only and 3 are noise; 44 in all. Every rule names its check and its
+* 24 rules are first-line (20 `FIX`, 4 `ACT`), 2 are referrals, 16 are
+  owner-only and 3 are noise; 45 in all. Every rule names its check and its
   referral condition.
 * A fix that changes code (`SQ-CODE-nn`) is first-line only when the code-fix
   guard passes on its diff, so a fix that could weaken a check never runs at
