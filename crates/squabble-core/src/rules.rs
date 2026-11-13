@@ -51,7 +51,7 @@ use RuleClass::{Act, Fix, Noise, Owner, Refer};
 /// here.
 const CATALOGUE_TSV: &str = include_str!("../data/first-line-rules.tsv");
 
-/// The 45 catalogue rows, in ADR 0004 order.
+/// The 46 catalogue rows, in ADR 0004 order.
 ///
 /// The data file ships inside the crate, so a malformed row is a defect in
 /// this crate that a caller cannot repair. The catalogue never loads short:
@@ -151,16 +151,29 @@ impl LogCtx<'_> {
         self.has("API rate limit exceeded")
     }
 
-    /// A host name that contains a dot right after `marker`, as in
-    /// `Could not resolve host: git.sr.ht`. A name without a dot (a service
-    /// container, `localhost`) is a configuration error, not a transient one.
-    fn dotted_name_after(&self, marker: &str) -> bool {
-        self.log.match_indices(marker).any(|(at, _)| {
+    /// The host name right after `marker`, taken from the rest of that line
+    /// only (`Could not resolve host: git.sr.ht`), with trailing punctuation
+    /// removed. It is empty when the line ends after the marker, so a name on
+    /// the next log line is never read.
+    fn host_names_after<'s>(&'s self, marker: &'s str) -> impl Iterator<Item = &'s str> + 's {
+        self.log.match_indices(marker).map(move |(at, _)| {
             let rest = &self.log[at + marker.len()..];
-            let name = rest.split_whitespace().next().unwrap_or("");
+            let line = rest.lines().next().unwrap_or("");
+            let name = line.split_whitespace().next().unwrap_or("");
             name.trim_end_matches(|c: char| !c.is_ascii_alphanumeric())
-                .contains('.')
         })
+    }
+
+    /// A host name that contains a dot after `marker`. A name without a dot
+    /// (a service container, `localhost`) is a configuration error, not a
+    /// transient one.
+    fn dotted_name_after(&self, marker: &str) -> bool {
+        self.host_names_after(marker).any(|n| n.contains('.'))
+    }
+
+    /// A host error after `marker` whose name has no dot, or is missing.
+    fn undotted_name_after(&self, marker: &str) -> bool {
+        self.host_names_after(marker).any(|n| !n.contains('.'))
     }
 
     /// A status of 500 to 599 right after `marker`, as in `gh: HTTP 502`.
@@ -204,6 +217,12 @@ static LOG_MATCHERS: &[LogMatcher] = &[
             || c.http_5xx_after("returned error: ")
             || c.dotted_name_after("Could not resolve host: ")
             || c.dotted_name_after("Failed to connect to ")
+    }),
+    // A host error whose name has no dot is a referral, never a re-run and
+    // never silence (no-silent-skip).
+    ("SQ-RUN-05", |c| {
+        c.undotted_name_after("Could not resolve host: ")
+            || c.undotted_name_after("Failed to connect to ")
     }),
     ("SQ-RUN-04", |c| {
         c.has("ambiguous argument") && c.has("unknown revision or path not in the working tree")
@@ -919,18 +938,18 @@ mod tests {
     #[test]
     fn shipped_catalogue_file_parses() {
         let parsed = parse_catalogue(CATALOGUE_TSV).expect("the shipped data file is well formed");
-        assert_eq!(parsed.len(), 45);
+        assert_eq!(parsed.len(), 46);
     }
 
     #[test]
     fn catalogue_shape() {
-        assert_eq!(CATALOGUE.len(), 45);
+        assert_eq!(CATALOGUE.len(), 46);
         let uniq: HashSet<_> = CATALOGUE.iter().map(|r| r.id).collect();
-        assert_eq!(uniq.len(), 45);
+        assert_eq!(uniq.len(), 46);
         let n = |c| CATALOGUE.iter().filter(|r| r.class == c).count();
         assert_eq!(n(Fix), 20);
         assert_eq!(n(Act), 4);
-        assert_eq!(n(Refer), 2);
+        assert_eq!(n(Refer), 3);
         assert_eq!(n(Owner), 16);
         assert_eq!(n(Noise), 3);
         assert!(rule("SQ-OWN-04").is_some());
@@ -949,7 +968,7 @@ mod tests {
             .filter(|r| r.class == Refer)
             .map(|r| r.id)
             .collect();
-        assert_eq!(refs, vec!["SQ-REF-06", "SQ-REF-08"]);
+        assert_eq!(refs, vec!["SQ-RUN-05", "SQ-REF-06", "SQ-REF-08"]);
         assert!(rule("SQ-XXX-99").is_none());
     }
 
@@ -1056,10 +1075,27 @@ mod tests {
             "Failed to connect to localhost port 5432",
             "Could not resolve host",
             "Could not resolve host: ",
+            // The name must come from the error line, not the next one.
+            "Could not resolve host: \n./scripts/check.sh: configuration error",
+            "Failed to connect to\nexample.com says no",
         ] {
             assert!(!ids(log, None).contains(&"SQ-RUN-03"), "{log}");
         }
         assert!(ids("Could not resolve host: api.github.com.", None).contains(&"SQ-RUN-03"));
+        assert!(!ids("Could not resolve host: api.github.com.", None).contains(&"SQ-RUN-05"));
+    }
+
+    #[test]
+    fn undotted_host_errors_are_referred_not_silent() {
+        for log in [
+            "Could not resolve host: db",
+            "curl: (6) Could not resolve host: localhost",
+            "Failed to connect to localhost port 5432",
+            "Could not resolve host: \n./scripts/check.sh: configuration error",
+        ] {
+            assert_eq!(ids(log, None), vec!["SQ-RUN-05"], "{log}");
+        }
+        assert_eq!(rule("SQ-RUN-05").unwrap().class, Refer);
     }
 
     #[test]

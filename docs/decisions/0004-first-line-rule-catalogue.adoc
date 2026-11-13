@@ -184,6 +184,12 @@ holds, or when its check does not pass on the PR head.
 | The re-run passes and the scan covers more than 0 commits.
 | It fails twice on the same commit: refer, with the suggestion `fetch-depth: 0` on the scan checkout.
 
+| SQ-RUN-05 | REFER
+| A step fails with `Could not resolve host` or `Failed to connect to` for a host name that has no dot (a service container, `localhost`) or no name on the error line.
+| Refer to Hypatia with the log line and the step: this is a configuration error (the service is not running or is named wrongly), so a re-run cannot fix it.
+| (owner)
+| Always a referral: the name that does resolve in the workflow is Hypatia's to confirm.
+
 | SQ-CODE-01 | FIX
 | A Rust readiness or integration test cannot find its binary (`failed to run …/target/debug/build/…: No such file`).
 | Use `PathBuf::from(env!("CARGO_BIN_EXE_<bin>"))`.
@@ -386,8 +392,8 @@ base).
 
 == Consequences
 
-* 24 rules are first-line (20 `FIX`, 4 `ACT`), 2 are referrals, 16 are
-  owner-only and 3 are noise; 45 in all. Every rule names its check and its
+* 24 rules are first-line (20 `FIX`, 4 `ACT`), 3 are referrals, 16 are
+  owner-only and 3 are noise; 46 in all. Every rule names its check and its
   referral condition.
 * A fix that changes code (`SQ-CODE-nn`) is first-line only when the code-fix
   guard passes on its diff, so a fix that could weaken a check never runs at
