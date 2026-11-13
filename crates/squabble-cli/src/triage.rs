@@ -9,8 +9,8 @@
 
 use serde::Serialize;
 use squabble_core::rules::{
-    self, decide, match_log, referral_message, self_sha_lock_records, unpinned_setup_bun, Decision,
-    GuardInput, Referral, RuleClass,
+    self, always_after_cancel, decide, match_log, referral_message, self_sha_lock_records,
+    unpinned_setup_bun, Decision, GuardInput, Referral, RuleClass,
 };
 use std::process::ExitCode;
 
@@ -107,10 +107,21 @@ fn run_inner(args: &[String]) -> Result<(), String> {
         }
     }
     if let Some(p) = &workflow {
-        if unpinned_setup_bun(&read(p)?) {
+        let text = read(p)?;
+        if unpinned_setup_bun(&text) {
             add(
                 "SQ-PIN-03",
                 Some("setup-bun step without an exact bun-version".into()),
+            );
+        }
+        let jobs = always_after_cancel(&text);
+        if !jobs.is_empty() {
+            add(
+                "SQ-GEN-03",
+                Some(format!(
+                    "if: always() after needs, downloading an artifact: {}",
+                    jobs.join(", ")
+                )),
             );
         }
     }
