@@ -338,7 +338,7 @@ squabbler run). Every move *satisfies* the gate:
   `squabble zero-job` reports attribution per observed zero-job run. Diagnosis
   and sequencing only — neither move makes anything green.
 
-Red→green *code* fixes are deliberately *out of scope* for v0.1: "fixing" a
+Red→green *code* fixes were out of scope for v0.1: "fixing" a
 failing test by weakening it would violate squabble ≠ bypass.
 
 == Licensing

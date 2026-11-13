@@ -64,7 +64,7 @@ regenerate when `nickel` is available.)
 
 - **Identity** — uuid `02d29e41-94bc-80c5-b741-09a9d39b858c`; clade `UNASSIGNED` (pending gv-clade-index ratification); born 2026-06-29; forge `hyperpolymath/cicd-squabbler`.
 - **IS** — A standalone, per-repo CI/CD **fighter**: drives a stuck branch-protection gate to a *legitimately-satisfied* green by satisfying its required checks — Rust fight engine + a SPARK-proved gate invariant. Operationalises Doctrine #5 ("squabble, don't bypass") as a detachable tool.
-- **IS-NOT** — a bypass tool · hypatia-dependent · a red→green code-fixer (deferred past v0.1) · a merge-commit lander (linear history only).
+- **IS-NOT** — a bypass tool · hypatia-dependent · a merge-commit lander (linear history only).
 - **Where it sits** — pipeline position **CI/CD tooling**; standalone (operationalises a doctrine, not a sibling of a larger system); coordination = `standards`.
 - **Constraints here** (AGENTIC) — squabble ≠ bypass (never admin-override / drop a required context); fail-closed; evidence-per-step; no-silent-skip. Never: banned langs (above), secrets, state files in repo root, AGPL.
 - **Golden path** (ANCHOR) — `just test && just quality` → Core tests pass; Quality gates pass; No unresolved critical security findings.
