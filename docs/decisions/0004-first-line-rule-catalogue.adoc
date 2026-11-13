@@ -173,10 +173,10 @@ holds, or when its check does not pass on the PR head.
 | Merge conflict, or still blocked on an up-to-date head.
 
 | SQ-RUN-03 | ACT
-| A step fails on a transient host or API error: `gh: HTTP 5xx` (hypatia run 43358533401: `gh: HTTP 502` on an owner-wide GraphQL query), `gh: Server Error (HTTP 5xx)` (standards run 43446385277: `gh: Server Error (HTTP 502)` while the coverage job read the workflow catalogue), a git remote answering `returned error: 5xx`, `Could not resolve host`, or `Failed to connect to`.
+| A step fails on a transient host or API error: `gh: HTTP 5xx` (hypatia run 43358533401: `gh: HTTP 502` on an owner-wide GraphQL query), `gh: Server Error (HTTP 5xx)` (standards run 43446385277: `gh: Server Error (HTTP 502)` while the coverage job read the workflow catalogue), a git remote answering `returned error: 5xx`, or `Could not resolve host` or `Failed to connect to` for a host name that contains a dot.
 | Re-run the failed job once, only if that commit is still the head.
 | The re-run passes.
-| It fails twice on the same commit, or the status is 401 or 403 (a token problem is SQ-OWN-09; a rate limit is SQ-RUN-01).
+| It fails twice on the same commit, the status is 401 or 403 (a token problem is SQ-OWN-09; a rate limit is SQ-RUN-01), or the host name has no dot: a service container or `localhost` is a configuration error that a re-run cannot fix.
 
 | SQ-RUN-04 | ACT
 | gitleaks fails with `fatal: ambiguous argument '<sha>^..<sha>': unknown revision or path not in the working tree` because a shallow checkout lacks the range's base commit; trufflehog reports `commits: 0` for the same range (hypatia run 43158586027).
@@ -311,7 +311,7 @@ holds, or when its check does not pass on the PR head.
 | (owner)
 
 | SQ-OWN-16 | OWNER
-| A workflow force- or mirror-pushes to a forge, gated on a `*_MIRROR_ENABLED` variable, with no check of the source repository's visibility anywhere in the file (Hypatia WF030, found statically). Standards `mirror-reusable.yml` gates the job at line 93 and runs `git push --force gitlab main` at line 144, with the same shape per forge (bitbucket 196, codeberg 248); `github-backup-mirror-reusable.yml` too. It fires on nothing in hypatia, gitbot-fleet or this repository.
+| A workflow force- or mirror-pushes to a forge, gated on a `*_MIRROR_ENABLED` variable, as Hypatia WF030 defines it (found statically; the definition, including which visibility tests count as a guard, is Hypatia's and is not restated here). Standards `mirror-reusable.yml` gates the job at line 93 and runs `git push --force gitlab main` at line 144, with the same shape per forge (bitbucket 196, codeberg 248); `github-backup-mirror-reusable.yml` too. It fires on nothing in hypatia, gitbot-fleet or this repository.
 | Report: the owner decides the guard (refuse, or skip loudly, when the source is private and the forge copy is not confirmed private; escalate when the forge visibility cannot be read). The squabbler never edits a mirror workflow, never pushes to a forge and never changes a visibility setting. Hypatia detects and refers it; this row only reports.
 | (owner)
 | (owner)

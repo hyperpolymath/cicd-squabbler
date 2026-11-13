@@ -46,50 +46,71 @@ pub fn run(args: &[String]) -> ExitCode {
     }
 }
 
-fn run_inner(args: &[String]) -> Result<(), String> {
-    let (mut log, mut step, mut lock, mut callers, mut workflow) = (None, None, None, None, None);
-    let mut json = false;
+/// What the command line asked for.
+#[derive(Default)]
+struct Args {
+    log: Option<String>,
+    step: Option<String>,
+    lock: Option<String>,
+    callers: Option<String>,
+    workflow: Option<String>,
+    json: bool,
+}
+
+fn parse_args(args: &[String]) -> Result<Args, String> {
+    let mut a = Args::default();
     let mut it = args.iter();
-    while let Some(a) = it.next() {
+    while let Some(arg) = it.next() {
         let mut val = |name: &str| it.next().cloned().ok_or(format!("{name} needs a value"));
-        match a.as_str() {
-            "--log" => log = Some(val("--log")?),
-            "--step" => step = Some(val("--step")?),
-            "--lock" => lock = Some(val("--lock")?),
-            "--callers" => callers = Some(val("--callers")?),
-            "--workflow" => workflow = Some(val("--workflow")?),
-            "--json" => json = true,
+        match arg.as_str() {
+            "--log" => a.log = Some(val("--log")?),
+            "--step" => a.step = Some(val("--step")?),
+            "--lock" => a.lock = Some(val("--lock")?),
+            "--callers" => a.callers = Some(val("--callers")?),
+            "--workflow" => a.workflow = Some(val("--workflow")?),
+            "--json" => a.json = true,
             other => return Err(format!("unknown argument `{other}`")),
         }
     }
-    if log.is_none() && lock.is_none() && workflow.is_none() {
+    if a.log.is_none() && a.lock.is_none() && a.workflow.is_none() {
         return Err("give at least one of --log, --lock, --workflow".into());
     }
-    if step.is_some() && log.is_none() {
+    if a.step.is_some() && a.log.is_none() {
         return Err("--step needs --log".into());
     }
-    if callers.is_some() && lock.is_none() {
+    if a.callers.is_some() && a.lock.is_none() {
         return Err("--callers needs --lock".into());
     }
+    Ok(a)
+}
 
-    // (rule id, detail) in discovery order, one row per rule id.
-    let mut signature: Option<String> = None;
-    let mut found: Vec<(&'static str, Option<String>)> = Vec::new();
-    let mut add = |id: &'static str, detail: Option<String>| {
-        if !found.iter().any(|(i, _)| *i == id) {
-            found.push((id, detail));
-        }
-    };
-    if let Some(p) = &log {
-        let text = read(p)?;
-        signature = Some(tail_lines(&text, 3));
-        for id in match_log(&text, step.as_deref()) {
-            add(id, None);
+/// The rules found, in discovery order, one entry per rule id, each with an
+/// optional detail line; and the last lines of the log, for a referral.
+#[derive(Default)]
+struct Findings {
+    found: Vec<(&'static str, Option<String>)>,
+    signature: Option<String>,
+}
+
+impl Findings {
+    fn add(&mut self, id: &'static str, detail: Option<String>) {
+        if !self.found.iter().any(|(i, _)| *i == id) {
+            self.found.push((id, detail));
         }
     }
-    if let Some(p) = &lock {
-        let text = read(p)?;
-        let callers: Vec<String> = match &callers {
+
+    fn scan_log(&mut self, path: &str, step: Option<&str>) -> Result<(), String> {
+        let text = read(path)?;
+        self.signature = Some(tail_lines(&text, 3));
+        for id in match_log(&text, step) {
+            self.add(id, None);
+        }
+        Ok(())
+    }
+
+    fn scan_lock(&mut self, path: &str, callers_path: Option<&str>) -> Result<(), String> {
+        let text = read(path)?;
+        let callers: Vec<String> = match callers_path {
             Some(c) => read(c)?
                 .lines()
                 .map(str::trim)
@@ -100,23 +121,25 @@ fn run_inner(args: &[String]) -> Result<(), String> {
         };
         let flagged = self_sha_lock_records(&text, &callers);
         if !flagged.is_empty() {
-            add(
+            self.add(
                 "SQ-LOCK-01",
                 Some(format!("self-SHA records: {}", flagged.join(", "))),
             );
         }
+        Ok(())
     }
-    if let Some(p) = &workflow {
-        let text = read(p)?;
+
+    fn scan_workflow(&mut self, path: &str) -> Result<(), String> {
+        let text = read(path)?;
         if unpinned_setup_bun(&text) {
-            add(
+            self.add(
                 "SQ-PIN-03",
                 Some("setup-bun step without an exact bun-version".into()),
             );
         }
         let jobs = always_after_cancel(&text);
         if !jobs.is_empty() {
-            add(
+            self.add(
                 "SQ-GEN-03",
                 Some(format!(
                     "if: always() after needs, downloading an artifact: {}",
@@ -124,32 +147,37 @@ fn run_inner(args: &[String]) -> Result<(), String> {
                 )),
             );
         }
+        Ok(())
     }
+}
 
+/// One row per catalogue rule found, with its guard decision and, for a
+/// referral, the message Hypatia would receive.
+fn build_rows(findings: Findings, step: Option<&str>) -> Vec<Row> {
     let guards = GuardInput {
         autofix: std::env::var("ESTATE_AUTOFIX").ok(),
         ..GuardInput::default()
     };
-    let rows: Vec<Row> = found
+    let Findings { found, signature } = findings;
+    found
         .into_iter()
         .filter_map(|(id, detail)| {
             let rule = rules::rule(id)?;
             let decision = decide(rule, &guards);
-            let referral = match (&decision, rule.class) {
-                (Decision::Refer { .. }, _) => Some(referral_message(
+            let referral = matches!(decision, Decision::Refer { .. }).then(|| {
+                referral_message(
                     &Referral {
                         rule_id: rule.id.to_string(),
                         problem: rule.summary.to_string(),
                         fix: Some(rule.fix.to_string()),
                         risk: rule.refer_when.to_string(),
-                        step_name: step.clone(),
+                        step_name: step.map(String::from),
                         signature: signature.clone(),
                         ..Referral::default()
                     },
                     false,
-                )),
-                _ => None,
-            };
+                )
+            });
             Some(Row {
                 rule: id,
                 class: rule.class,
@@ -158,17 +186,19 @@ fn run_inner(args: &[String]) -> Result<(), String> {
                 referral,
             })
         })
-        .collect();
+        .collect()
+}
 
+fn print_rows(rows: &[Row], json: bool) -> Result<(), String> {
     if json {
-        let s = serde_json::to_string_pretty(&rows).map_err(|e| e.to_string())?;
+        let s = serde_json::to_string_pretty(rows).map_err(|e| e.to_string())?;
         println!("{s}");
         return Ok(());
     }
     if rows.is_empty() {
         println!("no catalogue rule matched");
     }
-    for r in &rows {
+    for r in rows {
         println!("{}\t{:?}\t{:?}", r.rule, r.class, r.decision);
         if let Some(d) = &r.detail {
             println!("  {d}");
@@ -180,4 +210,20 @@ fn run_inner(args: &[String]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn run_inner(args: &[String]) -> Result<(), String> {
+    let a = parse_args(args)?;
+    let mut findings = Findings::default();
+    if let Some(p) = &a.log {
+        findings.scan_log(p, a.step.as_deref())?;
+    }
+    if let Some(p) = &a.lock {
+        findings.scan_lock(p, a.callers.as_deref())?;
+    }
+    if let Some(p) = &a.workflow {
+        findings.scan_workflow(p)?;
+    }
+    let rows = build_rows(findings, a.step.as_deref());
+    print_rows(&rows, a.json)
 }

@@ -151,6 +151,18 @@ impl LogCtx<'_> {
         self.has("API rate limit exceeded")
     }
 
+    /// A host name that contains a dot right after `marker`, as in
+    /// `Could not resolve host: git.sr.ht`. A name without a dot (a service
+    /// container, `localhost`) is a configuration error, not a transient one.
+    fn dotted_name_after(&self, marker: &str) -> bool {
+        self.log.match_indices(marker).any(|(at, _)| {
+            let rest = &self.log[at + marker.len()..];
+            let name = rest.split_whitespace().next().unwrap_or("");
+            name.trim_end_matches(|c: char| !c.is_ascii_alphanumeric())
+                .contains('.')
+        })
+    }
+
     /// A status of 500 to 599 right after `marker`, as in `gh: HTTP 502`.
     fn http_5xx_after(&self, marker: &str) -> bool {
         let bytes = self.log.as_bytes();
@@ -190,8 +202,8 @@ static LOG_MATCHERS: &[LogMatcher] = &[
         c.http_5xx_after("gh: HTTP ")
             || c.http_5xx_after("gh: Server Error (HTTP ")
             || c.http_5xx_after("returned error: ")
-            || c.has("Could not resolve host")
-            || c.has("Failed to connect to")
+            || c.dotted_name_after("Could not resolve host: ")
+            || c.dotted_name_after("Failed to connect to ")
     }),
     ("SQ-RUN-04", |c| {
         c.has("ambiguous argument") && c.has("unknown revision or path not in the working tree")
@@ -291,41 +303,48 @@ pub fn self_sha_lock_records(lock_yaml: &str, job_level_callers: &[String]) -> V
             continue;
         }
         let ind = indent_of(line);
-        if let Some((_, key_ind)) = &current {
-            if ind <= *key_ind {
-                current = None;
-            }
+        if current.as_ref().is_some_and(|(_, key_ind)| ind <= *key_ind) {
+            current = None;
         }
-        if current.is_none() && !t.starts_with('-') {
-            if let Some(k) = t.strip_suffix(':') {
-                let k = k.trim().trim_matches(|c| c == '\'' || c == '"');
-                if let Some((repo, sha)) = k.split_once('@') {
-                    if repo.contains('/') && is_sha40(sha) {
-                        current = Some((
-                            format!("{}@{}", repo.to_ascii_lowercase(), sha.to_ascii_lowercase()),
-                            ind,
-                        ));
-                    }
-                }
-            }
-            continue;
-        }
-        if let Some((key, key_ind)) = &current {
+        match &current {
+            None => current = self_sha_record_key(t).map(|key| (key, ind)),
             // Direct children only: a nested `uses:` list never carries `ref:`.
-            if ind > *key_ind {
-                if let Some(v) = t.strip_prefix("ref:") {
-                    let sha = key.split_once('@').map(|(_, s)| s).unwrap_or("");
-                    if unquote(v).eq_ignore_ascii_case(sha)
-                        && !callers.contains(key)
-                        && !flagged.contains(key)
-                    {
-                        flagged.push(key.clone());
-                    }
-                }
+            Some((key, key_ind)) if ind > *key_ind => {
+                flag_if_self_ref(key, t, &callers, &mut flagged);
             }
+            Some(_) => {}
         }
     }
     flagged
+}
+
+/// The lowercased `owner/repo@<40-hex>` key of a lock record opened by this
+/// line, or None for any other line (a list item, or a key of another shape).
+fn self_sha_record_key(trimmed: &str) -> Option<String> {
+    if trimmed.starts_with('-') {
+        return None;
+    }
+    let key = trimmed
+        .strip_suffix(':')?
+        .trim()
+        .trim_matches(|c| c == '\'' || c == '"');
+    let (repo, sha) = key.split_once('@')?;
+    (repo.contains('/') && is_sha40(sha))
+        .then(|| format!("{}@{}", repo.to_ascii_lowercase(), sha.to_ascii_lowercase()))
+}
+
+/// Record KEY in `flagged` when this `ref:` line repeats the SHA in the key
+/// and no job-level reusable caller names the key.
+fn flag_if_self_ref(key: &str, trimmed: &str, callers: &[String], flagged: &mut Vec<String>) {
+    let Some(value) = trimmed.strip_prefix("ref:") else {
+        return;
+    };
+    let sha = key.split_once('@').map_or("", |(_, s)| s);
+    let is_caller = callers.iter().any(|c| c == key);
+    let already = flagged.iter().any(|f| f == key);
+    if unquote(value).eq_ignore_ascii_case(sha) && !is_caller && !already {
+        flagged.push(key.to_string());
+    }
 }
 
 /// A job in a workflow file: its id and the lines under it.
@@ -415,72 +434,84 @@ fn runs_after_cancel_and_downloads(job: &JobBlock<'_>) -> bool {
 /// is missing, `latest`, `canary`, a range, or which uses `bun-version-file`.
 pub fn unpinned_setup_bun(workflow_yaml: &str) -> bool {
     let lines: Vec<&str> = workflow_yaml.lines().collect();
-    for (i, line) in lines.iter().enumerate() {
-        let t = line.trim_start();
-        if t.starts_with('#') {
-            continue;
-        }
-        let (starts_dash, body) = match t.strip_prefix("- ") {
-            Some(b) => (true, b.trim_start()),
-            None => (false, t),
+    lines.iter().enumerate().any(|(i, line)| {
+        let Some((key_ind, opens_item)) = setup_bun_uses(line) else {
+            return false;
         };
-        if !body.starts_with("uses:") || !body.contains("oven-sh/setup-bun@") {
-            continue;
-        }
-        let key_ind = indent_of(line) + if starts_dash { t.len() - body.len() } else { 0 };
-        let mut start = i;
-        if !starts_dash {
-            while start > 0 {
-                let p = lines[start - 1];
-                if p.trim().is_empty() {
-                    start -= 1;
-                    continue;
-                }
-                if indent_of(p) < key_ind {
-                    if p.trim_start().starts_with("- ") {
-                        start -= 1;
-                    }
-                    break;
-                }
+        let start = if opens_item {
+            i
+        } else {
+            step_start(&lines, i, key_ind)
+        };
+        let end = step_end(&lines, i, key_ind);
+        setup_bun_step_unpinned(&lines[start..end])
+    })
+}
+
+/// For a `uses: oven-sh/setup-bun@…` line: the indent of its keys and whether
+/// the line opens a `- ` list item. None for any other line.
+fn setup_bun_uses(line: &str) -> Option<(usize, bool)> {
+    let t = line.trim_start();
+    if t.starts_with('#') {
+        return None;
+    }
+    let (opens_item, body) = match t.strip_prefix("- ") {
+        Some(b) => (true, b.trim_start()),
+        None => (false, t),
+    };
+    if !body.starts_with("uses:") || !body.contains("oven-sh/setup-bun@") {
+        return None;
+    }
+    let key_ind = indent_of(line) + if opens_item { t.len() - body.len() } else { 0 };
+    Some((key_ind, opens_item))
+}
+
+/// First line of the step that holds line `i`, walking up past blank lines
+/// and sibling keys to the `- ` that opens it.
+fn step_start(lines: &[&str], i: usize, key_ind: usize) -> usize {
+    let mut start = i;
+    while start > 0 {
+        let prev = lines[start - 1];
+        if !prev.trim().is_empty() && indent_of(prev) < key_ind {
+            if prev.trim_start().starts_with("- ") {
                 start -= 1;
             }
+            break;
         }
-        let mut end = i + 1;
-        while end < lines.len() {
-            let n = lines[end];
-            if !n.trim().is_empty() && indent_of(n) < key_ind {
-                break;
-            }
-            end += 1;
-        }
-        let mut version: Option<&str> = None;
-        let mut file = false;
-        for l in &lines[start..end] {
-            let lt = l.trim_start();
-            let lt = lt.strip_prefix("- ").unwrap_or(lt);
-            if let Some(v) = lt.strip_prefix("bun-version-file:") {
-                let _ = v;
-                file = true;
-            } else if let Some(v) = lt.strip_prefix("bun-version:") {
-                version = Some(unquote(v));
-            }
-        }
-        let bad = file
-            || match version {
-                None => true,
-                Some(v) => {
-                    let lv = v.to_ascii_lowercase();
-                    lv.is_empty()
-                        || lv == "latest"
-                        || lv == "canary"
-                        || lv.contains(['^', '~', '>', '<', '*', 'x'])
-                }
-            };
-        if bad {
-            return true;
+        start -= 1;
+    }
+    start
+}
+
+/// One past the last line of the step that holds line `i`.
+fn step_end(lines: &[&str], i: usize, key_ind: usize) -> usize {
+    let mut end = i + 1;
+    while end < lines.len() && (lines[end].trim().is_empty() || indent_of(lines[end]) >= key_ind) {
+        end += 1;
+    }
+    end
+}
+
+/// True when the step has `bun-version-file`, no `bun-version`, or a
+/// `bun-version` that is empty, `latest`, `canary` or a range.
+fn setup_bun_step_unpinned(step: &[&str]) -> bool {
+    let mut version: Option<&str> = None;
+    let mut uses_file = false;
+    for l in step {
+        let lt = l.trim_start();
+        let lt = lt.strip_prefix("- ").unwrap_or(lt);
+        if lt.starts_with("bun-version-file:") {
+            uses_file = true;
+        } else if let Some(v) = lt.strip_prefix("bun-version:") {
+            version = Some(unquote(v));
         }
     }
-    false
+    uses_file || version.is_none_or(bun_version_is_loose)
+}
+
+fn bun_version_is_loose(version: &str) -> bool {
+    let lv = version.to_ascii_lowercase();
+    lv.is_empty() || lv == "latest" || lv == "canary" || lv.contains(['^', '~', '>', '<', '*', 'x'])
 }
 
 /// Facts the guards read. The caller gathers them; nothing here fetches.
@@ -572,7 +603,7 @@ pub fn decide(rule: &Rule, g: &GuardInput) -> Decision {
 
 fn first_number(s: &str) -> Option<f64> {
     let b = s.as_bytes();
-    let start = b.iter().position(|c| c.is_ascii_digit())?;
+    let start = b.iter().position(u8::is_ascii_digit)?;
     let mut end = start;
     while end < b.len() && (b[end].is_ascii_digit() || b[end] == b'.') {
         end += 1;
@@ -607,89 +638,120 @@ fn is_threshold_line(l: &str) -> bool {
 /// suppression or a baseline entry. Conservative by design: a false `Err`
 /// becomes a referral, a false `Ok` would let a weakened check through.
 pub fn code_fix_is_safe(diff: &str) -> Result<(), String> {
-    let mut file = String::new();
-    let mut old_file = String::new();
-    let mut removed_thr: Vec<(String, f64)> = Vec::new();
-    let mut added_thr: Vec<(String, f64)> = Vec::new();
-
-    fn lowered(removed: &[(String, f64)], added: &[(String, f64)]) -> bool {
-        added
-            .iter()
-            .any(|(k, n)| removed.iter().any(|(rk, rn)| rk == k && n < rn))
-    }
-
+    let mut scan = DiffScan::default();
     for line in diff.lines() {
+        if scan.file_header(line)? {
+            continue;
+        }
+        if line.starts_with("@@") {
+            scan.end_hunk()?;
+        } else if let Some(body) = line.strip_prefix('-') {
+            scan.removed_line(body)?;
+        } else if let Some(body) = line.strip_prefix('+') {
+            scan.added_line(body)?;
+        }
+    }
+    scan.end_hunk()
+}
+
+const LOWERED_THRESHOLD: &str = "the diff lowers a threshold, minimum, maximum or coverage value";
+
+/// Added lines that weaken a check, with the reason each gives.
+const BANNED_ADDITIONS: &[(&str, &str)] = &[
+    ("#[ignore", "adds #[ignore]"),
+    ("skip", "adds a skip"),
+    ("xit(", "adds xit("),
+    ("continue-on-error: true", "adds continue-on-error: true"),
+    ("|| true", "adds `|| true`"),
+    ("hypatia: allow", "adds a `hypatia: allow` suppression"),
+    ("nosemgrep", "adds a nosemgrep suppression"),
+    ("#[allow(", "adds an #[allow(...)] suppression"),
+    ("#![allow(", "adds an #![allow(...)] suppression"),
+];
+
+/// What the code-fix guard has seen so far in a unified diff: the file being
+/// edited, the file it replaced, and the threshold lines of the current hunk.
+#[derive(Default)]
+struct DiffScan {
+    file: String,
+    old_file: String,
+    removed_thr: Vec<(String, f64)>,
+    added_thr: Vec<(String, f64)>,
+}
+
+impl DiffScan {
+    /// Read a `---` or `+++` file header. `Ok(true)` when the line was one;
+    /// `Err` when the new side is /dev/null for a test file (a deletion).
+    fn file_header(&mut self, line: &str) -> Result<bool, String> {
         if let Some(p) = line.strip_prefix("--- ") {
             if line.starts_with("--- a/") || line == "--- /dev/null" {
-                old_file = p.strip_prefix("a/").unwrap_or(p).to_string();
-                continue;
+                self.old_file = p.strip_prefix("a/").unwrap_or(p).to_string();
+                return Ok(true);
             }
         }
         if let Some(p) = line.strip_prefix("+++ ") {
             if line.starts_with("+++ b/") || line == "+++ /dev/null" {
-                if p == "/dev/null" {
-                    if is_test_path(&old_file) {
-                        return Err(format!("the diff deletes the test file {old_file}"));
-                    }
-                    file.clear();
+                if p != "/dev/null" {
+                    self.file = p.strip_prefix("b/").unwrap_or(p).to_string();
+                } else if is_test_path(&self.old_file) {
+                    return Err(format!("the diff deletes the test file {}", self.old_file));
                 } else {
-                    file = p.strip_prefix("b/").unwrap_or(p).to_string();
+                    self.file.clear();
                 }
-                continue;
+                return Ok(true);
             }
         }
-        if line.starts_with("@@") {
-            if lowered(&removed_thr, &added_thr) {
-                return Err(
-                    "the diff lowers a threshold, minimum, maximum or coverage value".into(),
-                );
-            }
-            removed_thr.clear();
-            added_thr.clear();
-            continue;
-        }
-        if let Some(body) = line.strip_prefix('-') {
-            if body.contains("assert") {
-                return Err("the diff removes a line containing `assert`".into());
-            }
-            if is_threshold_line(body) {
-                if let Some(n) = first_number(body) {
-                    removed_thr.push((without_digits(body), n));
-                }
-            }
-        } else if let Some(body) = line.strip_prefix('+') {
-            let base = file.rsplit('/').next().unwrap_or("");
-            if base == ".hypatia-baseline.json" || base == ".hypatia-ignore" {
-                return Err(format!("the diff adds a line to {base}"));
-            }
-            let lb = body.to_ascii_lowercase();
-            let banned: &[(&str, &str)] = &[
-                ("#[ignore", "adds #[ignore]"),
-                ("skip", "adds a skip"),
-                ("xit(", "adds xit("),
-                ("continue-on-error: true", "adds continue-on-error: true"),
-                ("|| true", "adds `|| true`"),
-                ("hypatia: allow", "adds a `hypatia: allow` suppression"),
-                ("nosemgrep", "adds a nosemgrep suppression"),
-                ("#[allow(", "adds an #[allow(...)] suppression"),
-                ("#![allow(", "adds an #![allow(...)] suppression"),
-            ];
-            for (pat, why) in banned {
-                if lb.contains(pat) {
-                    return Err(format!("the diff {why}"));
-                }
-            }
-            if is_threshold_line(body) {
-                if let Some(n) = first_number(body) {
-                    added_thr.push((without_digits(body), n));
-                }
-            }
+        Ok(false)
+    }
+
+    /// A threshold lowered within the hunk that just ended is unsafe.
+    fn end_hunk(&mut self) -> Result<(), String> {
+        let lowered = self
+            .added_thr
+            .iter()
+            .any(|(k, n)| self.removed_thr.iter().any(|(rk, rn)| rk == k && n < rn));
+        self.removed_thr.clear();
+        self.added_thr.clear();
+        if lowered {
+            Err(LOWERED_THRESHOLD.into())
+        } else {
+            Ok(())
         }
     }
-    if lowered(&removed_thr, &added_thr) {
-        return Err("the diff lowers a threshold, minimum, maximum or coverage value".into());
+
+    fn removed_line(&mut self, body: &str) -> Result<(), String> {
+        if body.contains("assert") {
+            return Err("the diff removes a line containing `assert`".into());
+        }
+        if let Some(entry) = threshold_entry(body) {
+            self.removed_thr.push(entry);
+        }
+        Ok(())
     }
-    Ok(())
+
+    fn added_line(&mut self, body: &str) -> Result<(), String> {
+        let base = self.file.rsplit('/').next().unwrap_or("");
+        if base == ".hypatia-baseline.json" || base == ".hypatia-ignore" {
+            return Err(format!("the diff adds a line to {base}"));
+        }
+        let lower = body.to_ascii_lowercase();
+        if let Some((_, why)) = BANNED_ADDITIONS.iter().find(|(pat, _)| lower.contains(pat)) {
+            return Err(format!("the diff {why}"));
+        }
+        if let Some(entry) = threshold_entry(body) {
+            self.added_thr.push(entry);
+        }
+        Ok(())
+    }
+}
+
+/// The (digit-free text, value) pair of a threshold, minimum, maximum or
+/// coverage line, or None for any other line.
+fn threshold_entry(body: &str) -> Option<(String, f64)> {
+    if !is_threshold_line(body) {
+        return None;
+    }
+    first_number(body).map(|n| (without_digits(body), n))
 }
 
 /// Everything Hypatia needs to reproduce a referred problem. Absent values
@@ -922,7 +984,8 @@ mod tests {
             // standards run 43446385277, Rust coverage (playbook-to-recipe).
             ("SQ-RUN-03", "gh: Server Error (HTTP 502)"),
             ("SQ-RUN-03", "fatal: unable to access 'https://git.sr.ht/x': The requested URL returned error: 503"),
-            ("SQ-RUN-03", "fatal: unable to access 'https://x/': Could not resolve host: x"),
+            ("SQ-RUN-03", "fatal: unable to access 'https://git.sr.ht/x': Could not resolve host: git.sr.ht"),
+            ("SQ-RUN-03", "curl: (7) Failed to connect to github.com port 443 after 21 ms"),
             (
                 "SQ-RUN-04",
                 "ERR [git] fatal: ambiguous argument '4190136^..bf33aeb': unknown revision or path not in the working tree.",
@@ -983,6 +1046,20 @@ mod tests {
         // The status must follow a known marker; a bare HTTP 599 is not enough.
         assert!(ids("HTTP 599 from somewhere", None).is_empty());
         assert_eq!(ids("gh: HTTP 599", None), vec!["SQ-RUN-03"]);
+    }
+
+    #[test]
+    fn only_dotted_host_names_count_as_transient() {
+        for log in [
+            "Could not resolve host: db",
+            "curl: (6) Could not resolve host: localhost",
+            "Failed to connect to localhost port 5432",
+            "Could not resolve host",
+            "Could not resolve host: ",
+        ] {
+            assert!(!ids(log, None).contains(&"SQ-RUN-03"), "{log}");
+        }
+        assert!(ids("Could not resolve host: api.github.com.", None).contains(&"SQ-RUN-03"));
     }
 
     #[test]
