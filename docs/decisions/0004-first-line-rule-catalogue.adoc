@@ -357,6 +357,13 @@ is not `setup-bun`, only SQ-RUN-01 matches. Agreed with the rule
 reconciliation thread; Hypatia's `api_rate_limit` is advice that defers to
 SQ-PIN-03, then SQ-RUN-01.
 
+SQ-RUN-06 is last in the table, after every owner-only rule: a re-run never
+outranks an owner condition in the same log. A bad token (SQ-OWN-09) that
+leaves the gate unable to read gives `SQ-OWN-09, SQ-RUN-06`, and the caller
+reports to the owner. A second failure of SQ-RUN-06 on the same commit is an
+owner report as well, not a Hypatia referral (`OWNER_AFTER_RERUN` in
+`rules.rs`); every other `ACT` rule refers to Hypatia after its one re-run.
+
 === Mapping to Hypatia's `ci_failure_triage` ids (hypatia#1064)
 
 Under ADR 0003 Hypatia's triage names the cause and the route; every re-run

@@ -224,14 +224,6 @@ static LOG_MATCHERS: &[LogMatcher] = &[
         c.undotted_name_after("Could not resolve host: ")
             || c.undotted_name_after("Failed to connect to ")
     }),
-    // The gate failed closed because it could not read GitHub state. Only the
-    // unread lines match: a DROPPED CLOSURE line alone is a real drop, and
-    // the ones that follow an unread callee are a consequence of it.
-    ("SQ-RUN-06", |c| {
-        c.has("could not read branch rulesets")
-            || c.has("could not read the workflow catalogue")
-            || c.has("(offline with no cache entry, or the API refused)")
-    }),
     ("SQ-RUN-04", |c| {
         c.has("ambiguous argument") && c.has("unknown revision or path not in the working tree")
     }),
@@ -274,6 +266,17 @@ static LOG_MATCHERS: &[LogMatcher] = &[
     }),
     ("SQ-OWN-15", |c| {
         c.has("Not authorized or organization not found")
+    }),
+    // Last of the actionable rules, after every owner-only one: a re-run never
+    // outranks an owner condition in the same log (a bad token, SQ-OWN-09,
+    // that also leaves the gate unable to read). The gate failed closed because
+    // it could not read GitHub state. Only the unread lines match: a DROPPED
+    // CLOSURE line alone is a real drop, and the ones that follow an unread
+    // callee are a consequence of it.
+    ("SQ-RUN-06", |c| {
+        c.has("could not read branch rulesets")
+            || c.has("could not read the workflow catalogue")
+            || c.has("(offline with no cache entry, or the API refused)")
     }),
     ("SQ-NOI-01", |c| c.has("deed=cancelled")),
     ("SQ-NOI-02", |c| {
@@ -574,6 +577,11 @@ pub fn is_code_fix(rule: &Rule) -> bool {
     rule.class == RuleClass::Fix && rule.id.starts_with("SQ-CODE-")
 }
 
+/// Act rules whose catalogue row sends a second failure to the owner, not to
+/// Hypatia: the same unread state twice is a missing permission, which only the
+/// owner can grant (SQ-RUN-06).
+const OWNER_AFTER_RERUN: &[&str] = &["SQ-RUN-06"];
+
 /// Apply the ADR 0004 guards to a rule.
 pub fn decide(rule: &Rule, g: &GuardInput) -> Decision {
     match rule.class {
@@ -595,6 +603,9 @@ pub fn decide(rule: &Rule, g: &GuardInput) -> Decision {
         return Decision::Refer {
             reason: "attempt limit reached: 2 fix attempts on this head".to_string(),
         };
+    }
+    if OWNER_AFTER_RERUN.contains(&rule.id) && g.reruns_of_job >= 1 {
+        return Decision::OwnerReport;
     }
     if rule.class == RuleClass::Act && g.reruns_of_job >= 1 {
         return Decision::Refer {
@@ -1137,6 +1148,14 @@ mod tests {
     }
 
     #[test]
+    fn an_owner_condition_outranks_a_rerun_in_the_same_log() {
+        let log = "gh: Bad credentials (HTTP 401)\n##[error]could not read the workflow catalogue \u{2014} enablement is UNKNOWN, not off";
+        assert_eq!(ids(log, None), vec!["SQ-OWN-09", "SQ-RUN-06"]);
+        // The caller acts on the first: the owner report, never a re-run.
+        assert_eq!(rule(ids(log, None)[0]).unwrap().class, Owner);
+    }
+
+    #[test]
     fn push_refusals_are_told_apart() {
         // The git form is SQ-OWN-04, the gh API form is SQ-OWN-13; neither claims the other.
         let git = "remote: error: GH013: Repository rule violations found for refs/heads/main.";
@@ -1243,6 +1262,35 @@ mod tests {
             autofix: Some("on".into()),
             ..GuardInput::default()
         }
+    }
+
+    #[test]
+    fn a_second_unread_state_failure_goes_to_the_owner_not_hypatia() {
+        let first = GuardInput {
+            reruns_of_job: 0,
+            ..on()
+        };
+        let second = GuardInput {
+            reruns_of_job: 1,
+            ..on()
+        };
+        let unread = rule("SQ-RUN-06").unwrap();
+        assert_eq!(decide(unread, &first), Decision::Apply);
+        assert_eq!(decide(unread, &second), Decision::OwnerReport);
+        // Every other Act rule still refers after its one re-run.
+        let other = rule("SQ-RUN-01").unwrap();
+        assert!(matches!(decide(other, &second), Decision::Refer { .. }));
+        // The kill switch still comes first.
+        assert!(matches!(
+            decide(
+                unread,
+                &GuardInput {
+                    reruns_of_job: 1,
+                    ..GuardInput::default()
+                }
+            ),
+            Decision::ReportOnly { .. }
+        ));
     }
 
     #[test]
