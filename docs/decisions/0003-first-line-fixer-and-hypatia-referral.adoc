@@ -1,0 +1,184 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+= Architecture Decision Record: 0003-first-line-fixer-and-hypatia-referral
+
+== 3. The squabbler is the first line; Hypatia is the referral
+
+Date: 2026-11-13
+
+== Status
+
+Accepted (owner ruling, 2026-11-13). Implementation is staged; see
+<<staging>>. This record amends the v0.1 scope row of `docs/CHARTER.adoc`
+("Gate-deadlock class only, not red→green code fixes"). The "not a bypass" and
+"not hypatia-dependent" lines of IS-NOT are unchanged.
+
+== Context
+
+The owner asked (2026-11-13) for the CI/CD review findings and auto-merge
+blockers seen across the estate to become autofix rules for the future. The
+charter's v0.1 scope deferred red→green fixes because a fixer can "fix" a
+check by weakening a test. Asked where the fixers belong, the owner ruled as
+quoted below. The ruling is recorded verbatim because it is the authority;
+the sections after it map it onto what exists.
+
+[quote, Owner, 2026-11-13]
+____
+squabbler must stand alone for first line work, it should hopefully save a lot
+of unnecessary pressure on hypatia, however, it should escalate to hypatia with
+its heavier neurosymbolics if there is a risk it cannot solve the problem
+safely, if it does this say to the user that the referral has been made to
+hypatia so not done yet, wait for that. if it is unreachable, say it is but
+that this is a job for that. give its thought either way on what the problem
+is, what the solution (if known) is and what the risk is that it is trying to
+avert. If the user decides, with a warning and password override/admin user
+only say overriding but something like I did warn you. as to hypatia, hypatia
+will try to neurosymbolically diagnose, solve symbolically first/as much as
+possible, at the moment anyway, and then pass to neural assist, then
+ultimately will send back with much more detailed information in the form of
+a Bustfile - with the results of detailed analysis, where it got stuck, and
+other things in context of the wider repo, for instance where else it occurs,
+what the source is (bad coding, upstream, syntax error, language does not
+allow for whatever e.g. type safety/memory safety, thing is being used wrongly
+for instance a deprecated thing or recognised problem thing that requires the
+user to change practices, or whatever, and be available on codeowners
+permission to dialogue NOT with hypatia directly but via the local cicd
+squabbler. normally I would expect the squabber's rules to be updated by
+hypatia if it is sensible to directly after an incident, even if that is you
+were definitely right to refer it and for the cicd squabbler to reach out to
+other squabblers to share that information via coordination protocol. Do it
+this way to stop users from interferring with hypatia which is the ultimate
+authority and because rules cross shared by cicd-squabbler in similar repos
+and projects allows for them to understand context and because hypatia will
+have to make final decision based on what it sees across patterns from its
+observation point. the actual work is not done directly by hyaptia, it will be
+carried out by github actions runs from .git-private-farm (or, if it is about
+package updates, etc. via the git-logistics-farm, or if it is a rapidly
+spreading crisis situation by the .git-private-farm with the tsunami-blocker).
+The gitbots are specialists, and once a situation is adequately diagnosed by
+hypatia, hypatia can instruct their actions - only if there is something in
+the bot_directives folder in the repo to say no, you do not touch that or do
+not look there, etc. or, e.g. do not even think of changing the code in this
+thing (say it might be a compliance module, beyond and on the socio- of the
+socio-technical side that it has no insight into the nuances of) will it
+report back, a directive_override message, otherwise it each bot coordinates
+with cicd-squabblers and eventually other third party apps and neural networks
+locally to help with the task with the others going first, and the gitbots
+either handling things other cannot or do not, or breaking down things they
+cannot into things that they can do. if that liability is shifted, and we
+defer to other experts, I think we do much better than competing with semgrep
+or norton or Mythos's judgement
+____
+
+== Decision
+
+=== Roles
+
+[cols="1,3"]
+|===
+| cicd-squabbler
+| First line, standalone, per repo. Diagnoses and fixes what it can fix
+safely. It is the only party a repository user talks to. It still never
+bypasses a gate.
+
+| Hypatia
+| Referral and final authority. Symbolic diagnosis first, neural assist
+second. It answers with a Bustfile and may update squabbler rules after an
+incident. Users never address it directly.
+
+| Execution
+| GitHub Actions runs from `.git-private-farm`; package updates through
+`git-logistics-farm`; a rapidly spreading crisis through `.git-private-farm`
+with the tsunami blocker. Hypatia does not do the work itself.
+
+| gitbots
+| Specialists that Hypatia instructs once a case is diagnosed. Squabblers and
+local third-party apps or networks go first; gitbots take what the others
+cannot or do not do, or break it into parts they can do.
+|===
+
+=== The squabbler's first-line contract
+
+. *Fix only what is safe.* A first-line fix may change CI configuration or
+  code (owner ruling 2026-11-13: "any safe code fix"), and the squabbler
+  judges safety for each fix. A fix is never safe when it would remove or
+  loosen a test assertion, skip or ignore a test, lower a threshold, drop a
+  check, add a baseline or suppression entry, or edit code under a
+  `bot_directives` restriction. Such a case is referred. Every fix must leave
+  the gate's own checks passing on its head.
+. *Refer when safety is at risk.* The squabbler tells the user, in this order:
+  .. "Referred to Hypatia. Not done yet: wait for its answer." (or, when
+     Hypatia is unreachable: "Hypatia is unreachable. This is a job for
+     Hypatia; nothing was changed.");
+  .. its own view of the problem;
+  .. the solution, if it knows one;
+  .. the risk it is trying to avert.
+. *Override.* Only an admin can tell the squabbler to go ahead, after the
+  warning above, and only with an authenticated confirmation (the owner's "password override/admin user only", confirmed by the
+  owner on 2026-11-13 as admin AND authenticated). Codeowner status alone
+  is not enough. The squabbler then says that it is overriding, that
+  it warned against this, and records who overrode it. An override never
+  turns into a gate bypass: the gate's own checks still decide green.
+. *Dialogue.* With codeowner permission, a user can discuss a Bustfile, but
+  only through the local squabbler, which relays to Hypatia.
+. *Learning.* After an incident, Hypatia may update the squabbler's rules,
+  also when the referral was right. The squabbler shares the update with
+  squabblers in similar repositories through the coordination protocol.
+
+=== Hypatia's Bustfile
+
+A Bustfile is the Bust contractile (failure and breakage, not drift) written
+for one referral. It carries: the detailed analysis; where the analysis got
+stuck; where else in the estate the problem occurs; the source class (bad
+coding, upstream, syntax error, a language limit such as type or memory
+safety, wrong use of a deprecated or known-problem thing that needs a change
+of practice, or other); and the fix, if one is known.
+
+=== Directives
+
+A gitbot acts on Hypatia's instruction unless the repository's `bot_directives`
+say "do not touch", "do not look", or "do not change this code" (for example
+a compliance module whose socio-technical nuances a bot cannot see). Then the
+bot does not act, and it reports back with a `directive_override` message.
+
+== What already exists
+
+* `squabble_core::outcome::Escalation` with `ExpertGroup::Hypatia` and
+  `ExpertGroup::HypatiaFleet` is the referral. `squabble-cli/src/boj.rs`
+  routes it to a cartridge and already fails closed on an unreachable expert
+  ("expert unreachable, escalation stands, fail-closed").
+* The outcome contract (GREEN, YELLOW, RED with report) is the user-facing
+  answer; ADR 0002 keeps a vacuous green from passing as a real one.
+* `coordination.k9` is the squabbler's coordination binding.
+
+[[staging]]
+== Staging
+
+. This record and the charter row that it amends.
+. First-line fix rules for the lock and pin class (self-SHA records, blind
+  `[]` entries, stale reusable pins), with the estate guards: the
+  `ESTATE_AUTOFIX` kill switch, an attempt limit, and one open fix PR per
+  repository per check.
+. The referral message (the four parts above) on every escalation report,
+  including the unreachable form.
+. The admin override, with the warning, an authenticated confirmation and
+  the record of who overrode.
+. Bustfile intake and dialogue relay (with Hypatia's side, tracked there).
+. Rule sharing between squabblers over the coordination protocol.
+
+== Consequences
+
+=== Positive
+
+* One user-facing voice per repository; Hypatia stays the authority.
+* Most failures stop at the first line, which keeps load off Hypatia.
+
+=== Negative
+
+* The squabbler now carries fix logic, so each rule needs a test that shows
+  it cannot weaken a check.
+
+=== Neutral
+
+* The squabbler stays usable without Hypatia: with Hypatia unreachable, it
+  still fixes what is safe and refers the rest by saying so.

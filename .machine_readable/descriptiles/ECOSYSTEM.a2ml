@@ -14,6 +14,5 @@ related = ["hyperpolymath/hypatia (the big system squabbler is the detachable al
 not = [
   "A bypass. Never enforce_admins=off, never drop a required context, never admin-merge.",
   "hypatia-dependent. Detachability is the genesis: an intelligent local CI/CD fighter for people who admire the big system but do not want to adopt hypatia.",
-  "A red→green code-fixer (deferred past v0.1 — high risk of 'fixing' by weakening tests).",
   "A merge-commit lander. The arena is {squash, rebase}; linear-history rulesets only."
 ]

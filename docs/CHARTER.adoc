@@ -36,6 +36,10 @@ the gate; a squabble *wins* it.
 | Stack | **Rust + SPARK** (per the standing estate pairing rule).
 | v0.1 scope | **Gate-deadlock class only** — not red→green code fixes (deferred:
 high risk of "fixing" by weakening tests, which would violate squabble≠bypass).
+*Amended 2026-11-13 (owner ruling, `docs/decisions/0003-first-line-fixer-and-hypatia-referral.adoc`):*
+the squabbler is the first-line fixer for what it can fix safely, and refers
+the rest to Hypatia. A fix that would weaken a test or drop a check is still
+never a first-line fix.
 |===
 
 == Architecture (3 Rust crates, one repo)
