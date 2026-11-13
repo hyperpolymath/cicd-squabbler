@@ -276,7 +276,7 @@ holds, or when its check does not pass on the PR head.
 
 | SQ-OWN-10 | OWNER
 | `actions/create-github-app-token` fails with `Private Key is in OpenSSH format` (the 2026-11-13 canary runs 43286728126 and 43288768279 in standards), `error:1E08010C:DECODER routines::unsupported` or `Invalid keyData`.
-| Report: the App private key secret holds a key in the wrong format; the owner generates a new private key for the App and saves the whole file, whose first line is `-----BEGIN RSA PRIVATE KEY-----`. The key is never put in chat.
+| Report: the App private key secret holds a key in the wrong format; the owner generates a new private key for the App and saves the whole file in the RSA PEM form that the App settings page produces (not an OpenSSH key). The key is never put in chat.
 | (owner)
 | (owner)
 
