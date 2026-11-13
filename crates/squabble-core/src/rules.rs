@@ -947,7 +947,7 @@ mod tests {
                 "SQ-OWN-13",
                 "gh: Repository rule violations found\nCode coverage checks require a pull request.\n (HTTP 409)",
             ),
-            ("SQ-OWN-14", "./Project.toml: non-v8 UUID literal (7d8c4f3a-6a31-4f21-9c72-1d496dd2ad67)"),
+            ("SQ-OWN-14", "./Project.toml: non-v8 UUID literal (<uuid>)"),
             (
                 "SQ-OWN-15",
                 "ERROR Fail to load the list of plugins installed on the server: Not authorized or organization not found",
