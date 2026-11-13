@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MPL-2.0
+#
+# Compatibility copy for governance checks that only inspect the repository
+# root. The canonical published RFC 9116 file is www/.well-known/security.txt.
+
+Contact: https://github.com/hyperpolymath/cicd-squabbler/security/advisories/new
+Expires: 2027-11-13T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://github.com/hyperpolymath/cicd-squabbler/.well-known/security.txt
+Policy: https://github.com/hyperpolymath/cicd-squabbler/blob/main/SECURITY.adoc
