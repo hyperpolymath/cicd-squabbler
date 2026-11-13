@@ -99,18 +99,13 @@ cannot or do not do, or break it into parts they can do.
 
 === The squabbler's first-line contract
 
-. *Fix only what is safe.* A first-line fix is mechanical CI configuration
-  repair with a verifiable result. A fix that would weaken a test, drop a
-  check, or edit code under a `bot_directives` restriction is never a
-  first-line fix. Such a case is referred.
-+
-*Provisional reading of "safe" (this record, not the owner's words):* for now
-a first-line fix changes CI configuration only (workflows, `actions.lock`,
-pins, generated files). A change to product or test code goes to Hypatia
-even when it looks safe. Reason: the v0.1 risk still holds (a code "fix" can
-weaken a test), and no rule yet carries a test that proves it cannot. The
-owner may widen this. A rule that widens it needs its own test showing that
-it cannot weaken a check.
+. *Fix only what is safe.* A first-line fix may change CI configuration or
+  code (owner ruling 2026-11-13: "any safe code fix"), and the squabbler
+  judges safety for each fix. A fix is never safe when it would remove or
+  loosen a test assertion, skip or ignore a test, lower a threshold, drop a
+  check, add a baseline or suppression entry, or edit code under a
+  `bot_directives` restriction. Such a case is referred. Every fix must leave
+  the gate's own checks passing on its head.
 . *Refer when safety is at risk.* The squabbler tells the user, in this order:
   .. "Referred to Hypatia. Not done yet: wait for its answer." (or, when
      Hypatia is unreachable: "Hypatia is unreachable. This is a job for
@@ -119,9 +114,9 @@ it cannot weaken a check.
   .. the solution, if it knows one;
   .. the risk it is trying to avert.
 . *Override.* Only an admin can tell the squabbler to go ahead, after the
-  warning above, and only with an authenticated confirmation (the owner's
-  "password override/admin user only"). Codeowner status alone is not
-  enough. The squabbler then says that it is overriding, that
+  warning above, and only with an authenticated confirmation (the owner's "password override/admin user only", confirmed by the
+  owner on 2026-11-13 as admin AND authenticated). Codeowner status alone
+  is not enough. The squabbler then says that it is overriding, that
   it warned against this, and records who overrode it. An override never
   turns into a gate bypass: the gate's own checks still decide green.
 . *Dialogue.* With codeowner permission, a user can discuss a Bustfile, but
