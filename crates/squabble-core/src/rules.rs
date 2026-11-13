@@ -51,7 +51,7 @@ use RuleClass::{Act, Fix, Noise, Owner, Refer};
 /// here.
 const CATALOGUE_TSV: &str = include_str!("../data/first-line-rules.tsv");
 
-/// The 46 catalogue rows, in ADR 0004 order.
+/// The 47 catalogue rows, in ADR 0004 order.
 ///
 /// The data file ships inside the crate, so a malformed row is a defect in
 /// this crate that a caller cannot repair. The catalogue never loads short:
@@ -223,6 +223,14 @@ static LOG_MATCHERS: &[LogMatcher] = &[
     ("SQ-RUN-05", |c| {
         c.undotted_name_after("Could not resolve host: ")
             || c.undotted_name_after("Failed to connect to ")
+    }),
+    // The gate failed closed because it could not read GitHub state. Only the
+    // unread lines match: a DROPPED CLOSURE line alone is a real drop, and
+    // the ones that follow an unread callee are a consequence of it.
+    ("SQ-RUN-06", |c| {
+        c.has("could not read branch rulesets")
+            || c.has("could not read the workflow catalogue")
+            || c.has("(offline with no cache entry, or the API refused)")
     }),
     ("SQ-RUN-04", |c| {
         c.has("ambiguous argument") && c.has("unknown revision or path not in the working tree")
@@ -938,17 +946,17 @@ mod tests {
     #[test]
     fn shipped_catalogue_file_parses() {
         let parsed = parse_catalogue(CATALOGUE_TSV).expect("the shipped data file is well formed");
-        assert_eq!(parsed.len(), 46);
+        assert_eq!(parsed.len(), 47);
     }
 
     #[test]
     fn catalogue_shape() {
-        assert_eq!(CATALOGUE.len(), 46);
+        assert_eq!(CATALOGUE.len(), 47);
         let uniq: HashSet<_> = CATALOGUE.iter().map(|r| r.id).collect();
-        assert_eq!(uniq.len(), 46);
+        assert_eq!(uniq.len(), 47);
         let n = |c| CATALOGUE.iter().filter(|r| r.class == c).count();
         assert_eq!(n(Fix), 20);
-        assert_eq!(n(Act), 4);
+        assert_eq!(n(Act), 5);
         assert_eq!(n(Refer), 3);
         assert_eq!(n(Owner), 16);
         assert_eq!(n(Noise), 3);
@@ -1005,6 +1013,20 @@ mod tests {
             ("SQ-RUN-03", "fatal: unable to access 'https://git.sr.ht/x': The requested URL returned error: 503"),
             ("SQ-RUN-03", "fatal: unable to access 'https://git.sr.ht/x': Could not resolve host: git.sr.ht"),
             ("SQ-RUN-03", "curl: (7) Failed to connect to github.com port 443 after 21 ms"),
+            // standards runs 43458638630, 43458639621 and 43459052870 (the
+            // Actions token budget was spent), read from the job logs.
+            (
+                "SQ-RUN-06",
+                "##[notice]could not read branch rulesets for metadatastician/standards (API error, rate limit, or missing permission) \u{2014} nothing inspected",
+            ),
+            (
+                "SQ-RUN-06",
+                "##[error]could not read the workflow catalogue \u{2014} enablement is UNKNOWN, not off",
+            ),
+            (
+                "SQ-RUN-06",
+                "##[error]metadatastician/standards@d55304a01b5260b0511aae0d14ed8b8770b00293: the called workflow .github/workflows/rust-ci-reusable.yml could not be read at d55304a01b5260b0511aae0d14ed8b8770b00293 (offline with no cache entry, or the API refused). An unread callee is NOT a closed closure",
+            ),
             (
                 "SQ-RUN-04",
                 "ERR [git] fatal: ambiguous argument '4190136^..bf33aeb': unknown revision or path not in the working tree.",
@@ -1096,6 +1118,22 @@ mod tests {
             assert_eq!(ids(log, None), vec!["SQ-RUN-05"], "{log}");
         }
         assert_eq!(rule("SQ-RUN-05").unwrap().class, Refer);
+    }
+
+    #[test]
+    fn unreadable_github_state_is_a_rerun_but_a_real_drop_is_not() {
+        let consequence = "DROPPED CLOSURE \u{2014} the reviewed baseline has a -> b, and this source no longer reaches it.";
+        // A real drop, with nothing unread, is the gate's own finding.
+        assert!(ids(consequence, None).is_empty());
+        // Unread callee plus the drops that follow it: one re-run, then the owner.
+        let both = format!(
+            "the called workflow x.yml could not be read at abc (offline with no cache entry, or the API refused).\n{consequence}"
+        );
+        assert_eq!(ids(&both, None), vec!["SQ-RUN-06"]);
+        // A git credential prompt is not an unread gate (SQ-REF-06).
+        let git = "fatal: could not read Username for 'https://github.com'";
+        assert!(!ids(git, None).contains(&"SQ-RUN-06"));
+        assert_eq!(rule("SQ-RUN-06").unwrap().class, Act);
     }
 
     #[test]
