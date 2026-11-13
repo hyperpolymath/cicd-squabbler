@@ -24,6 +24,7 @@ pub mod inbox;
 pub mod moves;
 pub mod outcome;
 pub mod polarity;
+pub mod rules;
 pub mod startup;
 
 use gate::{Gate, GateState};
