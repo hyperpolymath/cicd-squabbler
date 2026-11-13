@@ -1,0 +1,270 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+= Architecture Decision Record: 0004-first-line-rule-catalogue
+
+== 4. The first-line rule catalogue (ADR 0003, staging step 2)
+
+Date: 2026-11-13
+
+== Status
+
+Proposed. The catalogue below collects the failure rules that estate sessions
+reported on 2026-11-13, at the owner's request, through the hub. Each rule is
+evidence from one or more repositories, not yet a verified general rule. When
+the implementation lands, its rule table in code is authoritative and this
+record lists the decisions behind it.
+
+== Context
+
+ADR 0003 makes the squabbler the first-line fixer: it fixes what it can fix
+safely, and it refers the rest to Hypatia. Fifteen sessions reported about 40
+failure patterns. Several reports describe the same failure, and two reports
+corrected an earlier one. This record removes the duplicates and gives every
+rule one class.
+
+== Decision
+
+=== Classes
+
+[cols="1,4"]
+|===
+| `FIX`    | First-line fix. The squabbler opens one PR. Most fixes change CI configuration only (workflows, `actions.lock`, pins, generated files). Rules named `SQ-CODE-nn` may change code, and only when the code-fix guard below passes on the diff (owner ruling 2026-11-13, ADR 0003, PR #154: any safe code fix is first-line). A fix never edits licence or SPDX text, rulesets, or paths that `bot_directives` restrict.
+| `ACT`    | First-line action without a code change: re-run one failed job once, or update a PR branch from its base by merge.
+| `REFER`  | Referral to Hypatia (ADR 0003): the squabbler tells the user the problem, the fix it would suggest, the risk and the evidence Hypatia needs to reproduce it. A rule is `REFER` when the cause is not proven or the fix is not the squabbler's to make.
+| `OWNER`  | Only the owner can act (a repository setting, a secret, a security decision). The squabbler reports and does nothing else.
+| `NOISE`  | Not a defect (a superseded or cancelled run). The squabbler labels it and takes no action.
+|===
+
+A `FIX` or `ACT` rule becomes `REFER` when its own "refer when" condition
+holds, or when its check does not pass on the PR head.
+
+=== Guards on every `FIX` and `ACT`
+
+. *Kill switch.* `ESTATE_AUTOFIX` must be `on`. Any other value, or no value,
+  makes the squabbler report what it would do and change nothing.
+. *Attempt limit.* At most 2 fix attempts per repository, rule and head
+  commit, and at most 1 re-run per failed job. After that the case is `REFER`.
+. *One PR.* At most one open fix PR per repository and rule, on the branch
+  `squabbler/fix/<rule-id>`. A second detection updates that PR or does
+  nothing.
+. *Check before green.* A fix PR claims nothing until the rule's check passes
+  on its head. Green still comes only from the gate's own required checks.
+. *No bypass.* No admin merge, no ruleset or required-check change, no
+  `--no-verify`, no force-push to a branch the squabbler did not create.
+. *Code-fix guard.* A `FIX` that changes code (`SQ-CODE-nn`) is first-line only when `code_fix_is_safe` passes on its diff. The diff must not remove a line containing `assert`, add `#[ignore]`, `skip`, `xit(`, `continue-on-error: true` or `|| true`, lower a numeric threshold on a `threshold`, `min`, `max` or `coverage` line, delete a test file, add a line to `.hypatia-baseline.json` or `.hypatia-ignore`, or add a `hypatia: allow`, `nosemgrep` or `#[allow(` suppression. With no diff the case is report-only; an unsafe diff makes it `REFER`.
+
+=== The catalogue
+
+[cols="1,1,4,4,3,3", options="header"]
+|===
+| Id | Class | Signature | Fix or action | Check | Refer when
+
+| SQ-LOCK-01 | FIX
+| `invalid lockfile pin` at Set up job; statically, an `actions.lock` record keyed `<owner/repo>@<40-hex>` whose `ref:` repeats that SHA and which no job-level reusable call names.
+| Refresh `scripts/check-lock-sync.sh` from template main (it has clause 5, SELF-SHA REFS), then set each flagged `ref:` the way `gh actions-lock` picks it: highest full-semver tag at the SHA, else highest semver tag, else first tag, else a branch that contains the commit (default branch first). Existing tools: standards applier and relocker, gitbot-fleet `fix-lock-self-sha-refs.sh`.
+| The template gate exits 0, and the failed workflow no longer reports `invalid lockfile pin`. `scripts/check-lock-sync.sh` needs GNU awk and mikefarah yq v4; a missing tool means the check did not run, never a pass.
+| No tag or branch holds the SHA; tags tie; the lock also lacks entries.
+
+| SQ-LOCK-02 | FIX
+| `lockfile missing pin for <action>@<sha>` (for example `actions/upload-artifact@bbbca2dd…`, called inside `upload-pages-artifact` v5.0.0).
+| Regenerate the lock with `gh actions-lock` (CI `GITHUB_TOKEN` works).
+| The lock-sync gate passes and the job starts.
+| The regenerated lock disagrees with the workflow YAML.
+
+| SQ-LOCK-03 | FIX
+| A reusable-calling workflow ends with zero jobs; its lock records the callee's old `owner_id` after a repository transfer (standards: 6759885 to 297579217, same `repo_id` 1116521501).
+| Repoint `uses:` to the canonical owner/name (move `RepointToCanonical`) at a standards commit whose allowlist already covers `metadatastician/standards/.github/workflows/*@*` (8d1a2aa or later; `governance / Allowlist Preflight` reads the allowlist at the pinned commit, so cf8f912 fails with `GAP` lines), and relock with `scripts/relock-standards-pin.sh` from standards main (older copies do not understand metadatastician pins).
+| Each record's `owner_id` equals `GET /repos/{o}/{r}` `.owner.id`; the next run has jobs; `check-allowed-actions.sh <allowlist at target> .github/workflows` reports 0 gaps.
+| The pinned SHA is not reachable from the callee's default branch, or the callee is outside the estate, or no standards commit with that allowlist pattern is also free of pin-contract violations for the repository.
+
+| SQ-PIN-01 | FIX
+| A pinned reusable ends `startup_failure` on every push, while a newer audited SHA of the same reusable runs green elsewhere (gitbot-fleet `mirror.yml` at `75bd5994`).
+| Repin to the newest audited green SHA (move `RepinReusableWorkflow`) and update the closure rows and `pinned-reusable-sources.json` together (`scripts/propagate-sha-bump.sh`).
+| The next push run has jobs.
+| No audited closure row exists for the target SHA, or the new SHA declares more secrets.
+
+| SQ-PIN-02 | FIX
+| The DEED lane fails `unrecognised #-form` on a `#uuid"…"` literal that the current deed ABNF admits: the repo pins an old standards SHA.
+| Bump every standards pin site in `.github/workflows` and `scripts` to one current SHA.
+| No pin site keeps the old SHA, and `validate-deed.sh` passes at the new pin.
+| The newer linter rejects existing deed content. Deed meaning is never edited.
+
+| SQ-PIN-03 | FIX
+| `setup-bun` fails `Failed to fetch url https://api.github.com/repos/oven-sh/bun/git/refs/tags (403)` / `API rate limit exceeded`, or statically a `setup-bun` step whose `bun-version` is missing, `latest`, `canary`, a range or a file.
+| Set `bun-version: "1.4.2"`, the estate pin. Standards reusables are fixed at source (standards#1504, standards#1505).
+| standards `scripts/check-setup-bun-pinned.sh` passes.
+| The repository pins another Bun on purpose, or the step is in a third-party, forked or vendored workflow.
+
+| SQ-PIN-04 | FIX
+| `cargo install --git …/panic-attacker.git` (old name, no pin) in a workflow.
+| Use `hyperpolymath/panic-attack` at the pin in gitbot-fleet `bots/panicbot/canon/pin.toml`.
+| No unpinned `--git` install remains.
+| The name maps to more than one repository.
+
+| SQ-PIN-05 | FIX
+| A workflow whose job is a cross-repository `uses: <owner>/<repo>/.github/workflows/<x>.yml@<sha>` ends `failure` or `startup_failure` with zero jobs on every push (autoformal-fidelity `main-estate-audit.yml`, 30 of 30 runs, calling hyperpolymath/cicd-suite; bofj-kitt governance, hypatia-scan and secret-scanner calling metadatastician/standards at `8f2ee50`).
+| Replace the caller with the inline-job form that rsr-template-repo main uses for the same workflow (it runs the gates from the pinned SHA without a cross-repository `workflow_call`); keep `actions.lock` in sync. Proven by comparison for `main-estate-audit.yml`: template run 43414378524 and resource-algebra run 43153078247 succeed with jobs.
+| The next push run is success with more than 0 jobs, and the lock-sync gate passes.
+| The template has no inline form for that workflow, a required context name would change, the repository customised the caller on purpose, or the inline form still gives 0 jobs.
+
+| SQ-TOOL-01 | FIX
+| Different nickel or yq versions across CI, Containerfile, mise and setup scripts.
+| One version everywhere, sha256-pinned (Nickel 1.18.0; yq v4.53.3).
+| One version found; the installer verifies the sha256.
+| No upstream checksums exist (state trust-on-first-download, never "verified").
+
+| SQ-GEN-01 | FIX
+| estate-rules prints `FAIL: committed REPOSITORY-MAP.adoc is stale` and asks for `just repo-map`.
+| Run `bash scripts/gen-repo-map.sh .` and commit the map.
+| `tests/shape/repo_map_determinism_test.sh` passes.
+| The map still differs after regeneration.
+
+| SQ-GEN-02 | FIX
+| `FAIL <deed>: line N: line is … octets` or K9-E006 (line over 998 octets).
+| Wrap the string or description, layout only.
+| `deed_lint.js` and `k9-validate --strict` pass.
+| A wrap would change a value (identifier, hash, URL).
+
+| SQ-CANON-01 | FIX
+| An instance's `canon-lockstep` job is an old inline copy and goes red on a canon release although its pin is provenance.
+| Run rsr-template-repo `scripts/adopt-canon-lockstep.sh` (replaces only that job and `scripts/canon-pin-check.sh`).
+| The canon-lockstep job passes with the lag notice.
+| The script refuses (lock coverage), or the pin itself must change: the `[canon]` pin sits in A2ML, which is never edited automatically.
+
+| SQ-PERM-01 | FIX
+| `Resource not accessible by integration … get-a-workflow-run` in a job that uses `github/codeql-action/upload-sarif` on a private repository.
+| Add `actions: read` to that job's permissions, with a comment that names the reason.
+| The upload step passes on a re-run.
+| The permission is already present, or the repository is public.
+
+| SQ-RUN-01 | ACT
+| A setup or download step fails with `API rate limit exceeded` (HTTP 403 or 429) and the same workflow passes on an adjacent commit.
+| Re-run the failed jobs once after the rate-limit reset, only if that commit is still the head. Do nothing if a later commit ran green.
+| The re-run passes.
+| It fails twice on the same commit, the log has no rate-limit text, or the step is not a setup or download step.
+
+| SQ-RUN-02 | ACT
+| A PR is `blocked` with all required checks green, under a strict required-checks ruleset, and its base is behind the default branch; or a check fails on a bot PR and passes on main, with the head behind main.
+| Update the branch by merging the base (update-branch API). Never rebase a branch the squabbler did not open.
+| The required checks pass on the new head.
+| Merge conflict, or still blocked on an up-to-date head.
+
+| SQ-CODE-01 | FIX
+| A Rust readiness or integration test cannot find its binary (`failed to run …/target/debug/build/…: No such file`).
+| Use `PathBuf::from(env!("CARGO_BIN_EXE_<bin>"))`.
+| `cargo test --test readiness` passes.
+| The fix would hit the code-fix unsafe list (guard 6), the code is vendored or third-party, or the check does not pass on the PR head.
+
+| SQ-CODE-02 | FIX
+| "Validate Hypatia Baseline" fails on new `code_safety` findings.
+| Fix the code behind the finding. Never touch `.hypatia-baseline.json`.
+| The baseline job passes with the baseline file unchanged.
+| The fix would hit the code-fix unsafe list (guard 6), the code is vendored or third-party, or the check does not pass on the PR head.
+
+| SQ-CODE-03 | FIX
+| Sonar S7688 or S7679 in shell scripts.
+| Make the mechanical edit. Decline S1192 in test files, where repetition is a convention.
+| `bash -n`, shellcheck and the repository's shell tests pass.
+| The fix would hit the code-fix unsafe list (guard 6), the code is vendored or third-party, or the check does not pass on the PR head.
+
+| SQ-REF-06 | REFER
+| The DEED job fails `could not read Username for 'https://github.com'` on a private repository (checkout with `persist-credentials: false`, then an anonymous fetch).
+| Root cause: OTP 28 (28.3 and 28.5.0.8) miscompiles `Hypatia.Rules.PinSites.walk/4`; the template #328 workflow shape only shifts memory layout. The fix is hyperpolymath/hypatia#1062. Never change the workflow to hide it.
+| DEED syntax passes on a private PR.
+| Always, until hypatia#1062 lands.
+
+| SQ-REF-08 | REFER
+| `Repo self-tests` fails in `scripts/tests/dismiss-code-scanning-alerts-test.sh` with `<file>:<line> is not a write permission` after a change added lines above a job's `permissions:` block in a workflow that `.github/code-scanning-dismissals.json` keys by line number.
+| Suggest keeping the recorded line where it is: put new comments inline or below it. Never re-key the dismissal (it must match the live Scorecard alert's `start_line` on main).
+| The test reports 0 failed.
+| Always when the permission line itself must move or change (re-keying after Scorecard re-scans main is the owner's call).
+
+| SQ-CODE-04 | FIX
+| An adapter prints a valid findings array but exits other than 0 or 1 and is reported `ran`.
+| Accept arrays only for exit 0 or 1 (gitbot-fleet `fleet-report-back.sh` `translate_or_error`).
+| Tests for exits 2, 3, 9 and 137.
+| The fix would hit the code-fix unsafe list (guard 6), the code is vendored or third-party, or the check does not pass on the PR head.
+
+| SQ-OWN-01 | OWNER
+| `Get Pages site failed … Not Found`.
+| Report: Pages is a repository setting. Never enable it. In repositories with no site (Julia libraries built from the template), removing `pages.yml` is a template-owner decision.
+| The pages job is green or absent.
+| (owner)
+
+| SQ-OWN-02 | OWNER
+| A mirror job is enabled, and `webfactory/ssh-agent` fails `The ssh-private-key argument is empty`.
+| Report: add the secret or set the enable variable to false.
+| The mirror job passes or is skipped.
+| (owner)
+
+| SQ-OWN-03 | OWNER
+| `pull_request_target` or `workflow_run` jobs check out or run PR code with secrets or a write token.
+| Report only (security).
+| (owner)
+| (owner)
+
+| SQ-OWN-04 | OWNER
+| A push is rejected with GH013 "Commits must have verified signatures".
+| Report. Never amend or force-push someone else's branch.
+| (owner)
+| (owner)
+
+| SQ-OWN-05 | OWNER
+| A committed data file holds a local absolute path with an account name (gitbot-fleet `scripts/lib/pinned-reusable-sources.json`).
+| Report (privacy).
+| (owner)
+| (owner)
+
+| SQ-OWN-06 | OWNER
+| A bot PR shows only external checks (no Actions runs): the workflow-approval state.
+| Report if the PR is meant to auto-merge.
+| (owner)
+| (owner)
+
+| SQ-OWN-07 | OWNER
+| `analyze (actions, none)` stays red while GitHub's default code-scanning setup is on.
+| Report: the owner turns default setup off. Never work around it in a workflow.
+| (owner)
+| (owner)
+
+| SQ-OWN-08 | OWNER
+| A workflow ends `startup_failure` with 0 jobs and no check-runs or annotations, while the same file (byte-identical, same SHA pins) succeeds in rsr-template-repo (`quality.yml` and `pages.yml` in autoformal-fidelity and resource-algebra).
+| Report: the cause is repository-level (Actions policy, allowed-actions list, Pages setting); the owner reads the failed run's banner or Settings > Actions. Never rewrite the workflow to chase it.
+| (owner)
+| (owner)
+
+| SQ-NOI-01 | NOISE
+| `Fork governance failed (deed=cancelled)` on a head that a newer commit replaced.
+| Label superseded; read the newest head.
+| The newest head is not `deed=cancelled`.
+| `deed=cancelled` on the newest head.
+
+| SQ-NOI-02 | NOISE
+| `fatal: couldn't find remote ref refs/pull/<N>/merge` (exit 128) and the PR closed before the job started. Standards reusables are fixed at source (standards#1505).
+| None: do not re-run a closed PR.
+| The PR API shows the PR closed.
+| The PR is still open (conflict or deleted ref).
+
+| SQ-NOI-03 | NOISE
+| Inbox Steward ends `startup_failure` only on runs triggered by `chatgpt-codex-connector[bot]`.
+| None.
+| Count of startup failures by actor.
+| Inbox Steward becomes a required check.
+|===
+
+== Consequences
+
+* 19 rules are first-line (17 `FIX`, 2 `ACT`), 2 are referrals, 8 are
+  owner-only and 3 are noise; 32 in all. Every rule names its check and its
+  referral condition.
+* A fix that changes code (`SQ-CODE-nn`) is first-line only when the code-fix
+  guard passes on its diff, so a fix that could weaken a check never runs at
+  the first line (owner ruling 2026-11-13, ADR 0003, PR #154).
+* A referral carries the evidence Hypatia needs to reproduce the problem
+  (repository, commit, run and job URLs, workflow, job, step, signature,
+  toolchain, tool pins, what the squabbler tried, whether it reproduces on
+  re-run and on base). A missing item reads `unknown`.
+* Increment 1 of the implementation (classification, guards including the
+  code-fix guard, the referral message and the read-only `squabble triage`)
+  landed in `crates/squabble-core/src/rules.rs`. The executors (opening PRs,
+  editing locks) follow.
