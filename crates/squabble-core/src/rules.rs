@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
-//! The first-line rule catalogue (ADR 0004, increment 1).
+//! The first-line rule catalogue (ADR 0004, increments 1 and 2).
 //!
 //! Pure classification, guards and the referral message. Nothing here does
 //! IO or applies a fix; the executors (opening PRs, editing locks) follow in
@@ -11,9 +11,9 @@
 //! rules have none and are left out of it: SQ-LOCK-03, SQ-PIN-01, SQ-PIN-04,
 //! SQ-PIN-05, SQ-TOOL-01, SQ-CANON-01, SQ-RUN-02, SQ-CODE-02, SQ-CODE-03,
 //! SQ-CODE-04, SQ-REF-08, SQ-OWN-03, SQ-OWN-05, SQ-OWN-06, SQ-OWN-07,
-//! SQ-OWN-08 and SQ-NOI-03. Their evidence is the workflow source, run
-//! metadata or PR state, not a log line. SQ-LOCK-01 and SQ-PIN-03 also have
-//! static detectors below.
+//! SQ-OWN-08, SQ-OWN-11, SQ-OWN-12 and SQ-NOI-03. Their evidence is the
+//! workflow source, run metadata or PR state, not a log line. SQ-LOCK-01,
+//! SQ-PIN-03 and SQ-GEN-03 also have static detectors below.
 
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
@@ -51,7 +51,7 @@ use RuleClass::{Act, Fix, Noise, Owner, Refer};
 /// here.
 const CATALOGUE_TSV: &str = include_str!("../data/first-line-rules.tsv");
 
-/// The 32 catalogue rows, in ADR 0004 order.
+/// The 39 catalogue rows, in ADR 0004 order.
 ///
 /// The data file ships inside the crate, so a malformed row is a defect in
 /// this crate that a caller cannot repair. The catalogue never loads short:
@@ -135,63 +135,108 @@ pub fn rule(id: &str) -> Option<&'static Rule> {
     LazyLock::force(&CATALOGUE).iter().find(|r| r.id == id)
 }
 
-/// Rule ids whose runtime signature appears in a job log. `step` is the name
-/// of the failed step, when known; SQ-PIN-03 needs it to name setup-bun.
-pub fn match_log(log: &str, step: Option<&str>) -> Vec<&'static str> {
-    let mut out: Vec<&'static str> = Vec::new();
-    let has = |s: &str| log.contains(s);
-    let rate_limited = has("API rate limit exceeded");
-    let setup_bun_step = step.is_some_and(|s| s.to_ascii_lowercase().contains("setup-bun"));
+/// What a log matcher can see: the log text and whether the failed step is
+/// setup-bun.
+struct LogCtx<'a> {
+    log: &'a str,
+    setup_bun_step: bool,
+}
 
-    if has("invalid lockfile pin") {
-        out.push("SQ-LOCK-01");
+impl LogCtx<'_> {
+    fn has(&self, needle: &str) -> bool {
+        self.log.contains(needle)
     }
-    if has("lockfile missing pin for") {
-        out.push("SQ-LOCK-02");
+
+    fn rate_limited(&self) -> bool {
+        self.has("API rate limit exceeded")
     }
-    if has("unrecognised #-form") {
-        out.push("SQ-PIN-02");
+
+    /// A status of 500 to 599 right after `marker`, as in `gh: HTTP 502`.
+    fn http_5xx_after(&self, marker: &str) -> bool {
+        let bytes = self.log.as_bytes();
+        self.log.match_indices(marker).any(|(at, _)| {
+            let status = &bytes[at + marker.len()..];
+            status.len() >= 3 && status[0] == b'5' && status[1..3].iter().all(u8::is_ascii_digit)
+        })
     }
-    if setup_bun_step
-        && (rate_limited
-            || has("Failed to fetch url https://api.github.com/repos/oven-sh/bun/git/refs/tags"))
-    {
-        out.push("SQ-PIN-03");
-    }
-    if rate_limited {
-        out.push("SQ-RUN-01");
-    }
-    if has("committed REPOSITORY-MAP.adoc is stale") {
-        out.push("SQ-GEN-01");
-    }
-    if has("K9-E006") || (has("line is") && has("octets")) {
-        out.push("SQ-GEN-02");
-    }
-    if has("Resource not accessible by integration") && has("get-a-workflow-run") {
-        out.push("SQ-PERM-01");
-    }
-    if has("target/debug/build/") && has("No such file") {
-        out.push("SQ-CODE-01");
-    }
-    if has("could not read Username for 'https://github.com'") {
-        out.push("SQ-REF-06");
-    }
-    if has("Get Pages site failed") {
-        out.push("SQ-OWN-01");
-    }
-    if has("The ssh-private-key argument is empty") {
-        out.push("SQ-OWN-02");
-    }
-    if has("GH013") {
-        out.push("SQ-OWN-04");
-    }
-    if has("deed=cancelled") {
-        out.push("SQ-NOI-01");
-    }
-    if has("couldn't find remote ref refs/pull/") {
-        out.push("SQ-NOI-02");
-    }
-    out
+}
+
+type LogMatcher = (&'static str, fn(&LogCtx) -> bool);
+
+/// One row per rule that has a runtime log signature. The order is the
+/// precedence: `match_log` returns ids in this order and the caller acts on
+/// the first, so SQ-PIN-03 (the root cause of a setup-bun rate limit) comes
+/// before SQ-RUN-01 (re-run).
+static LOG_MATCHERS: &[LogMatcher] = &[
+    ("SQ-LOCK-01", |c| c.has("invalid lockfile pin")),
+    ("SQ-LOCK-02", |c| {
+        c.has("lockfile missing pin for") || c.has("lockfile verification did not produce a result")
+    }),
+    ("SQ-PIN-02", |c| c.has("unrecognised #-form")),
+    ("SQ-PIN-03", |c| {
+        c.setup_bun_step
+            && (c.rate_limited()
+                || c.has(
+                    "Failed to fetch url https://api.github.com/repos/oven-sh/bun/git/refs/tags",
+                ))
+    }),
+    ("SQ-RUN-01", |c| c.rate_limited()),
+    ("SQ-RUN-03", |c| {
+        c.http_5xx_after("gh: HTTP ")
+            || c.http_5xx_after("returned error: ")
+            || c.has("Could not resolve host")
+            || c.has("Failed to connect to")
+    }),
+    ("SQ-RUN-04", |c| {
+        c.has("ambiguous argument") && c.has("unknown revision or path not in the working tree")
+    }),
+    ("SQ-GEN-01", |c| {
+        c.has("committed REPOSITORY-MAP.adoc is stale")
+    }),
+    ("SQ-GEN-02", |c| {
+        c.has("K9-E006") || (c.has("line is") && c.has("octets"))
+    }),
+    ("SQ-PERM-01", |c| {
+        c.has("Resource not accessible by integration") && c.has("get-a-workflow-run")
+    }),
+    ("SQ-CODE-01", |c| {
+        c.has("target/debug/build/") && c.has("No such file")
+    }),
+    ("SQ-REF-06", |c| {
+        c.has("could not read Username for 'https://github.com'")
+    }),
+    ("SQ-OWN-01", |c| c.has("Get Pages site failed")),
+    ("SQ-OWN-02", |c| {
+        c.has("The ssh-private-key argument is empty")
+    }),
+    ("SQ-OWN-04", |c| c.has("GH013")),
+    ("SQ-OWN-09", |c| {
+        c.has("Bad credentials") || c.has("returned error: 401")
+    }),
+    ("SQ-OWN-10", |c| {
+        c.has("Private Key is in OpenSSH format")
+            || c.has("DECODER routines::unsupported")
+            || c.has("Invalid keyData")
+    }),
+    ("SQ-NOI-01", |c| c.has("deed=cancelled")),
+    ("SQ-NOI-02", |c| {
+        c.has("couldn't find remote ref refs/pull/")
+    }),
+];
+
+/// Rule ids whose runtime signature appears in a job log, in precedence
+/// order. `step` is the name of the failed step, when known; SQ-PIN-03 needs
+/// it to name setup-bun.
+pub fn match_log(log: &str, step: Option<&str>) -> Vec<&'static str> {
+    let ctx = LogCtx {
+        log,
+        setup_bun_step: step.is_some_and(|s| s.to_ascii_lowercase().contains("setup-bun")),
+    };
+    LOG_MATCHERS
+        .iter()
+        .filter(|(_, matches)| matches(&ctx))
+        .map(|(id, _)| *id)
+        .collect()
 }
 
 fn is_sha40(s: &str) -> bool {
@@ -263,6 +308,89 @@ pub fn self_sha_lock_records(lock_yaml: &str, job_level_callers: &[String]) -> V
         }
     }
     flagged
+}
+
+/// A job in a workflow file: its id and the lines under it.
+struct JobBlock<'a> {
+    id: &'a str,
+    lines: Vec<&'a str>,
+}
+
+/// Split a workflow into its jobs by indentation. A line-based reader, like
+/// the other static detectors here: it does not parse YAML anchors or flow
+/// style, so an unusual layout is missed, never misread as a finding.
+fn job_blocks(workflow_yaml: &str) -> Vec<JobBlock<'_>> {
+    let mut blocks: Vec<JobBlock<'_>> = Vec::new();
+    let mut in_jobs = false;
+    let mut job_indent: Option<usize> = None;
+    for line in workflow_yaml.lines() {
+        let text = line.trim_start();
+        if text.is_empty() || text.starts_with('#') {
+            continue;
+        }
+        let indent = indent_of(line);
+        if indent == 0 {
+            in_jobs = text.trim_end() == "jobs:";
+            continue;
+        }
+        if !in_jobs {
+            continue;
+        }
+        let at_job_level = *job_indent.get_or_insert(indent) == indent;
+        let key = unquote(text).strip_suffix(':');
+        match (at_job_level, key, blocks.last_mut()) {
+            (true, Some(id), _) => blocks.push(JobBlock {
+                id,
+                lines: Vec::new(),
+            }),
+            (false, _, Some(block)) => block.lines.push(line),
+            _ => {}
+        }
+    }
+    blocks
+}
+
+/// True when a job condition is exactly `always()`, bare or in `${{ }}`.
+fn is_always(condition: &str) -> bool {
+    let condition = unquote(condition);
+    let inner = condition
+        .strip_prefix("${{")
+        .and_then(|rest| rest.strip_suffix("}}"))
+        .map_or(condition, str::trim);
+    inner == "always()"
+}
+
+/// Static SQ-GEN-03 detection (Hypatia WF029): ids of jobs that run with
+/// `if: always()` after `needs:` and download an artifact (`uses:
+/// actions/download-artifact`) without a `run-id`. A cancelled run still runs
+/// such a job, which then fails on the artifact the cancelled jobs never
+/// uploaded. Other `always()` jobs, such as a summary that downloads nothing,
+/// are not flagged.
+pub fn always_after_cancel(workflow_yaml: &str) -> Vec<String> {
+    job_blocks(workflow_yaml)
+        .into_iter()
+        .filter(runs_after_cancel_and_downloads)
+        .map(|job| job.id.to_string())
+        .collect()
+}
+
+/// The values of a job's `name:` lines, one level inside the job.
+fn field_values<'a>(job: &JobBlock<'a>, name: &str) -> Vec<&'a str> {
+    job.lines
+        .iter()
+        .filter_map(|line| line.trim_start().strip_prefix(name))
+        .collect()
+}
+
+fn runs_after_cancel_and_downloads(job: &JobBlock<'_>) -> bool {
+    let always = field_values(job, "if:").into_iter().any(is_always);
+    let needs_jobs = !field_values(job, "needs:").is_empty();
+    let downloads = job
+        .lines
+        .iter()
+        .any(|l| l.contains("uses:") && l.contains("actions/download-artifact"));
+    let reads_other_run = !field_values(job, "run-id:").is_empty();
+    always && needs_jobs && downloads && !reads_other_run
 }
 
 /// Static SQ-PIN-03 detection: a `oven-sh/setup-bun` step whose `bun-version`
@@ -648,10 +776,11 @@ mod tests {
     fn catalogue_rows_carry_the_data_files_fields() {
         let lock = rule("SQ-LOCK-02").expect("SQ-LOCK-02 is in the catalogue");
         assert_eq!(lock.class, Fix);
-        assert_eq!(
-            lock.summary,
-            "lockfile missing pin for an action called inside another action"
-        );
+        assert!(lock
+            .summary
+            .starts_with("lockfile missing pin for an action called inside another action"));
+        assert!(lock.summary.contains("did not produce a result"));
+        assert!(lock.summary.contains("stale lock"));
         assert_eq!(lock.fix, "Regenerate the lock with gh actions-lock");
         assert_eq!(lock.check, "The lock-sync gate passes and the job starts");
         assert_eq!(
@@ -709,19 +838,19 @@ mod tests {
     #[test]
     fn shipped_catalogue_file_parses() {
         let parsed = parse_catalogue(CATALOGUE_TSV).expect("the shipped data file is well formed");
-        assert_eq!(parsed.len(), 32);
+        assert_eq!(parsed.len(), 39);
     }
 
     #[test]
     fn catalogue_shape() {
-        assert_eq!(CATALOGUE.len(), 32);
+        assert_eq!(CATALOGUE.len(), 39);
         let uniq: HashSet<_> = CATALOGUE.iter().map(|r| r.id).collect();
-        assert_eq!(uniq.len(), 32);
+        assert_eq!(uniq.len(), 39);
         let n = |c| CATALOGUE.iter().filter(|r| r.class == c).count();
-        assert_eq!(n(Fix), 17);
-        assert_eq!(n(Act), 2);
+        assert_eq!(n(Fix), 18);
+        assert_eq!(n(Act), 4);
         assert_eq!(n(Refer), 2);
-        assert_eq!(n(Owner), 8);
+        assert_eq!(n(Owner), 12);
         assert_eq!(n(Noise), 3);
         assert!(rule("SQ-OWN-04").is_some());
         for gone in [
@@ -764,6 +893,23 @@ mod tests {
             ("SQ-OWN-04", "remote: error: GH013: Repository rule violations"),
             ("SQ-NOI-01", "Fork governance failed (deed=cancelled)"),
             ("SQ-NOI-02", "fatal: couldn't find remote ref refs/pull/12/merge"),
+            // Real signatures from hypatia runs 43137798791, 43358533401,
+            // 43158586027, 43367835718 and 43361512802, and the canary.
+            (
+                "SQ-LOCK-02",
+                "##[error]lockfile verification did not produce a result for this action. Unable to resolve action `dtolnay/rust-toolchain@v1`",
+            ),
+            ("SQ-RUN-03", "gh: HTTP 502 (https://api.github.com/graphql)"),
+            ("SQ-RUN-03", "fatal: unable to access 'https://git.sr.ht/x': The requested URL returned error: 503"),
+            ("SQ-RUN-03", "fatal: unable to access 'https://x/': Could not resolve host: x"),
+            (
+                "SQ-RUN-04",
+                "ERR [git] fatal: ambiguous argument '4190136^..bf33aeb': unknown revision or path not in the working tree.",
+            ),
+            ("SQ-OWN-09", "gh: Bad credentials (HTTP 401)"),
+            ("SQ-OWN-09", "fatal: unable to access 'https://x/': The requested URL returned error: 401"),
+            ("SQ-OWN-10", "Error: Private Key is in OpenSSH format"),
+            ("SQ-OWN-10", "error:1E08010C:DECODER routines::unsupported"),
         ];
         for (id, log) in cases {
             assert!(ids(log, None).contains(id), "{id} should match {log:?}");
@@ -774,6 +920,35 @@ mod tests {
         assert!(!ids("Resource not accessible by integration", None).contains(&"SQ-PERM-01"));
         assert!(!ids("No such file", None).contains(&"SQ-CODE-01"));
         assert!(!ids("deed=passed", None).contains(&"SQ-NOI-01"));
+    }
+
+    #[test]
+    fn status_codes_are_matched_by_class_not_by_prefix() {
+        for log in [
+            "gh: HTTP 404",
+            "gh: HTTP 5",
+            "gh: HTTP 5x2",
+            "returned error: 403",
+        ] {
+            assert!(!ids(log, None).contains(&"SQ-RUN-03"), "{log}");
+        }
+        // 403 is a rate limit or a missing permission, never a bad token here.
+        assert!(!ids("returned error: 403", None).contains(&"SQ-OWN-09"));
+        // The status must follow a known marker; a bare HTTP 599 is not enough.
+        assert!(ids("HTTP 599 from somewhere", None).is_empty());
+        assert_eq!(ids("gh: HTTP 599", None), vec!["SQ-RUN-03"]);
+    }
+
+    #[test]
+    fn matcher_order_is_the_precedence() {
+        let log = "Failed to fetch url https://api.github.com/repos/oven-sh/bun/git/refs/tags API rate limit exceeded";
+        assert_eq!(ids(log, Some("setup-bun")), vec!["SQ-PIN-03", "SQ-RUN-01"]);
+        assert_eq!(ids(log, Some("checkout")), vec!["SQ-RUN-01"]);
+        // Every matcher names a catalogue rule, and none is listed twice.
+        let matched: Vec<&str> = LOG_MATCHERS.iter().map(|(id, _)| *id).collect();
+        let uniq: HashSet<_> = matched.iter().collect();
+        assert_eq!(uniq.len(), matched.len());
+        assert!(matched.iter().all(|id| rule(id).is_some()));
     }
 
     #[test]
@@ -1167,5 +1342,54 @@ mod tests {
     #[test]
     fn fix_branch_is_lowercased() {
         assert_eq!(fix_branch("SQ-LOCK-01"), "squabbler/fix/sq-lock-01");
+    }
+
+    fn gate(job_if: &str, extra: &str) -> String {
+        format!(
+            "name: g\njobs:\n  scan:\n    runs-on: x\n    steps:\n      - run: true\n  deposit:\n    needs: [scan]\n    {job_if}\n    steps:\n      - uses: actions/download-artifact@v8.0.2\n{extra}"
+        )
+    }
+
+    #[test]
+    fn always_after_cancel_flags_the_download_after_needs() {
+        for cond in [
+            "if: always()",
+            "if: ${{ always() }}",
+            "if: \"always()\"",
+            "if: always() # keep",
+        ] {
+            assert_eq!(
+                always_after_cancel(&gate(cond, "")),
+                vec!["deposit"],
+                "{cond}"
+            );
+        }
+    }
+
+    #[test]
+    fn always_after_cancel_spares_what_is_not_the_defect() {
+        for (cond, extra) in [
+            ("if: ${{ !cancelled() }}", ""),
+            ("if: always() && github.event_name == 'push'", ""),
+            ("if: always()", "        with:\n          run-id: 7\n"),
+        ] {
+            assert!(always_after_cancel(&gate(cond, extra)).is_empty(), "{cond}");
+        }
+        // always() with needs but nothing downloaded: a summary job.
+        let summary = "jobs:\n  a:\n    steps:\n      - run: true\n  sum:\n    needs: [a]\n    if: always()\n    steps:\n      - uses: actions/checkout@v7\n";
+        assert!(always_after_cancel(summary).is_empty());
+        // always() with a download but no needs: nothing was cancelled before it.
+        let alone = "jobs:\n  d:\n    if: always()\n    steps:\n      - uses: actions/download-artifact@v8\n";
+        assert!(always_after_cancel(alone).is_empty());
+        assert!(always_after_cancel("name: x\non: push\n").is_empty());
+    }
+
+    #[test]
+    fn always_after_cancel_reads_each_job_on_its_own() {
+        let yaml = format!(
+            "{}  other:\n    needs: [scan]\n    if: always()\n    steps:\n      - run: true\n",
+            gate("if: always()", "")
+        );
+        assert_eq!(always_after_cancel(&yaml), vec!["deposit"]);
     }
 }

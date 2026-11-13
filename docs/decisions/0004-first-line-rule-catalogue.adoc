@@ -14,6 +14,11 @@ evidence from one or more repositories, not yet a verified general rule. When
 the implementation lands, its rule table in code is authoritative and this
 record lists the decisions behind it.
 
+Amended 2026-11-13 (increment 2): seven rules and one widened rule were added
+from the evidence that the rule reconciliation thread sent after #156 merged
+(hypatia#1064). The rows quote that evidence; rows marked "reconstructed" have
+no run URL yet.
+
 == Context
 
 ADR 0003 makes the squabbler the first-line fixer: it fixes what it can fix
@@ -66,8 +71,8 @@ holds, or when its check does not pass on the PR head.
 | No tag or branch holds the SHA; tags tie; the lock also lacks entries.
 
 | SQ-LOCK-02 | FIX
-| `lockfile missing pin for <action>@<sha>` (for example `actions/upload-artifact@bbbca2dd…`, called inside `upload-pages-artifact` v5.0.0).
-| Regenerate the lock with `gh actions-lock` (CI `GITHUB_TOKEN` works).
+| `lockfile missing pin for <action>@<sha>` (for example `actions/upload-artifact@bbbca2dd…`, called inside `upload-pages-artifact` v5.0.0); or `lockfile verification did not produce a result for this action. Unable to resolve action <action>@<ref>, unable to find version <sha>` (hypatia run 43137798791: a locked ref no longer resolves); or, found statically, a workflow bumped an action past its lock (stale lock: the same action is locked for that workflow at another ref).
+| Regenerate the lock with `gh actions-lock` (CI `GITHUB_TOKEN` works); for a stale lock, in the PR that bumps the action.
 | The lock-sync gate passes and the job starts.
 | The regenerated lock disagrees with the workflow YAML.
 
@@ -125,6 +130,12 @@ holds, or when its check does not pass on the PR head.
 | `deed_lint.js` and `k9-validate --strict` pass.
 | A wrap would change a value (identifier, hash, URL).
 
+| SQ-GEN-03 | FIX
+| A job with `if: always()` and `needs:` that has an `actions/download-artifact` step without `run-id` runs after a cancelled run and fails on the artifact the cancelled jobs never uploaded (Hypatia WF029). Seen in this repository's `static-analysis-gate.yml` `deposit-findings`, fixed by #157.
+| Change the job condition to `${{ !cancelled() }}`.
+| The workflow is valid YAML, the job still runs after failed or skipped `needs`, and it does not run in a cancelled run.
+| The job must run after cancellation on purpose, or the workflow is vendored or third-party. A summary job that downloads nothing (`dogfood-summary`) is not this rule.
+
 | SQ-CANON-01 | FIX
 | An instance's `canon-lockstep` job is an old inline copy and goes red on a canon release although its pin is provenance.
 | Run rsr-template-repo `scripts/adopt-canon-lockstep.sh` (replaces only that job and `scripts/canon-pin-check.sh`).
@@ -148,6 +159,18 @@ holds, or when its check does not pass on the PR head.
 | Update the branch by merging the base (update-branch API). Never rebase a branch the squabbler did not open.
 | The required checks pass on the new head.
 | Merge conflict, or still blocked on an up-to-date head.
+
+| SQ-RUN-03 | ACT
+| A step fails on a transient host or API error: `gh: HTTP 5xx` (hypatia run 43358533401: `gh: HTTP 502` on an owner-wide GraphQL query), a git remote answering `returned error: 5xx`, `Could not resolve host`, or `Failed to connect to`.
+| Re-run the failed job once, only if that commit is still the head.
+| The re-run passes.
+| It fails twice on the same commit, or the status is 401 or 403 (a token problem is SQ-OWN-09; a rate limit is SQ-RUN-01).
+
+| SQ-RUN-04 | ACT
+| gitleaks fails with `fatal: ambiguous argument '<sha>^..<sha>': unknown revision or path not in the working tree` because a shallow checkout lacks the range's base commit; trufflehog reports `commits: 0` for the same range (hypatia run 43158586027).
+| Re-run the failed job once, only if that commit is still the head.
+| The re-run passes and the scan covers more than 0 commits.
+| It fails twice on the same commit: refer, with the suggestion `fetch-depth: 0` on the scan checkout.
 
 | SQ-CODE-01 | FIX
 | A Rust readiness or integration test cannot find its binary (`failed to run …/target/debug/build/…: No such file`).
@@ -233,6 +256,30 @@ holds, or when its check does not pass on the PR head.
 | (owner)
 | (owner)
 
+| SQ-OWN-09 | OWNER
+| `gh: Bad credentials (HTTP 401)` or `HTTP 401: Bad credentials (https://api.github.com/graphql)` (hypatia runs 43367835718 and 43361512802), or git `returned error: 401`, from a token the workflow uses. A 403 is not matched here: it can be a rate limit or a missing permission.
+| Report: the token is invalid, expired or revoked and the owner rotates it. Never retry (a retry cannot succeed) and never swap in another credential.
+| (owner)
+| (owner)
+
+| SQ-OWN-10 | OWNER
+| `actions/create-github-app-token` fails with `Private Key is in OpenSSH format` (the 2026-11-13 canary runs 43286728126 and 43288768279 in standards), `error:1E08010C:DECODER routines::unsupported` or `Invalid keyData`.
+| Report: the App private key secret holds a key in the wrong format; the owner generates a new private key for the App and saves the whole file, whose first line is `-----BEGIN RSA PRIVATE KEY-----`. The key is never put in chat.
+| (owner)
+| (owner)
+
+| SQ-OWN-11 | OWNER
+| A benchmark gate fails with a ratio over its limit (`escape_hatches 2.053x`; `2.285x against a 2.0x limit` in unified-api-adapter). Reconstructed from the seed reports, no run URL yet.
+| Report: a performance regression, or a limit that needs the owner's judgement. Never raise the limit.
+| (owner)
+| (owner)
+
+| SQ-OWN-12 | OWNER
+| The same scanner (`panic-attack`) is pinned at more than one commit across the estate's workflows (4 commits: ac68bbae, b689a74d, 410a8f82, b5530834). Found statically.
+| Report the sites that differ from the ruled pin (owner ruling D7: panic-attack 410a8f82, pons bca1ea28). The change goes through the standards applier, never a hand edit.
+| (owner)
+| (owner)
+
 | SQ-NOI-01 | NOISE
 | `Fork governance failed (deed=cancelled)` on a head that a newer commit replaced.
 | Label superseded; read the newest head.
@@ -252,10 +299,51 @@ holds, or when its check does not pass on the PR head.
 | Inbox Steward becomes a required check.
 |===
 
+=== Precedence when one log matches several rules
+
+`match_log` returns the matching ids in the order of its matcher table
+(`LOG_MATCHERS` in `rules.rs`), and the caller acts on the first. The table
+puts SQ-PIN-03 before SQ-RUN-01: a rate limit inside a `setup-bun` step is
+fixed at its root (an exact `bun-version`) before it is re-run. When the step
+is not `setup-bun`, only SQ-RUN-01 matches. Agreed with the rule
+reconciliation thread; Hypatia's `api_rate_limit` is advice that defers to
+SQ-PIN-03, then SQ-RUN-01.
+
+=== Mapping to Hypatia's `ci_failure_triage` ids (hypatia#1064)
+
+Under ADR 0003 Hypatia's triage names the cause and the route; every re-run
+and fix belongs to the squabbler.
+
+[cols="2,2,3", options="header"]
+|===
+| Hypatia id | Squabbler rule | Note
+| `pages_not_enabled` | SQ-OWN-01 | one to one
+| `actions_lock_invalid_pin` | SQ-LOCK-01 | one to one
+| `actions_lock_unresolvable_pin`, `actions_lock_stale` | SQ-LOCK-02 | one fix (regenerate the lock), three signatures
+| `merge_ref_race` | SQ-NOI-02 | never a re-run; `none` when the PR is closed, a referral when it is open
+| `runner_cancelled` | SQ-NOI-01 | the squabbler's rule is narrower (a replaced head)
+| `api_rate_limit` | SQ-PIN-03, then SQ-RUN-01 | advice that defers to both
+| `api_server_error`, `external_host_unreachable` | SQ-RUN-03 | one re-run
+| `scan_range_missing_commit` | SQ-RUN-04 | one re-run, then a referral
+| `token_invalid` | SQ-OWN-09 | owner
+| `secret_or_variable_missing` | SQ-OWN-02 | the squabbler's row is the mirror ssh-key case
+| `app_key_wrong_format` | SQ-OWN-10 | owner
+| `always_after_cancel` (WF029) | SQ-GEN-03 | static fix
+| `bench_regression` | SQ-OWN-11 | owner
+| `scanner_pin_drift` | SQ-OWN-12 | owner
+| `canon_lockstep` | SQ-CANON-01 | inline-copy case only; a pin change is owner-routed
+|===
+
+Not added: a rule that pins OTP to 27.3.4.19 for `toolchain_segfault`. It is
+unverified, and SQ-REF-06 records the OTP 28 miscompile as Hypatia's to fix
+(hypatia#1062); pinning OTP in a workflow would patch the downstream symptom.
+It becomes a row only with evidence (repositories, OTP versions, reproduced on
+base).
+
 == Consequences
 
-* 19 rules are first-line (17 `FIX`, 2 `ACT`), 2 are referrals, 8 are
-  owner-only and 3 are noise; 32 in all. Every rule names its check and its
+* 22 rules are first-line (18 `FIX`, 4 `ACT`), 2 are referrals, 12 are
+  owner-only and 3 are noise; 39 in all. Every rule names its check and its
   referral condition.
 * A fix that changes code (`SQ-CODE-nn`) is first-line only when the code-fix
   guard passes on its diff, so a fix that could weaken a check never runs at
