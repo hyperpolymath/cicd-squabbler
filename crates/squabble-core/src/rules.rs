@@ -51,7 +51,7 @@ use RuleClass::{Act, Fix, Noise, Owner, Refer};
 /// here.
 const CATALOGUE_TSV: &str = include_str!("../data/first-line-rules.tsv");
 
-/// The 40 catalogue rows, in ADR 0004 order.
+/// The 44 catalogue rows, in ADR 0004 order.
 ///
 /// The data file ships inside the crate, so a malformed row is a defect in
 /// this crate that a caller cannot repair. The catalogue never loads short:
@@ -198,6 +198,9 @@ static LOG_MATCHERS: &[LogMatcher] = &[
     ("SQ-GEN-01", |c| {
         c.has("committed REPOSITORY-MAP.adoc is stale")
     }),
+    ("SQ-GEN-04", |c| {
+        c.has("kyaml-format:") && c.has("is not KYAML")
+    }),
     ("SQ-GEN-02", |c| {
         c.has("K9-E006") || (c.has("line is") && c.has("octets"))
     }),
@@ -222,6 +225,15 @@ static LOG_MATCHERS: &[LogMatcher] = &[
         c.has("Private Key is in OpenSSH format")
             || c.has("DECODER routines::unsupported")
             || c.has("Invalid keyData")
+    }),
+    ("SQ-OWN-13", |c| {
+        c.has("gh: Repository rule violations found")
+    }),
+    ("SQ-OWN-14", |c| {
+        c.has("non-v8 UUID literal") || c.has("UUID check failed. Use ESTATE-UUID-V8")
+    }),
+    ("SQ-OWN-15", |c| {
+        c.has("Not authorized or organization not found")
     }),
     ("SQ-NOI-01", |c| c.has("deed=cancelled")),
     ("SQ-NOI-02", |c| {
@@ -844,19 +856,19 @@ mod tests {
     #[test]
     fn shipped_catalogue_file_parses() {
         let parsed = parse_catalogue(CATALOGUE_TSV).expect("the shipped data file is well formed");
-        assert_eq!(parsed.len(), 40);
+        assert_eq!(parsed.len(), 44);
     }
 
     #[test]
     fn catalogue_shape() {
-        assert_eq!(CATALOGUE.len(), 40);
+        assert_eq!(CATALOGUE.len(), 44);
         let uniq: HashSet<_> = CATALOGUE.iter().map(|r| r.id).collect();
-        assert_eq!(uniq.len(), 40);
+        assert_eq!(uniq.len(), 44);
         let n = |c| CATALOGUE.iter().filter(|r| r.class == c).count();
-        assert_eq!(n(Fix), 19);
+        assert_eq!(n(Fix), 20);
         assert_eq!(n(Act), 4);
         assert_eq!(n(Refer), 2);
-        assert_eq!(n(Owner), 12);
+        assert_eq!(n(Owner), 15);
         assert_eq!(n(Noise), 3);
         assert!(rule("SQ-OWN-04").is_some());
         for gone in [
@@ -925,6 +937,21 @@ mod tests {
                 "SQ-TOOL-02",
                 "Error during file fetching; aborting: Dependabot detected that Bun is misconfigured in this repository. Running `bun` results in the following error: This project has a `bun.lock` file but no `package-lock.json`",
             ),
+            // quintessence run 43156792336, Apodeixis.jl runs 43257204071 and
+            // 43257204302, lithoglyph run 43152462261.
+            (
+                "SQ-GEN-04",
+                "##[error]kyaml-format: build/container/compose.yaml is not KYAML \u{2014} run scripts/kyaml-format.sh build/container/compose.yaml",
+            ),
+            (
+                "SQ-OWN-13",
+                "gh: Repository rule violations found\nCode coverage checks require a pull request.\n (HTTP 409)",
+            ),
+            ("SQ-OWN-14", "./Project.toml: non-v8 UUID literal (7d8c4f3a-6a31-4f21-9c72-1d496dd2ad67)"),
+            (
+                "SQ-OWN-15",
+                "ERROR Fail to load the list of plugins installed on the server: Not authorized or organization not found",
+            ),
         ];
         for (id, log) in cases {
             assert!(ids(log, None).contains(id), "{id} should match {log:?}");
@@ -952,6 +979,15 @@ mod tests {
         // The status must follow a known marker; a bare HTTP 599 is not enough.
         assert!(ids("HTTP 599 from somewhere", None).is_empty());
         assert_eq!(ids("gh: HTTP 599", None), vec!["SQ-RUN-03"]);
+    }
+
+    #[test]
+    fn push_refusals_are_told_apart() {
+        // The git form is SQ-OWN-04, the gh API form is SQ-OWN-13; neither claims the other.
+        let git = "remote: error: GH013: Repository rule violations found for refs/heads/main.";
+        let api = "gh: Repository rule violations found\n (HTTP 409)";
+        assert_eq!(ids(git, None), vec!["SQ-OWN-04"]);
+        assert_eq!(ids(api, None), vec!["SQ-OWN-13"]);
     }
 
     #[test]

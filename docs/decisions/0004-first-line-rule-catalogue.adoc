@@ -14,7 +14,7 @@ evidence from one or more repositories, not yet a verified general rule. When
 the implementation lands, its rule table in code is authoritative and this
 record lists the decisions behind it.
 
-Amended 2026-11-13 (increment 2): eight rules and one widened rule were added
+Amended 2026-11-13 (increment 2): twelve rules and one widened rule were added
 from the evidence that the rule reconciliation thread sent after #156 merged
 (hypatia#1064). The rows quote that evidence; rows marked "reconstructed" have
 no run URL yet.
@@ -141,6 +141,12 @@ holds, or when its check does not pass on the PR head.
 | Change the job condition to `${{ !cancelled() }}`.
 | The workflow is valid YAML, the job still runs after failed or skipped `needs`, and it does not run in a cancelled run.
 | The job must run after cancellation on purpose, or the workflow is vendored or third-party. A summary job that downloads nothing (`dogfood-summary`) is not this rule.
+
+| SQ-GEN-04 | FIX
+| `kyaml-format: <file> is not KYAML — run scripts/kyaml-format.sh <file>` (quintessence run 43156792336, `build/container/compose.yaml`).
+| Run `scripts/kyaml-format.sh <file>` and commit the layout change. The generator is named here and is never taken from the log; it needs mikefarah Go `yq` (Python `yq` corrupts the file).
+| The output is KYAML and the repository's kyaml check passes. A missing `yq` means the check did not run, never a pass.
+| The output is not KYAML, the formatter changes a value, or `yq` is not the mikefarah Go build.
 
 | SQ-CANON-01 | FIX
 | An instance's `canon-lockstep` job is an old inline copy and goes red on a canon release although its pin is provenance.
@@ -286,6 +292,24 @@ holds, or when its check does not pass on the PR head.
 | (owner)
 | (owner)
 
+| SQ-OWN-13 | OWNER
+| A workflow push is refused by a ruleset: `gh: Repository rule violations found` / `Code coverage checks require a pull request.` / `(HTTP 409)` (Apodeixis.jl run 43257204071, "Publish the lane badges"; red on its base too). The `git` form, `GH013`, is SQ-OWN-04.
+| Report: a ruleset requires a pull request for that push, so the workflow cannot push to the protected branch. The owner changes the workflow to open a PR or adjusts the ruleset. The squabbler never changes a ruleset and never pushes around one.
+| (owner)
+| (owner)
+
+| SQ-OWN-14 | OWNER
+| `<file>: non-v8 UUID literal (<uuid>)` / `UUID check failed. Use ESTATE-UUID-V8 (ADR-008)` (Apodeixis.jl run 43257204302, `./Project.toml`).
+| Report: an identifier needs the owner or the A7 identity process. The squabbler never mints, rewrites or retypes a UUID.
+| (owner)
+| (owner)
+
+| SQ-OWN-15 | OWNER
+| `ERROR Fail to load the list of plugins installed on the server: Not authorized or organization not found`, then `sonar-scanner` failed with exit code 3 (lithoglyph run 43152462261).
+| Report: the Sonar token or organization is missing or wrong; the owner fixes the secret or the Sonar project. Never remove or skip the Sonar step.
+| (owner)
+| (owner)
+
 | SQ-NOI-01 | NOISE
 | `Fork governance failed (deed=cancelled)` on a head that a newer commit replaced.
 | Label superseded; read the newest head.
@@ -337,6 +361,10 @@ and fix belongs to the squabbler.
 | `always_after_cancel` (WF029) | SQ-GEN-03 | static fix
 | `dependabot_ecosystem_mismatch` | SQ-TOOL-02 | config fix
 | `repository_map_stale` | SQ-GEN-01 | one to one
+| `kyaml_format` | SQ-GEN-04 | generator named in the rule
+| `ruleset_blocks_push` | SQ-OWN-13 | owner
+| `uuid_conformance` | SQ-OWN-14 | owner
+| `sonar_not_authorized` | SQ-OWN-15 | owner
 | `generated_file_stale` | none | a referral: the squabbler never runs a command named in a log; each new generated file becomes its own row
 | `bench_regression` | SQ-OWN-11 | owner
 | `scanner_pin_drift` | SQ-OWN-12 | owner
@@ -351,8 +379,8 @@ base).
 
 == Consequences
 
-* 23 rules are first-line (19 `FIX`, 4 `ACT`), 2 are referrals, 12 are
-  owner-only and 3 are noise; 40 in all. Every rule names its check and its
+* 24 rules are first-line (20 `FIX`, 4 `ACT`), 2 are referrals, 15 are
+  owner-only and 3 are noise; 44 in all. Every rule names its check and its
   referral condition.
 * A fix that changes code (`SQ-CODE-nn`) is first-line only when the code-fix
   guard passes on its diff, so a fix that could weaken a check never runs at
