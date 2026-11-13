@@ -52,67 +52,82 @@ use RuleClass::{Act, Fix, Noise, Owner, Refer};
 const CATALOGUE_TSV: &str = include_str!("../data/first-line-rules.tsv");
 
 /// The 32 catalogue rows, in ADR 0004 order.
-pub static CATALOGUE: LazyLock<Vec<Rule>> = LazyLock::new(|| parse_catalogue(CATALOGUE_TSV));
+///
+/// The data file ships inside the crate, so a malformed row is a defect in
+/// this crate that a caller cannot repair. The catalogue never loads short:
+/// it reports the row and exits with 70 (EX_SOFTWARE) instead. The shipped
+/// file is checked by the `catalogue_shape` test.
+pub static CATALOGUE: LazyLock<Vec<Rule>> = LazyLock::new(|| {
+    parse_catalogue(CATALOGUE_TSV).unwrap_or_else(|err| {
+        eprintln!("squabble-core: the first-line rule catalogue is malformed: {err}");
+        std::process::exit(70)
+    })
+});
 
-/// Parse the catalogue data file. The file ships inside the crate, so a
-/// malformed row is a defect in this crate and not something a caller can
-/// repair: it panics rather than drop a rule and leave the catalogue short.
-fn parse_catalogue(tsv: &'static str) -> Vec<Rule> {
-    let rules: Vec<Rule> = tsv
-        .lines()
-        .enumerate()
-        .filter(|(_, line)| {
-            let trimmed = line.trim_start();
-            !trimmed.is_empty() && !trimmed.starts_with('#')
-        })
-        .map(|(index, line)| parse_row(index + 1, line))
-        .collect();
-    for (index, rule) in rules.iter().enumerate() {
-        assert!(
-            !rules[..index].iter().any(|earlier| earlier.id == rule.id),
-            "first-line-rules.tsv: rule id {} appears twice",
-            rule.id
-        );
+/// Parse the catalogue data file. A bad row is an error, never skipped, so a
+/// rule cannot go missing without notice.
+fn parse_catalogue(tsv: &'static str) -> Result<Vec<Rule>, String> {
+    let mut rules: Vec<Rule> = Vec::new();
+    for (index, line) in tsv.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let rule = parse_row(index + 1, line)?;
+        if rules.iter().any(|earlier| earlier.id == rule.id) {
+            return Err(format!(
+                "first-line-rules.tsv line {}: rule id {} appears twice",
+                index + 1,
+                rule.id
+            ));
+        }
+        rules.push(rule);
     }
-    rules
+    Ok(rules)
 }
 
 /// One row: `id`, class, summary, fix, check, refer-when, tab-separated.
-fn parse_row(lineno: usize, line: &'static str) -> Rule {
+fn parse_row(lineno: usize, line: &'static str) -> Result<Rule, String> {
     let fields: Vec<&'static str> = line.split('\t').collect();
-    assert!(
-        fields.len() == 6,
-        "first-line-rules.tsv line {lineno}: expected 6 tab-separated fields, found {}",
-        fields.len()
-    );
-    let class = match fields[1] {
+    let [id, class, summary, fix, check, refer_when] = fields[..] else {
+        return Err(format!(
+            "first-line-rules.tsv line {lineno}: expected 6 tab-separated fields, found {}",
+            fields.len()
+        ));
+    };
+    let class = match class {
         "FIX" => Fix,
         "ACT" => Act,
         "REFER" => Refer,
         "OWNER" => Owner,
         "NOISE" => Noise,
-        other => panic!("first-line-rules.tsv line {lineno}: unknown class {other:?}"),
+        other => {
+            return Err(format!(
+                "first-line-rules.tsv line {lineno}: unknown class {other:?}"
+            ))
+        }
     };
     for (name, value) in [
-        ("id", fields[0]),
-        ("summary", fields[2]),
-        ("fix", fields[3]),
-        ("check", fields[4]),
-        ("refer-when", fields[5]),
+        ("id", id),
+        ("summary", summary),
+        ("fix", fix),
+        ("check", check),
+        ("refer-when", refer_when),
     ] {
-        assert!(
-            !value.trim().is_empty(),
-            "first-line-rules.tsv line {lineno}: {name} is empty"
-        );
+        if value.trim().is_empty() {
+            return Err(format!(
+                "first-line-rules.tsv line {lineno}: {name} is empty"
+            ));
+        }
     }
-    Rule {
-        id: fields[0],
+    Ok(Rule {
+        id,
         class,
-        summary: fields[2],
-        fix: fields[3],
-        check: fields[4],
-        refer_when: fields[5],
-    }
+        summary,
+        fix,
+        check,
+        refer_when,
+    })
 }
 
 /// Look a rule up by id.
@@ -654,7 +669,8 @@ mod tests {
     fn parser_skips_comments_and_blank_lines() {
         let parsed = parse_catalogue(
             "# a comment\n\n   \n  # an indented comment\nSQ-X-01\tFIX\tsummary\tfix\tcheck\trefer\nSQ-X-02\tNOISE\ta\tb\tc\td\n",
-        );
+        )
+        .expect("two well-formed rows");
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0].id, "SQ-X-01");
         assert_eq!(parsed[0].class, Fix);
@@ -662,27 +678,38 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "expected 6 tab-separated fields, found 5")]
     fn parser_rejects_a_short_row() {
-        parse_catalogue("SQ-X-01\tFIX\tsummary\tfix\tcheck\n");
+        let err = parse_catalogue("SQ-X-01\tFIX\tsummary\tfix\tcheck\n").unwrap_err();
+        assert!(err.contains("line 1"), "{err}");
+        assert!(
+            err.contains("expected 6 tab-separated fields, found 5"),
+            "{err}"
+        );
     }
 
     #[test]
-    #[should_panic(expected = "unknown class")]
     fn parser_rejects_an_unknown_class() {
-        parse_catalogue("SQ-X-01\tMAYBE\tsummary\tfix\tcheck\trefer\n");
+        let err = parse_catalogue("SQ-X-01\tMAYBE\tsummary\tfix\tcheck\trefer\n").unwrap_err();
+        assert!(err.contains("unknown class"), "{err}");
     }
 
     #[test]
-    #[should_panic(expected = "refer-when is empty")]
     fn parser_rejects_an_empty_field() {
-        parse_catalogue("SQ-X-01\tFIX\tsummary\tfix\tcheck\t \n");
+        let err = parse_catalogue("SQ-X-01\tFIX\tsummary\tfix\tcheck\t \n").unwrap_err();
+        assert!(err.contains("refer-when is empty"), "{err}");
     }
 
     #[test]
-    #[should_panic(expected = "appears twice")]
     fn parser_rejects_a_duplicate_id() {
-        parse_catalogue("SQ-X-01\tFIX\ta\tb\tc\td\nSQ-X-01\tACT\ta\tb\tc\td\n");
+        let err =
+            parse_catalogue("SQ-X-01\tFIX\ta\tb\tc\td\nSQ-X-01\tACT\ta\tb\tc\td\n").unwrap_err();
+        assert!(err.contains("appears twice"), "{err}");
+    }
+
+    #[test]
+    fn shipped_catalogue_file_parses() {
+        let parsed = parse_catalogue(CATALOGUE_TSV).expect("the shipped data file is well formed");
+        assert_eq!(parsed.len(), 32);
     }
 
     #[test]
