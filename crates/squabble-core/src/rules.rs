@@ -16,6 +16,7 @@
 //! static detectors below.
 
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 
 /// What the squabbler may do about a rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,289 +44,80 @@ pub struct Rule {
     pub refer_when: &'static str,
 }
 
-const fn r(
-    id: &'static str,
-    class: RuleClass,
-    summary: &'static str,
-    fix: &'static str,
-    check: &'static str,
-    refer_when: &'static str,
-) -> Rule {
+use RuleClass::{Act, Fix, Noise, Owner, Refer};
+
+/// The catalogue is data, not code: one tab-separated row per rule, in ADR
+/// 0004 order, with `#` comments. Adding a rule is a row there, not a change
+/// here.
+const CATALOGUE_TSV: &str = include_str!("../data/first-line-rules.tsv");
+
+/// The 32 catalogue rows, in ADR 0004 order.
+pub static CATALOGUE: LazyLock<Vec<Rule>> = LazyLock::new(|| parse_catalogue(CATALOGUE_TSV));
+
+/// Parse the catalogue data file. The file ships inside the crate, so a
+/// malformed row is a defect in this crate and not something a caller can
+/// repair: it panics rather than drop a rule and leave the catalogue short.
+fn parse_catalogue(tsv: &'static str) -> Vec<Rule> {
+    let rules: Vec<Rule> = tsv
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| {
+            let trimmed = line.trim_start();
+            !trimmed.is_empty() && !trimmed.starts_with('#')
+        })
+        .map(|(index, line)| parse_row(index + 1, line))
+        .collect();
+    for (index, rule) in rules.iter().enumerate() {
+        assert!(
+            !rules[..index].iter().any(|earlier| earlier.id == rule.id),
+            "first-line-rules.tsv: rule id {} appears twice",
+            rule.id
+        );
+    }
+    rules
+}
+
+/// One row: `id`, class, summary, fix, check, refer-when, tab-separated.
+fn parse_row(lineno: usize, line: &'static str) -> Rule {
+    let fields: Vec<&'static str> = line.split('\t').collect();
+    assert!(
+        fields.len() == 6,
+        "first-line-rules.tsv line {lineno}: expected 6 tab-separated fields, found {}",
+        fields.len()
+    );
+    let class = match fields[1] {
+        "FIX" => Fix,
+        "ACT" => Act,
+        "REFER" => Refer,
+        "OWNER" => Owner,
+        "NOISE" => Noise,
+        other => panic!("first-line-rules.tsv line {lineno}: unknown class {other:?}"),
+    };
+    for (name, value) in [
+        ("id", fields[0]),
+        ("summary", fields[2]),
+        ("fix", fields[3]),
+        ("check", fields[4]),
+        ("refer-when", fields[5]),
+    ] {
+        assert!(
+            !value.trim().is_empty(),
+            "first-line-rules.tsv line {lineno}: {name} is empty"
+        );
+    }
     Rule {
-        id,
+        id: fields[0],
         class,
-        summary,
-        fix,
-        check,
-        refer_when,
+        summary: fields[2],
+        fix: fields[3],
+        check: fields[4],
+        refer_when: fields[5],
     }
 }
 
-use RuleClass::{Act, Fix, Noise, Owner, Refer};
-
-/// The 32 catalogue rows, in ADR 0004 order.
-pub static CATALOGUE: &[Rule] = &[
-    r(
-        "SQ-LOCK-01",
-        Fix,
-        "invalid lockfile pin: an actions.lock record keyed owner/repo@<40-hex> repeats that SHA as its ref",
-        "Refresh scripts/check-lock-sync.sh from template main, then set each flagged ref to the highest full-semver tag at the SHA, else highest semver tag, else first tag, else a branch containing the commit",
-        "The template lock-sync gate exits 0 and the failed workflow no longer reports invalid lockfile pin; scripts/check-lock-sync.sh needs GNU awk and mikefarah yq v4, and a missing tool means the check did not run, never a pass",
-        "No tag or branch holds the SHA; tags tie; the lock also lacks entries",
-    ),
-    r(
-        "SQ-LOCK-02",
-        Fix,
-        "lockfile missing pin for an action called inside another action",
-        "Regenerate the lock with gh actions-lock",
-        "The lock-sync gate passes and the job starts",
-        "The regenerated lock disagrees with the workflow YAML",
-    ),
-    r(
-        "SQ-LOCK-03",
-        Fix,
-        "reusable-calling workflow ends with zero jobs; the lock records the callee's old owner_id after a transfer",
-        "Repoint uses: to the canonical owner/name at a standards commit whose allowlist already covers metadatastician/standards/.github/workflows/*@* (8d1a2aa or later; governance / Allowlist Preflight reads the allowlist at the pinned commit), and relock with scripts/relock-standards-pin.sh from standards main",
-        "Each record's owner_id equals the repository API owner id; the next run has jobs; check-allowed-actions.sh <allowlist at target> .github/workflows reports 0 gaps",
-        "The pinned SHA is not reachable from the callee's default branch, or the callee is outside the estate, or no standards commit with that allowlist pattern is also free of pin-contract violations for the repository",
-    ),
-    r(
-        "SQ-PIN-01",
-        Fix,
-        "a pinned reusable ends startup_failure on every push while a newer audited SHA runs green elsewhere",
-        "Repin to the newest audited green SHA and update the closure rows and pinned-reusable-sources.json together",
-        "The next push run has jobs",
-        "No audited closure row exists for the target SHA, or the new SHA declares more secrets",
-    ),
-    r(
-        "SQ-PIN-02",
-        Fix,
-        "the DEED lane fails unrecognised #-form on a literal the current ABNF admits: the repository pins an old standards SHA",
-        "Bump every standards pin site in .github/workflows and scripts to one current SHA",
-        "No pin site keeps the old SHA and validate-deed.sh passes at the new pin",
-        "The newer linter rejects existing deed content; deed meaning is never edited",
-    ),
-    r(
-        "SQ-PIN-03",
-        Fix,
-        "setup-bun fails on the GitHub API rate limit, or a setup-bun step has no exact bun-version",
-        "Set bun-version to the estate pin 1.4.2",
-        "standards scripts/check-setup-bun-pinned.sh passes",
-        "The repository pins another Bun on purpose, or the step is in a third-party, forked or vendored workflow",
-    ),
-    r(
-        "SQ-PIN-04",
-        Fix,
-        "cargo install --git of the old panic-attacker name with no pin in a workflow",
-        "Use hyperpolymath/panic-attack at the pin in gitbot-fleet bots/panicbot/canon/pin.toml",
-        "No unpinned --git install remains",
-        "The name maps to more than one repository",
-    ),
-    r(
-        "SQ-PIN-05",
-        Fix,
-        "a workflow whose job is a cross-repository uses: <owner>/<repo>/.github/workflows/<x>.yml@<sha> ends failure or startup_failure with zero jobs on every push",
-        "Replace the caller with the inline-job form that rsr-template-repo main uses for the same workflow (it runs the gates from the pinned SHA without a cross-repository workflow_call) and keep actions.lock in sync",
-        "The next push run is success with more than 0 jobs and the lock-sync gate passes",
-        "The template has no inline form for that workflow, a required context name would change, the repository customised the caller on purpose, or the inline form still gives 0 jobs",
-    ),
-    r(
-        "SQ-TOOL-01",
-        Fix,
-        "different nickel or yq versions across CI, Containerfile, mise and setup scripts",
-        "One version everywhere, sha256-pinned (Nickel 1.18.0; yq v4.53.3)",
-        "One version found; the installer verifies the sha256",
-        "No upstream checksums exist (state trust-on-first-download, never verified)",
-    ),
-    r(
-        "SQ-GEN-01",
-        Fix,
-        "estate-rules reports the committed REPOSITORY-MAP.adoc is stale",
-        "Run bash scripts/gen-repo-map.sh . and commit the map",
-        "tests/shape/repo_map_determinism_test.sh passes",
-        "The map still differs after regeneration",
-    ),
-    r(
-        "SQ-GEN-02",
-        Fix,
-        "a deed or k9 line is over 998 octets (K9-E006)",
-        "Wrap the string or description, layout only",
-        "deed_lint.js and k9-validate --strict pass",
-        "A wrap would change a value (identifier, hash, URL)",
-    ),
-    r(
-        "SQ-CANON-01",
-        Fix,
-        "an instance's canon-lockstep job is an old inline copy and goes red on a canon release",
-        "Run rsr-template-repo scripts/adopt-canon-lockstep.sh",
-        "The canon-lockstep job passes with the lag notice",
-        "The script refuses (lock coverage), or the pin itself must change (A2ML is never edited automatically)",
-    ),
-    r(
-        "SQ-PERM-01",
-        Fix,
-        "Resource not accessible by integration at get-a-workflow-run in a job that uploads SARIF on a private repository",
-        "Add actions: read to that job's permissions, with a comment that names the reason",
-        "The upload step passes on a re-run",
-        "The permission is already present, or the repository is public",
-    ),
-    r(
-        "SQ-RUN-01",
-        Act,
-        "a setup or download step fails with API rate limit exceeded and the same workflow passes on an adjacent commit",
-        "Re-run the failed jobs once after the rate-limit reset, only if that commit is still the head",
-        "The re-run passes",
-        "It fails twice on the same commit, the log has no rate-limit text, or the step is not a setup or download step",
-    ),
-    r(
-        "SQ-RUN-02",
-        Act,
-        "a PR is blocked with required checks green under a strict ruleset and its base is behind the default branch",
-        "Update the branch by merging the base; never rebase a branch the squabbler did not open",
-        "The required checks pass on the new head",
-        "Merge conflict, or still blocked on an up-to-date head",
-    ),
-    r(
-        "SQ-CODE-01",
-        Fix,
-        "a Rust readiness or integration test cannot find its binary under target/debug/build",
-        "Use PathBuf::from(env!(\"CARGO_BIN_EXE_<bin>\")); a code fix, first-line only when the code-fix guard passes",
-        "cargo test --test readiness passes",
-        "The fix would hit the code-fix unsafe list, the code is vendored or third-party, or the check does not pass on the PR head",
-    ),
-    r(
-        "SQ-CODE-02",
-        Fix,
-        "Validate Hypatia Baseline fails on new code_safety findings",
-        "Fix the code behind the finding; never touch .hypatia-baseline.json",
-        "The baseline job passes with the baseline file unchanged",
-        "The fix would hit the code-fix unsafe list, the code is vendored or third-party, or the check does not pass on the PR head",
-    ),
-    r(
-        "SQ-CODE-03",
-        Fix,
-        "Sonar S7688 or S7679 in shell scripts",
-        "Make the mechanical edit; decline S1192 in test files, where repetition is a convention",
-        "bash -n, shellcheck and the repository's shell tests pass",
-        "The fix would hit the code-fix unsafe list, the code is vendored or third-party, or the check does not pass on the PR head",
-    ),
-    r(
-        "SQ-REF-06",
-        Refer,
-        "the DEED job fails could not read Username for https://github.com on a private repository",
-        "Root cause: OTP 28 (28.3 and 28.5.0.8) miscompiles Hypatia.Rules.PinSites.walk/4; the template #328 shape only shifts memory layout. The fix is hyperpolymath/hypatia#1062. Never change the workflow to hide it",
-        "DEED syntax passes on a private PR",
-        "Always, until hypatia#1062 lands",
-    ),
-    r(
-        "SQ-REF-08",
-        Refer,
-        "Repo self-tests fails in dismiss-code-scanning-alerts-test.sh with <file>:<line> is not a write permission after lines were added above a permissions: block that .github/code-scanning-dismissals.json keys by line number",
-        "Suggest keeping the recorded line where it is: put new comments inline or below it; never re-key the dismissal (it must match the live Scorecard alert's start_line on main)",
-        "The test reports 0 failed",
-        "Always when the permission line itself must move or change (re-keying after Scorecard re-scans main is the owner's call)",
-    ),
-    r(
-        "SQ-CODE-04",
-        Fix,
-        "an adapter prints a valid findings array but exits other than 0 or 1 and is reported as ran",
-        "Accept arrays only for exit 0 or 1 (fleet-report-back.sh translate_or_error)",
-        "Tests for exits 2, 3, 9 and 137",
-        "The fix would hit the code-fix unsafe list, the code is vendored or third-party, or the check does not pass on the PR head",
-    ),
-    r(
-        "SQ-OWN-01",
-        Owner,
-        "Get Pages site failed: Not Found",
-        "Report: Pages is a repository setting; never enable it",
-        "The pages job is green or absent",
-        "(owner)",
-    ),
-    r(
-        "SQ-OWN-02",
-        Owner,
-        "a mirror job is enabled and webfactory/ssh-agent fails: the ssh-private-key argument is empty",
-        "Report: add the secret or set the enable variable to false",
-        "The mirror job passes or is skipped",
-        "(owner)",
-    ),
-    r(
-        "SQ-OWN-03",
-        Owner,
-        "pull_request_target or workflow_run jobs check out or run PR code with secrets or a write token",
-        "Report only (security)",
-        "(owner)",
-        "(owner)",
-    ),
-    r(
-        "SQ-OWN-04",
-        Owner,
-        "a push is rejected with GH013: commits must have verified signatures",
-        "Report; never amend or force-push someone else's branch",
-        "(owner)",
-        "(owner)",
-    ),
-    r(
-        "SQ-OWN-05",
-        Owner,
-        "a committed data file holds a local absolute path with an account name",
-        "Report (privacy)",
-        "(owner)",
-        "(owner)",
-    ),
-    r(
-        "SQ-OWN-06",
-        Owner,
-        "a bot PR shows only external checks and no Actions runs: the workflow-approval state",
-        "Report if the PR is meant to auto-merge",
-        "(owner)",
-        "(owner)",
-    ),
-    r(
-        "SQ-OWN-07",
-        Owner,
-        "analyze (actions, none) stays red while GitHub's default code-scanning setup is on",
-        "Report: the owner turns default setup off; never work around it in a workflow",
-        "(owner)",
-        "(owner)",
-    ),
-    r(
-        "SQ-OWN-08",
-        Owner,
-        "a workflow ends startup_failure with 0 jobs and no check-runs or annotations while the byte-identical file with the same SHA pins succeeds in rsr-template-repo",
-        "Report: the cause is repository-level (Actions policy, allowed-actions list, Pages setting); the owner reads the failed run's banner or Settings > Actions; never rewrite the workflow to chase it",
-        "(owner)",
-        "(owner)",
-    ),
-    r(
-        "SQ-NOI-01",
-        Noise,
-        "Fork governance failed (deed=cancelled) on a head that a newer commit replaced",
-        "Label superseded; read the newest head",
-        "The newest head is not deed=cancelled",
-        "deed=cancelled on the newest head",
-    ),
-    r(
-        "SQ-NOI-02",
-        Noise,
-        "couldn't find remote ref refs/pull/<N>/merge and the PR closed before the job started",
-        "None: do not re-run a closed PR",
-        "The PR API shows the PR closed",
-        "The PR is still open (conflict or deleted ref)",
-    ),
-    r(
-        "SQ-NOI-03",
-        Noise,
-        "Inbox Steward ends startup_failure only on runs triggered by chatgpt-codex-connector[bot]",
-        "None",
-        "Count of startup failures by actor",
-        "Inbox Steward becomes a required check",
-    ),
-];
-
 /// Look a rule up by id.
 pub fn rule(id: &str) -> Option<&'static Rule> {
-    CATALOGUE.iter().find(|r| r.id == id)
+    LazyLock::force(&CATALOGUE).iter().find(|r| r.id == id)
 }
 
 /// Rule ids whose runtime signature appears in a job log. `step` is the name
@@ -835,6 +627,62 @@ mod tests {
 
     fn ids(log: &str, step: Option<&str>) -> Vec<&'static str> {
         match_log(log, step)
+    }
+
+    #[test]
+    fn catalogue_rows_carry_the_data_files_fields() {
+        let lock = rule("SQ-LOCK-02").expect("SQ-LOCK-02 is in the catalogue");
+        assert_eq!(lock.class, Fix);
+        assert_eq!(
+            lock.summary,
+            "lockfile missing pin for an action called inside another action"
+        );
+        assert_eq!(lock.fix, "Regenerate the lock with gh actions-lock");
+        assert_eq!(lock.check, "The lock-sync gate passes and the job starts");
+        assert_eq!(
+            lock.refer_when,
+            "The regenerated lock disagrees with the workflow YAML"
+        );
+        assert_eq!(CATALOGUE[0].id, "SQ-LOCK-01", "ADR 0004 order is kept");
+        assert_eq!(CATALOGUE[CATALOGUE.len() - 1].id, "SQ-NOI-03");
+        for r in CATALOGUE.iter() {
+            assert!(!r.id.contains(char::is_whitespace), "{} has a space", r.id);
+        }
+    }
+
+    #[test]
+    fn parser_skips_comments_and_blank_lines() {
+        let parsed = parse_catalogue(
+            "# a comment\n\n   \n  # an indented comment\nSQ-X-01\tFIX\tsummary\tfix\tcheck\trefer\nSQ-X-02\tNOISE\ta\tb\tc\td\n",
+        );
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].id, "SQ-X-01");
+        assert_eq!(parsed[0].class, Fix);
+        assert_eq!(parsed[1].class, Noise);
+    }
+
+    #[test]
+    #[should_panic(expected = "expected 6 tab-separated fields, found 5")]
+    fn parser_rejects_a_short_row() {
+        parse_catalogue("SQ-X-01\tFIX\tsummary\tfix\tcheck\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown class")]
+    fn parser_rejects_an_unknown_class() {
+        parse_catalogue("SQ-X-01\tMAYBE\tsummary\tfix\tcheck\trefer\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "refer-when is empty")]
+    fn parser_rejects_an_empty_field() {
+        parse_catalogue("SQ-X-01\tFIX\tsummary\tfix\tcheck\t \n");
+    }
+
+    #[test]
+    #[should_panic(expected = "appears twice")]
+    fn parser_rejects_a_duplicate_id() {
+        parse_catalogue("SQ-X-01\tFIX\ta\tb\tc\td\nSQ-X-01\tACT\ta\tb\tc\td\n");
     }
 
     #[test]
