@@ -14,7 +14,7 @@ evidence from one or more repositories, not yet a verified general rule. When
 the implementation lands, its rule table in code is authoritative and this
 record lists the decisions behind it.
 
-Amended 2026-11-13 (increment 2): seven rules and one widened rule were added
+Amended 2026-11-13 (increment 2): eight rules and one widened rule were added
 from the evidence that the rule reconciliation thread sent after #156 merged
 (hypatia#1064). The rows quote that evidence; rows marked "reconstructed" have
 no run URL yet.
@@ -71,10 +71,10 @@ holds, or when its check does not pass on the PR head.
 | No tag or branch holds the SHA; tags tie; the lock also lacks entries.
 
 | SQ-LOCK-02 | FIX
-| `lockfile missing pin for <action>@<sha>` (for example `actions/upload-artifact@bbbca2dd…`, called inside `upload-pages-artifact` v5.0.0); or `lockfile verification did not produce a result for this action. Unable to resolve action <action>@<ref>, unable to find version <sha>` (hypatia run 43137798791: a locked ref no longer resolves); or, found statically, a workflow bumped an action past its lock (stale lock: the same action is locked for that workflow at another ref).
+| `lockfile missing pin for <action>@<sha>` (for example `actions/upload-artifact@bbbca2dd…`, called inside `upload-pages-artifact` v5.0.0); or `lockfile verification did not produce a result for this action. Unable to resolve action <action>@<ref>, unable to find version <sha>` (hypatia run 43137798791: a locked ref no longer resolves); or `FAIL <workflow>: refs missing from the lockfile: <action>@<sha>` from `scripts/check-lock-sync.sh` (this-ssg run 43156768667); or, found statically, a workflow bumped an action past its lock (stale lock: the same action is locked for that workflow at another ref).
 | Regenerate the lock with `gh actions-lock` (CI `GITHUB_TOKEN` works); for a stale lock, in the PR that bumps the action.
 | The lock-sync gate passes and the job starts.
-| The regenerated lock disagrees with the workflow YAML.
+| The regenerated lock disagrees with the workflow YAML, or the missing ref is an action called inside a reusable workflow that `gh actions-lock` has not been shown to regenerate (this-ssg `release.yml`, `slsa-framework/slsa-github-generator@f7dd8c54`: a live run must prove it first).
 
 | SQ-LOCK-03 | FIX
 | A reusable-calling workflow ends with zero jobs; its lock records the callee's old `owner_id` after a repository transfer (standards: 6759885 to 297579217, same `repo_id` 1116521501).
@@ -117,6 +117,12 @@ holds, or when its check does not pass on the PR head.
 | One version everywhere, sha256-pinned (Nickel 1.18.0; yq v4.53.3).
 | One version found; the installer verifies the sha256.
 | No upstream checksums exist (state trust-on-first-download, never "verified").
+
+| SQ-TOOL-02 | FIX
+| Dependabot fails with `Dependabot detected that Bun is misconfigured in this repository ... This project has a bun.lock file but no package-lock.json, yarn.lock or pnpm-lock.yaml` (type `misconfigured_tooling`, tool Bun): a `dependabot.yml` entry has `package-ecosystem: npm` for a directory that Bun manages (MetaManifold-WebUI run 43225380901, `/frontend`).
+| In `.github/dependabot.yml` change `package-ecosystem` from `npm` to `bun` for that directory only, and correct any comment that says npm supports `bun.lock`. Every other entry, and that entry's schedule, limits, groups and ignores, stays unchanged. Done by hand in MetaManifold-WebUI#330.
+| The next Dependabot run for that directory finishes without a `misconfigured_tooling` error. Not yet run for #330.
+| The directory holds a second lockfile (`bun.lock` plus another), or the repository has no matching Dependabot ecosystem.
 
 | SQ-GEN-01 | FIX
 | estate-rules prints `FAIL: committed REPOSITORY-MAP.adoc is stale` and asks for `just repo-map`.
@@ -319,7 +325,7 @@ and fix belongs to the squabbler.
 | Hypatia id | Squabbler rule | Note
 | `pages_not_enabled` | SQ-OWN-01 | one to one
 | `actions_lock_invalid_pin` | SQ-LOCK-01 | one to one
-| `actions_lock_unresolvable_pin`, `actions_lock_stale` | SQ-LOCK-02 | one fix (regenerate the lock), three signatures
+| `actions_lock_unresolvable_pin`, `actions_lock_stale`, `actions_lock_missing_ref` | SQ-LOCK-02 | one fix (regenerate the lock), four signatures; the this-ssg slsa-generator case is a referral until a live run proves the regeneration
 | `merge_ref_race` | SQ-NOI-02 | never a re-run; `none` when the PR is closed, a referral when it is open
 | `runner_cancelled` | SQ-NOI-01 | the squabbler's rule is narrower (a replaced head)
 | `api_rate_limit` | SQ-PIN-03, then SQ-RUN-01 | advice that defers to both
@@ -329,6 +335,9 @@ and fix belongs to the squabbler.
 | `secret_or_variable_missing` | SQ-OWN-02 | the squabbler's row is the mirror ssh-key case
 | `app_key_wrong_format` | SQ-OWN-10 | owner
 | `always_after_cancel` (WF029) | SQ-GEN-03 | static fix
+| `dependabot_ecosystem_mismatch` | SQ-TOOL-02 | config fix
+| `repository_map_stale` | SQ-GEN-01 | one to one
+| `generated_file_stale` | none | a referral: the squabbler never runs a command named in a log; each new generated file becomes its own row
 | `bench_regression` | SQ-OWN-11 | owner
 | `scanner_pin_drift` | SQ-OWN-12 | owner
 | `canon_lockstep` | SQ-CANON-01 | inline-copy case only; a pin change is owner-routed
@@ -342,8 +351,8 @@ base).
 
 == Consequences
 
-* 22 rules are first-line (18 `FIX`, 4 `ACT`), 2 are referrals, 12 are
-  owner-only and 3 are noise; 39 in all. Every rule names its check and its
+* 23 rules are first-line (19 `FIX`, 4 `ACT`), 2 are referrals, 12 are
+  owner-only and 3 are noise; 40 in all. Every rule names its check and its
   referral condition.
 * A fix that changes code (`SQ-CODE-nn`) is first-line only when the code-fix
   guard passes on its diff, so a fix that could weaken a check never runs at

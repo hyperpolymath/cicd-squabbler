@@ -51,7 +51,7 @@ use RuleClass::{Act, Fix, Noise, Owner, Refer};
 /// here.
 const CATALOGUE_TSV: &str = include_str!("../data/first-line-rules.tsv");
 
-/// The 39 catalogue rows, in ADR 0004 order.
+/// The 40 catalogue rows, in ADR 0004 order.
 ///
 /// The data file ships inside the crate, so a malformed row is a defect in
 /// this crate that a caller cannot repair. The catalogue never loads short:
@@ -170,7 +170,9 @@ type LogMatcher = (&'static str, fn(&LogCtx) -> bool);
 static LOG_MATCHERS: &[LogMatcher] = &[
     ("SQ-LOCK-01", |c| c.has("invalid lockfile pin")),
     ("SQ-LOCK-02", |c| {
-        c.has("lockfile missing pin for") || c.has("lockfile verification did not produce a result")
+        c.has("lockfile missing pin for")
+            || c.has("lockfile verification did not produce a result")
+            || c.has("refs missing from the lockfile")
     }),
     ("SQ-PIN-02", |c| c.has("unrecognised #-form")),
     ("SQ-PIN-03", |c| {
@@ -179,6 +181,9 @@ static LOG_MATCHERS: &[LogMatcher] = &[
                 || c.has(
                     "Failed to fetch url https://api.github.com/repos/oven-sh/bun/git/refs/tags",
                 ))
+    }),
+    ("SQ-TOOL-02", |c| {
+        c.has("Dependabot detected that Bun is misconfigured")
     }),
     ("SQ-RUN-01", |c| c.rate_limited()),
     ("SQ-RUN-03", |c| {
@@ -783,10 +788,11 @@ mod tests {
         assert!(lock.summary.contains("stale lock"));
         assert_eq!(lock.fix, "Regenerate the lock with gh actions-lock");
         assert_eq!(lock.check, "The lock-sync gate passes and the job starts");
-        assert_eq!(
-            lock.refer_when,
-            "The regenerated lock disagrees with the workflow YAML"
-        );
+        assert!(lock.summary.contains("refs missing from the lockfile"));
+        assert!(lock
+            .refer_when
+            .starts_with("The regenerated lock disagrees with the workflow YAML"));
+        assert!(lock.refer_when.contains("slsa-github-generator"));
         assert_eq!(CATALOGUE[0].id, "SQ-LOCK-01", "ADR 0004 order is kept");
         assert_eq!(CATALOGUE[CATALOGUE.len() - 1].id, "SQ-NOI-03");
         for r in CATALOGUE.iter() {
@@ -838,16 +844,16 @@ mod tests {
     #[test]
     fn shipped_catalogue_file_parses() {
         let parsed = parse_catalogue(CATALOGUE_TSV).expect("the shipped data file is well formed");
-        assert_eq!(parsed.len(), 39);
+        assert_eq!(parsed.len(), 40);
     }
 
     #[test]
     fn catalogue_shape() {
-        assert_eq!(CATALOGUE.len(), 39);
+        assert_eq!(CATALOGUE.len(), 40);
         let uniq: HashSet<_> = CATALOGUE.iter().map(|r| r.id).collect();
-        assert_eq!(uniq.len(), 39);
+        assert_eq!(uniq.len(), 40);
         let n = |c| CATALOGUE.iter().filter(|r| r.class == c).count();
-        assert_eq!(n(Fix), 18);
+        assert_eq!(n(Fix), 19);
         assert_eq!(n(Act), 4);
         assert_eq!(n(Refer), 2);
         assert_eq!(n(Owner), 12);
@@ -910,6 +916,15 @@ mod tests {
             ("SQ-OWN-09", "fatal: unable to access 'https://x/': The requested URL returned error: 401"),
             ("SQ-OWN-10", "Error: Private Key is in OpenSSH format"),
             ("SQ-OWN-10", "error:1E08010C:DECODER routines::unsupported"),
+            // this-ssg run 43156768667 and MetaManifold-WebUI run 43225380901.
+            (
+                "SQ-LOCK-02",
+                "FAIL .github/workflows/release.yml: refs missing from the lockfile: slsa-framework/slsa-github-generator@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a",
+            ),
+            (
+                "SQ-TOOL-02",
+                "Error during file fetching; aborting: Dependabot detected that Bun is misconfigured in this repository. Running `bun` results in the following error: This project has a `bun.lock` file but no `package-lock.json`",
+            ),
         ];
         for (id, log) in cases {
             assert!(ids(log, None).contains(id), "{id} should match {log:?}");
