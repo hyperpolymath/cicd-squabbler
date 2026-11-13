@@ -11,7 +11,7 @@
 //! rules have none and are left out of it: SQ-LOCK-03, SQ-PIN-01, SQ-PIN-04,
 //! SQ-PIN-05, SQ-TOOL-01, SQ-CANON-01, SQ-RUN-02, SQ-CODE-02, SQ-CODE-03,
 //! SQ-CODE-04, SQ-REF-08, SQ-OWN-03, SQ-OWN-05, SQ-OWN-06, SQ-OWN-07,
-//! SQ-OWN-08, SQ-OWN-11, SQ-OWN-12 and SQ-NOI-03. Their evidence is the
+//! SQ-OWN-08, SQ-OWN-11, SQ-OWN-12, SQ-OWN-16 and SQ-NOI-03. Their evidence is the
 //! workflow source, run metadata or PR state, not a log line. SQ-LOCK-01,
 //! SQ-PIN-03 and SQ-GEN-03 also have static detectors below.
 
@@ -51,7 +51,7 @@ use RuleClass::{Act, Fix, Noise, Owner, Refer};
 /// here.
 const CATALOGUE_TSV: &str = include_str!("../data/first-line-rules.tsv");
 
-/// The 39 catalogue rows, in ADR 0004 order.
+/// The 45 catalogue rows, in ADR 0004 order.
 ///
 /// The data file ships inside the crate, so a malformed row is a defect in
 /// this crate that a caller cannot repair. The catalogue never loads short:
@@ -170,7 +170,9 @@ type LogMatcher = (&'static str, fn(&LogCtx) -> bool);
 static LOG_MATCHERS: &[LogMatcher] = &[
     ("SQ-LOCK-01", |c| c.has("invalid lockfile pin")),
     ("SQ-LOCK-02", |c| {
-        c.has("lockfile missing pin for") || c.has("lockfile verification did not produce a result")
+        c.has("lockfile missing pin for")
+            || c.has("lockfile verification did not produce a result")
+            || c.has("refs missing from the lockfile")
     }),
     ("SQ-PIN-02", |c| c.has("unrecognised #-form")),
     ("SQ-PIN-03", |c| {
@@ -180,9 +182,13 @@ static LOG_MATCHERS: &[LogMatcher] = &[
                     "Failed to fetch url https://api.github.com/repos/oven-sh/bun/git/refs/tags",
                 ))
     }),
+    ("SQ-TOOL-02", |c| {
+        c.has("Dependabot detected that Bun is misconfigured")
+    }),
     ("SQ-RUN-01", |c| c.rate_limited()),
     ("SQ-RUN-03", |c| {
         c.http_5xx_after("gh: HTTP ")
+            || c.http_5xx_after("gh: Server Error (HTTP ")
             || c.http_5xx_after("returned error: ")
             || c.has("Could not resolve host")
             || c.has("Failed to connect to")
@@ -192,6 +198,9 @@ static LOG_MATCHERS: &[LogMatcher] = &[
     }),
     ("SQ-GEN-01", |c| {
         c.has("committed REPOSITORY-MAP.adoc is stale")
+    }),
+    ("SQ-GEN-04", |c| {
+        c.has("kyaml-format:") && c.has("is not KYAML")
     }),
     ("SQ-GEN-02", |c| {
         c.has("K9-E006") || (c.has("line is") && c.has("octets"))
@@ -217,6 +226,15 @@ static LOG_MATCHERS: &[LogMatcher] = &[
         c.has("Private Key is in OpenSSH format")
             || c.has("DECODER routines::unsupported")
             || c.has("Invalid keyData")
+    }),
+    ("SQ-OWN-13", |c| {
+        c.has("gh: Repository rule violations found")
+    }),
+    ("SQ-OWN-14", |c| {
+        c.has("non-v8 UUID literal") || c.has("UUID check failed. Use ESTATE-UUID-V8")
+    }),
+    ("SQ-OWN-15", |c| {
+        c.has("Not authorized or organization not found")
     }),
     ("SQ-NOI-01", |c| c.has("deed=cancelled")),
     ("SQ-NOI-02", |c| {
@@ -783,10 +801,11 @@ mod tests {
         assert!(lock.summary.contains("stale lock"));
         assert_eq!(lock.fix, "Regenerate the lock with gh actions-lock");
         assert_eq!(lock.check, "The lock-sync gate passes and the job starts");
-        assert_eq!(
-            lock.refer_when,
-            "The regenerated lock disagrees with the workflow YAML"
-        );
+        assert!(lock.summary.contains("refs missing from the lockfile"));
+        assert!(lock
+            .refer_when
+            .starts_with("The regenerated lock disagrees with the workflow YAML"));
+        assert!(lock.refer_when.contains("slsa-github-generator"));
         assert_eq!(CATALOGUE[0].id, "SQ-LOCK-01", "ADR 0004 order is kept");
         assert_eq!(CATALOGUE[CATALOGUE.len() - 1].id, "SQ-NOI-03");
         for r in CATALOGUE.iter() {
@@ -838,19 +857,19 @@ mod tests {
     #[test]
     fn shipped_catalogue_file_parses() {
         let parsed = parse_catalogue(CATALOGUE_TSV).expect("the shipped data file is well formed");
-        assert_eq!(parsed.len(), 39);
+        assert_eq!(parsed.len(), 45);
     }
 
     #[test]
     fn catalogue_shape() {
-        assert_eq!(CATALOGUE.len(), 39);
+        assert_eq!(CATALOGUE.len(), 45);
         let uniq: HashSet<_> = CATALOGUE.iter().map(|r| r.id).collect();
-        assert_eq!(uniq.len(), 39);
+        assert_eq!(uniq.len(), 45);
         let n = |c| CATALOGUE.iter().filter(|r| r.class == c).count();
-        assert_eq!(n(Fix), 18);
+        assert_eq!(n(Fix), 20);
         assert_eq!(n(Act), 4);
         assert_eq!(n(Refer), 2);
-        assert_eq!(n(Owner), 12);
+        assert_eq!(n(Owner), 16);
         assert_eq!(n(Noise), 3);
         assert!(rule("SQ-OWN-04").is_some());
         for gone in [
@@ -900,6 +919,8 @@ mod tests {
                 "##[error]lockfile verification did not produce a result for this action. Unable to resolve action `dtolnay/rust-toolchain@v1`",
             ),
             ("SQ-RUN-03", "gh: HTTP 502 (https://api.github.com/graphql)"),
+            // standards run 43446385277, Rust coverage (playbook-to-recipe).
+            ("SQ-RUN-03", "gh: Server Error (HTTP 502)"),
             ("SQ-RUN-03", "fatal: unable to access 'https://git.sr.ht/x': The requested URL returned error: 503"),
             ("SQ-RUN-03", "fatal: unable to access 'https://x/': Could not resolve host: x"),
             (
@@ -910,6 +931,30 @@ mod tests {
             ("SQ-OWN-09", "fatal: unable to access 'https://x/': The requested URL returned error: 401"),
             ("SQ-OWN-10", "Error: Private Key is in OpenSSH format"),
             ("SQ-OWN-10", "error:1E08010C:DECODER routines::unsupported"),
+            // this-ssg run 43156768667 and MetaManifold-WebUI run 43225380901.
+            (
+                "SQ-LOCK-02",
+                "FAIL .github/workflows/release.yml: refs missing from the lockfile: slsa-framework/slsa-github-generator@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a",
+            ),
+            (
+                "SQ-TOOL-02",
+                "Error during file fetching; aborting: Dependabot detected that Bun is misconfigured in this repository. Running `bun` results in the following error: This project has a `bun.lock` file but no `package-lock.json`",
+            ),
+            // quintessence run 43156792336, Apodeixis.jl runs 43257204071 and
+            // 43257204302, lithoglyph run 43152462261.
+            (
+                "SQ-GEN-04",
+                "##[error]kyaml-format: build/container/compose.yaml is not KYAML \u{2014} run scripts/kyaml-format.sh build/container/compose.yaml",
+            ),
+            (
+                "SQ-OWN-13",
+                "gh: Repository rule violations found\nCode coverage checks require a pull request.\n (HTTP 409)",
+            ),
+            ("SQ-OWN-14", "./Project.toml: non-v8 UUID literal (<uuid>)"),
+            (
+                "SQ-OWN-15",
+                "ERROR Fail to load the list of plugins installed on the server: Not authorized or organization not found",
+            ),
         ];
         for (id, log) in cases {
             assert!(ids(log, None).contains(id), "{id} should match {log:?}");
@@ -928,6 +973,7 @@ mod tests {
             "gh: HTTP 404",
             "gh: HTTP 5",
             "gh: HTTP 5x2",
+            "gh: Server Error (HTTP 404)",
             "returned error: 403",
         ] {
             assert!(!ids(log, None).contains(&"SQ-RUN-03"), "{log}");
@@ -937,6 +983,15 @@ mod tests {
         // The status must follow a known marker; a bare HTTP 599 is not enough.
         assert!(ids("HTTP 599 from somewhere", None).is_empty());
         assert_eq!(ids("gh: HTTP 599", None), vec!["SQ-RUN-03"]);
+    }
+
+    #[test]
+    fn push_refusals_are_told_apart() {
+        // The git form is SQ-OWN-04, the gh API form is SQ-OWN-13; neither claims the other.
+        let git = "remote: error: GH013: Repository rule violations found for refs/heads/main.";
+        let api = "gh: Repository rule violations found\n (HTTP 409)";
+        assert_eq!(ids(git, None), vec!["SQ-OWN-04"]);
+        assert_eq!(ids(api, None), vec!["SQ-OWN-13"]);
     }
 
     #[test]
