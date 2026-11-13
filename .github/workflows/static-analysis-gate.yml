@@ -355,7 +355,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [panic-attack-assail, hypatia-scan, patch-bridge-triage]
-    if: always()
+    if: ${{ !cancelled() }}
     steps:
       - name: Download panic-attack findings
         uses: actions/download-artifact@v8.0.2
