@@ -21,6 +21,7 @@ pub mod done;
 pub mod execution;
 pub mod gate;
 pub mod inbox;
+pub mod lockfix;
 pub mod moves;
 pub mod outcome;
 pub mod polarity;

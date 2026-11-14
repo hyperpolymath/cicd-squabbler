@@ -50,6 +50,7 @@ mod fight;
 mod inbox;
 mod lock_verifier;
 mod phase;
+mod relock;
 mod triage;
 mod verify;
 mod zero_job;
@@ -83,6 +84,7 @@ fn main() -> ExitCode {
         Some("verify-satisfied") => verify::run(&args[2..]),
         Some("board") => board::run(&args[2..]),
         Some("triage") => triage::run(&args[2..]),
+        Some("relock") => relock::run(&args[2..]),
         Some("inbox-sweep") => inbox::run(&args[2..]),
         Some("--version") | Some("-V") => {
             println!("squabble {}", env!("CARGO_PKG_VERSION"));
@@ -104,6 +106,7 @@ fn main() -> ExitCode {
                  squabble {}\n  \
                  squabble {}\n  \
                  squabble {}\n  \
+                 squabble {}\n  \
                  squabble --version\n\n\
                  EXIT CODES:\n  \
                  0 ok · 2 failure · 3 no `required_status_checks` rule on the base branch · 4 chains/zero-job: blocking finding · 5 verify-satisfied: agent items remain · 6 board or inbox-sweep: incomplete\n",
@@ -115,7 +118,8 @@ fn main() -> ExitCode {
                 board::USAGE.trim_start_matches("usage: squabble "),
                 inbox::USAGE.trim_start_matches("usage: squabble "),
                 verify::USAGE.trim_start_matches("usage: squabble "),
-                triage::USAGE.trim_start_matches("usage: squabble ")
+                triage::USAGE.trim_start_matches("usage: squabble "),
+                relock::USAGE.trim_start_matches("usage: squabble ")
             );
             ExitCode::from(2)
         }

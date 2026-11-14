@@ -299,15 +299,15 @@ pub fn match_log(log: &str, step: Option<&str>) -> Vec<&'static str> {
         .collect()
 }
 
-fn is_sha40(s: &str) -> bool {
+pub(crate) fn is_sha40(s: &str) -> bool {
     s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn indent_of(line: &str) -> usize {
+pub(crate) fn indent_of(line: &str) -> usize {
     line.len() - line.trim_start().len()
 }
 
-fn unquote(s: &str) -> &str {
+pub(crate) fn unquote(s: &str) -> &str {
     let s = s.trim();
     let s = match s.find(" #") {
         Some(i) if !s.starts_with(['\'', '"']) => s[..i].trim(),
@@ -350,7 +350,7 @@ pub fn self_sha_lock_records(lock_yaml: &str, job_level_callers: &[String]) -> V
 
 /// The lowercased `owner/repo@<40-hex>` key of a lock record opened by this
 /// line, or None for any other line (a list item, or a key of another shape).
-fn self_sha_record_key(trimmed: &str) -> Option<String> {
+pub(crate) fn self_sha_record_key(trimmed: &str) -> Option<String> {
     if trimmed.starts_with('-') {
         return None;
     }

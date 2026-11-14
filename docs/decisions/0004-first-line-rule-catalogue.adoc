@@ -410,6 +410,40 @@ unverified, and SQ-REF-06 records the OTP 28 miscompile as Hypatia's to fix
 It becomes a row only with evidence (repositories, OTP versions, reproduced on
 base).
 
+== The SQ-LOCK-01 executor (`squabble relock`)
+
+The first executor, owner go 2026-11-14. The catalogue says what to do;
+`squabble relock` does it for one rule and no other.
+
+* **What it changes.** Only the direct `ref:` line of a record keyed
+  `owner/repo@<40-hex>` whose `ref:` repeats that SHA. Every other byte of the
+  lock, line endings included, is kept. The ref is chosen in the row's order:
+  the highest full-semver tag at the SHA, else the highest semver tag, else the
+  first tag, else the default branch (or the only branch) that contains the
+  commit. Tags or branches that tie, and a commit that no tag or branch holds,
+  are referrals, never a guess.
+* **What it will not touch.** A record that a job-level reusable caller names
+  keeps its SHA as its `ref:` by design (the closure rule needs it). The
+  callers are read from the repository's own workflows (`--workflows`) or a
+  list (`--callers`); one of the two is required, and a caller is never assumed.
+* **Its own check.** Before it returns text it re-reads the result: the line
+  count is unchanged, only the edited `ref:` lines differ, the edited records
+  are no longer flagged and the refused ones still are. A failed check returns
+  no text.
+* **Guards.** It is a dry run unless `--write` is given and the guards
+  (`decide`: the `ESTATE_AUTOFIX` kill switch, two attempts per head, one open
+  fix PR per rule) say `Apply`. It writes through a temporary file and a
+  rename, so a failed write leaves the lock as it was. It opens no PR.
+* **What it does not claim.** It never reports the rule's check as passed. The
+  check is the repository's lock gate, run on the PR it feeds.
+* **Evidence in, for now.** The tags and branches come from a TSV the caller
+  gathers (`key<TAB>tag|branch|default<TAB>name`). Gathering them from git, and
+  opening the PR, are separate steps that are not built yet.
+
+First proof (ZeroInflatedCounts.jl, `hyperpolymath/cicd-suite@0da816c0`, which
+`hyperpolymath/cicd-suite` has no tag for and holds on its `main`): the
+executor's output is byte-identical to the hand repair in ZeroInflatedCounts.jl#22.
+
 == Consequences
 
 * 26 rules are first-line (21 `FIX`, 5 `ACT`), 3 are referrals, 16 are
