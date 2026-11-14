@@ -1,5 +1,5 @@
-# proven-cicd: proven-coverage-collect@0.1.0 sha256:0f3e695362fe661ca1daaaa850720e685748e684181793aab47597c23795a354
 # SPDX-License-Identifier: MPL-2.0
+# proven-cicd: proven-coverage-collect@0.1.1 sha256:0f3e695362fe661ca1daaaa850720e685748e684181793aab47597c23795a354
 # Stamped copy of hyperpolymath/proven-cicd-and-workflows templates/proven-coverage-collect.yml.
 # Do not edit by hand. A changed body fails as drift. The applier moves the
 # pinned suite SHA. The line after each `proven-cicd:local-next` marker is local
@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: 30
     env:
       # proven-cicd:local-next
-      PROVEN_SHA: "89cb3d92ac7ee2d31ae2b2f8d6adf0c3913397e9"
+      PROVEN_SHA: "4d033a09d5a3934a9210e1c03f9f31641ebc763c"
       # proven-cicd:local-next
       PROVEN_COV_RUST_TOOLCHAIN: "stable"
       # proven-cicd:local-next
