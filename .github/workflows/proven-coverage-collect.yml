@@ -1,0 +1,106 @@
+# proven-cicd: proven-coverage-collect@0.1.0 sha256:0f3e695362fe661ca1daaaa850720e685748e684181793aab47597c23795a354
+# SPDX-License-Identifier: MPL-2.0
+# Stamped copy of hyperpolymath/proven-cicd-and-workflows templates/proven-coverage-collect.yml.
+# Do not edit by hand. A changed body fails as drift. The applier moves the
+# pinned suite SHA. The line after each `proven-cicd:local-next` marker is local
+# and outside the stamp's hash: the suite pin, the third-party action pins, the
+# toolchain versions, the proven-test filter and the JS test globs.
+#
+# This workflow collects coverage reports. It does not judge them. Hypatia does
+# that (`mix hypatia.coverage.report`). It is shadow only: it never fails on a
+# coverage number, and a language it cannot measure is reported in the job
+# summary, not failed. It fails only when the collector itself cannot run (a bad
+# pin, a failed fetch, a drifted copy). It does not change any ruleset.
+#
+# For each language the repository has (Cargo.toml, mix.exs, package.json at the
+# root) it makes one raw run (all tests) and one proven run (a subset), writes a
+# report-meta sidecar next to every report, and uploads everything as one
+# artifact named proven-coverage.
+name: Proven coverage collect
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  proven-coverage:
+    name: Proven coverage collect
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # proven-cicd:local-next
+      PROVEN_SHA: "89cb3d92ac7ee2d31ae2b2f8d6adf0c3913397e9"
+      # proven-cicd:local-next
+      PROVEN_COV_RUST_TOOLCHAIN: "stable"
+      # proven-cicd:local-next
+      PROVEN_COV_RUST_PROVEN_FILTER: "prop_"
+      # proven-cicd:local-next
+      PROVEN_COV_OTP_VERSION: "27.3.4.19"
+      # proven-cicd:local-next
+      PROVEN_COV_ELIXIR_VERSION: "1.19.4"
+      # proven-cicd:local-next
+      PROVEN_COV_NODE_VERSION: "22"
+      # proven-cicd:local-next
+      PROVEN_COV_JS_RAW_TESTS: "test/**/*.test.js"
+      # proven-cicd:local-next
+      PROVEN_COV_JS_PROVEN_TESTS: "test/**/props.test.js"
+    steps:
+      # proven-cicd:local-next
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch the proven suite at its pinned commit
+        run: |
+          set -euo pipefail
+          [[ $PROVEN_SHA =~ ^[0-9a-f]{40}$ ]] || { echo "PROVEN_COVERAGE_CLASS=not_run:pin"; exit 2; }
+          suite="$RUNNER_TEMP/proven-suite"
+          git init -q "$suite"
+          git -C "$suite" remote add origin https://github.com/hyperpolymath/proven-cicd-and-workflows.git
+          git -C "$suite" config core.sparseCheckout true
+          printf '%s\n' scripts/ > "$suite/.git/info/sparse-checkout"
+          fetched=0
+          for delay in 0 10 30; do
+            sleep "$delay"
+            if git -C "$suite" fetch -q --depth=1 origin "$PROVEN_SHA"; then fetched=1; break; fi
+          done
+          [[ $fetched == 1 ]] || { echo "PROVEN_COVERAGE_CLASS=not_run:fetch"; exit 2; }
+          git -C "$suite" checkout -q --detach FETCH_HEAD
+          [[ $(git -C "$suite" rev-parse HEAD) == "$PROVEN_SHA" ]] || { echo "PROVEN_COVERAGE_CLASS=not_run:pin"; exit 2; }
+          echo "PROVEN_SUITE=$suite" >> "$GITHUB_ENV"
+      - name: Detect languages
+        id: detect
+        run: bash "$PROVEN_SUITE/scripts/proven-coverage-collect.sh" detect "$GITHUB_WORKSPACE" >> "$GITHUB_OUTPUT"
+      # proven-cicd:local-next
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-08-04 (v1)
+        if: ${{ steps.detect.outputs.rust == 'true' }}
+        with:
+          toolchain: ${{ env.PROVEN_COV_RUST_TOOLCHAIN }}
+          components: llvm-tools-preview
+      # proven-cicd:local-next
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        if: ${{ steps.detect.outputs.rust == 'true' }}
+        with:
+          tool: cargo-llvm-cov
+      # proven-cicd:local-next
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        if: ${{ steps.detect.outputs.elixir == 'true' }}
+        with:
+          otp-version: ${{ env.PROVEN_COV_OTP_VERSION }}
+          elixir-version: ${{ env.PROVEN_COV_ELIXIR_VERSION }}
+      # proven-cicd:local-next
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: ${{ steps.detect.outputs.js == 'true' }}
+        with:
+          node-version: ${{ env.PROVEN_COV_NODE_VERSION }}
+      - name: Collect raw and proven coverage reports (shadow, never judged here)
+        run: bash "$PROVEN_SUITE/scripts/proven-coverage-collect.sh" collect "$GITHUB_WORKSPACE" .github/workflows/proven-coverage-collect.yml
+      # proven-cicd:local-next
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: proven-coverage
+          path: .proven-coverage/
+          retention-days: 14
+          include-hidden-files: true
+          if-no-files-found: ignore
