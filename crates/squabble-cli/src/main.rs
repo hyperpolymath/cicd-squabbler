@@ -51,6 +51,7 @@ mod inbox;
 mod lock_verifier;
 mod phase;
 mod relock;
+mod relock_gather;
 mod triage;
 mod verify;
 mod zero_job;
