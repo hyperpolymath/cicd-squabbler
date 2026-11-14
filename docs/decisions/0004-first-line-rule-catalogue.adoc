@@ -150,8 +150,8 @@ holds, or when its check does not pass on the PR head.
 
 | SQ-GEN-05 | FIX
 | A gitleaks job on a `pull_request` run scans the full history (`fetch-depth: 0` and no range) and fails on a finding that is not in the PR's own commits. Seen in gitbot-fleet run 43430810006 (`scan / gitleaks`: 551 commits scanned, 1 leak, verdict 1); the next run on the same branch, 43438916211, passed. Detection is Hypatia WF031, a static workflow rule; this row only fixes it.
-| Scan `base..head` on `pull_request`, and keep a full-history scan on `schedule`, `workflow_dispatch` and push to the default branch. Never remove the full-history scan. Report a finding that predates the PR to the owner; it is not hidden by the narrower range.
-| `gitleaks` over `base..head` passes on the PR, the full-history scan is still triggered on schedule, dispatch or the default branch, and the older finding is reported.
+| Scan `base..head` on `pull_request`, and keep the full-history scan on every non-PR trigger it already has (`schedule`, `workflow_dispatch`, push to the default branch). Never remove it. Report a finding that predates the PR to the owner; it is not hidden by the narrower range.
+| `gitleaks` over `base..head` passes on the PR, the full-history scan still runs on each non-PR trigger it had before and at least one remains, and the older finding is reported.
 | The finding is inside `base..head` (a real secret that the PR adds), no full-history scan would remain, or the workflow is vendored or third-party.
 
 | SQ-CANON-01 | FIX
