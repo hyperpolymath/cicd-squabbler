@@ -51,7 +51,7 @@ use RuleClass::{Act, Fix, Noise, Owner, Refer};
 /// here.
 const CATALOGUE_TSV: &str = include_str!("../data/first-line-rules.tsv");
 
-/// The 47 catalogue rows, in ADR 0004 order.
+/// The 48 catalogue rows, in ADR 0004 order.
 ///
 /// The data file ships inside the crate, so a malformed row is a defect in
 /// this crate that a caller cannot repair. The catalogue never loads short:
@@ -957,16 +957,16 @@ mod tests {
     #[test]
     fn shipped_catalogue_file_parses() {
         let parsed = parse_catalogue(CATALOGUE_TSV).expect("the shipped data file is well formed");
-        assert_eq!(parsed.len(), 47);
+        assert_eq!(parsed.len(), 48);
     }
 
     #[test]
     fn catalogue_shape() {
-        assert_eq!(CATALOGUE.len(), 47);
+        assert_eq!(CATALOGUE.len(), 48);
         let uniq: HashSet<_> = CATALOGUE.iter().map(|r| r.id).collect();
-        assert_eq!(uniq.len(), 47);
+        assert_eq!(uniq.len(), 48);
         let n = |c| CATALOGUE.iter().filter(|r| r.class == c).count();
-        assert_eq!(n(Fix), 20);
+        assert_eq!(n(Fix), 21);
         assert_eq!(n(Act), 5);
         assert_eq!(n(Refer), 3);
         assert_eq!(n(Owner), 16);
