@@ -436,13 +436,19 @@ The first executor, owner go 2026-11-14. The catalogue says what to do;
   rename, so a failed write leaves the lock as it was. It opens no PR.
 * **What it does not claim.** It never reports the rule's check as passed. The
   check is the repository's lock gate, run on the PR it feeds.
-* **Evidence in, for now.** The tags and branches come from a TSV the caller
-  gathers (`key<TAB>tag|branch|default<TAB>name`). Gathering them from git, and
-  opening the PR, are separate steps that are not built yet.
+* **Evidence.** `--evidence <tsv>` takes it from a file
+  (`key<TAB>tag|branch|default<TAB>name`). `--gather` asks each flagged record's
+  own repository instead (read-only): the tags whose commit is the SHA (an
+  annotated tag by its peeled commit), and only when there is none, the branches
+  that contain it, from a blob-less fetch into a private temporary directory,
+  plus the default branch. Exactly one of the two is given. A lookup that fails
+  is reported (`gather-failed`) and the record is left as a referral; a commit
+  that no branch holds is no evidence, not an error. Opening the PR is a
+  separate step that is not built yet.
 
 First proof (ZeroInflatedCounts.jl, `hyperpolymath/cicd-suite@0da816c0`, which
 `hyperpolymath/cicd-suite` has no tag for and holds on its `main`): the
-executor's output is byte-identical to the hand repair in ZeroInflatedCounts.jl#22.
+executor's output, with the evidence gathered live by `--gather`, is byte-identical to the hand repair in ZeroInflatedCounts.jl#22. The same run on ResidualEvidenceTypes.jl's `actions/upload-artifact@bbbca2dd…` (one tag at that SHA, `v7.0.0`) names `v7.0.0`.
 
 == Consequences
 

@@ -10,17 +10,20 @@
 //! opens a PR and never claims the rule's check passed: that check is the
 //! repository's lock gate, run on the PR.
 
+use crate::relock_gather::gather;
 use squabble_core::lockfix::{plan_lock_fix, reusable_callers, LockFixPlan, RefEvidence};
-use squabble_core::rules::{decide, rule, Decision, GuardInput};
+use squabble_core::rules::{decide, rule, self_sha_lock_records, Decision, GuardInput};
 use std::collections::BTreeMap;
 use std::process::ExitCode;
 
-pub const USAGE: &str = "usage: squabble relock --lock <file> --evidence <tsv> (--workflows <dir> | --callers <file>) [--attempts <n>] [--open-fix-pr] [--write]";
+pub const USAGE: &str = "usage: squabble relock --lock <file> (--evidence <tsv> | --gather) (--workflows <dir> | --callers <file>) [--attempts <n>] [--open-fix-pr] [--write]";
 
 #[derive(Default)]
 struct Args {
     lock: Option<String>,
     evidence: Option<String>,
+    gather: bool,
+    remote_base: Option<String>,
     callers: Option<String>,
     workflows: Option<String>,
     attempts: u32,
@@ -40,6 +43,8 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
         match flag.as_str() {
             "--lock" => a.lock = Some(value("--lock")?),
             "--evidence" => a.evidence = Some(value("--evidence")?),
+            "--gather" => a.gather = true,
+            "--remote-base" => a.remote_base = Some(value("--remote-base")?),
             "--callers" => a.callers = Some(value("--callers")?),
             "--workflows" => a.workflows = Some(value("--workflows")?),
             "--attempts" => {
@@ -106,6 +111,33 @@ fn print_plan(plan: &LockFixPlan) {
     }
 }
 
+/// The evidence: from `--evidence`, or gathered from each flagged record's
+/// own repository with `--gather`. Exactly one of the two. A record whose
+/// lookup fails is reported and left without evidence, so it is a referral.
+fn collect_evidence(
+    a: &Args,
+    lock: &str,
+    callers: &[String],
+) -> Result<BTreeMap<String, RefEvidence>, String> {
+    match (&a.evidence, a.gather) {
+        (Some(p), false) => parse_evidence(&read(p)?),
+        (None, true) => {
+            let base = a.remote_base.as_deref().unwrap_or("https://github.com");
+            let mut found = BTreeMap::new();
+            for key in self_sha_lock_records(lock, callers) {
+                match gather(base, &key) {
+                    Ok(e) => {
+                        found.insert(key, e);
+                    }
+                    Err(why) => println!("gather-failed\t{key}\t{why}"),
+                }
+            }
+            Ok(found)
+        }
+        _ => Err("give exactly one of --evidence <tsv> or --gather".into()),
+    }
+}
+
 /// The job-level reusable callers, from the workflow directory and/or a list
 /// file. One of the two is required: a missing list would leave a caller
 /// record flagged as if it were a defect, and a rewrite of it breaks the lock.
@@ -146,10 +178,9 @@ pub fn run(args: &[String]) -> ExitCode {
 fn run_inner(args: &[String]) -> Result<ExitCode, String> {
     let a = parse_args(args)?;
     let lock_path = a.lock.as_deref().ok_or("--lock is required")?;
-    let ev_path = a.evidence.as_deref().ok_or("--evidence is required")?;
     let lock = read(lock_path)?;
-    let evidence = parse_evidence(&read(ev_path)?)?;
     let callers = collect_callers(&a)?;
+    let evidence = collect_evidence(&a, &lock, &callers)?;
     let plan = plan_lock_fix(&lock, &callers, &evidence)?;
     print_plan(&plan);
     let guards = GuardInput {
