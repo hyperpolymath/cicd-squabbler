@@ -152,3 +152,6 @@ verification/proofs/coq/.*.aux
 # first `cargo` run under verification/ (it pins the nightly-only proof library,
 # so it must never be mistaken for the workspace lock).
 verification/**/target/
+
+# proven-coverage collector output (local runs)
+.proven-coverage/
