@@ -148,6 +148,12 @@ holds, or when its check does not pass on the PR head.
 | The output is KYAML and the repository's kyaml check passes. A missing `yq` means the check did not run, never a pass.
 | The output is not KYAML, the formatter changes a value, or `yq` is not the mikefarah Go build.
 
+| SQ-GEN-05 | FIX
+| A gitleaks job on a `pull_request` run scans the full history (`fetch-depth: 0` and no range) and fails on a finding that is not in the PR's own commits. Seen in gitbot-fleet run 43430810006 (`scan / gitleaks`: 551 commits scanned, 1 leak, verdict 1); the next run on the same branch, 43438916211, passed. Detection is Hypatia WF031, a static workflow rule; this row only fixes it.
+| Scan `base..head` on `pull_request`, and keep a full-history scan on `schedule`, `workflow_dispatch` and push to the default branch. Never remove the full-history scan. Report a finding that predates the PR to the owner; it is not hidden by the narrower range.
+| `gitleaks` over `base..head` passes on the PR, the full-history scan is still triggered on schedule, dispatch or the default branch, and the older finding is reported.
+| The finding is inside `base..head` (a real secret that the PR adds), no full-history scan would remain, or the workflow is vendored or third-party.
+
 | SQ-CANON-01 | FIX
 | An instance's `canon-lockstep` job is an old inline copy and goes red on a canon release although its pin is provenance.
 | Run rsr-template-repo `scripts/adopt-canon-lockstep.sh` (replaces only that job and `scripts/canon-pin-check.sh`).
@@ -387,6 +393,7 @@ and fix belongs to the squabbler.
 | `dependabot_ecosystem_mismatch` | SQ-TOOL-02 | config fix
 | `repository_map_stale` | SQ-GEN-01 | one to one
 | `kyaml_format` | SQ-GEN-04 | generator named in the rule
+| `gitleaks_full_history_on_pr` (WF031) | SQ-GEN-05 | static fix; detection is Hypatia's
 | `ruleset_blocks_push` | SQ-OWN-13 | owner
 | `uuid_conformance` | SQ-OWN-14 | owner
 | `sonar_not_authorized` | SQ-OWN-15 | owner
@@ -439,8 +446,8 @@ executor's output is byte-identical to the hand repair in ZeroInflatedCounts.jl#
 
 == Consequences
 
-* 25 rules are first-line (20 `FIX`, 5 `ACT`), 3 are referrals, 16 are
-  owner-only and 3 are noise; 47 in all. Every rule names its check and its
+* 26 rules are first-line (21 `FIX`, 5 `ACT`), 3 are referrals, 16 are
+  owner-only and 3 are noise; 48 in all. Every rule names its check and its
   referral condition.
 * A fix that changes code (`SQ-CODE-nn`) is first-line only when the code-fix
   guard passes on its diff, so a fix that could weaken a check never runs at
