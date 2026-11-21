@@ -391,24 +391,25 @@ verify-creusot:
     cd verification/squabble-creusot && cargo creusot prove
 
 # The estate gate, verbatim: detect → theatre (T1 claims, T2 hollow, T3 trusted)
-# → prove. Fetches the pinned script from hyperpolymath/cicd-suite rather than
-# keeping a second copy that could drift.
-verify-gate suite_sha=sha(current):
+# → prove. Fetches the pinned suite checkout so the script can build its source reader.
+verify-gate suite_sha="":
     #!/usr/bin/env bash
     set -euo pipefail
-    sha="{{suite_sha}}"
-    if [ "$sha" = "current" ]; then
-        echo "usage: just verify-gate <full cicd-suite sha pinned in .github/workflows/creusot.yml>" >&2
+    sha="${1:-}"
+    if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "usage: just verify-gate <full SHA pinned in .github/workflows/creusot.yml>" >&2
         exit 2
     fi
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
-    gh api "repos/hyperpolymath/cicd-suite/contents/actions/creusot-check/check.sh?ref=$sha" \
-        --jq .content | base64 -d > "$tmp/check.sh"
+    git -C "$tmp" init -q
+    git -C "$tmp" fetch -q --depth=1 https://github.com/hyperpolymath/proven-cicd-and-workflows.git "$sha"
+    git -C "$tmp" checkout -q --detach "$sha"
     for phase in detect theatre prove; do
         echo "── creusot-check[$phase]"
         CREUSOT_GATE_PHASE="$phase" WORKING_DIRECTORY="$PWD" CREUSOT_FACTS="$tmp/facts" \
-            bash "$tmp/check.sh"
+            ENFORCE_HOLLOW=true PROVE_ARGS="" CREUSOT_SUITE_REVISION="$sha" \
+            bash "$tmp/actions/creusot-check/check.sh"
     done
 
 # ═══════════════════════════════════════════════════════════════════════════════
