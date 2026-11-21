@@ -17,7 +17,13 @@ members = [
 # `verification/squabble-creusot` is deliberately outside this workspace too: it
 # is a nightly-only Creusot artefact with its own Cargo.lock, so the stable
 # `--locked` build and `cargo audit` here never resolve `creusot-std`.
-exclude = [".standards-js", "verification"]
+# The pinned Creusot gate checks out its suite under .cicd-suite and builds the
+# source reader with its own lockfile before discovering proof obligations.
+exclude = [
+    ".standards-js",
+    "verification",
+    ".cicd-suite/actions/creusot-check/source-facts",
+]
 
 [workspace.package]
 version = "0.1.0"
