@@ -47,7 +47,7 @@ jobs:
       PROVEN_COV_JS_PROVEN_TESTS: "test/**/props.test.js"
     steps:
       # proven-cicd:local-next
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Fetch the proven suite at its pinned commit
@@ -72,31 +72,31 @@ jobs:
         id: detect
         run: bash "$PROVEN_SUITE/scripts/proven-coverage-collect.sh" detect "$GITHUB_WORKSPACE" >> "$GITHUB_OUTPUT"
       # proven-cicd:local-next
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-08-04 (v1)
+      - uses: dtolnay/rust-toolchain@v1
         if: ${{ steps.detect.outputs.rust == 'true' }}
         with:
           toolchain: ${{ env.PROVEN_COV_RUST_TOOLCHAIN }}
           components: llvm-tools-preview
       # proven-cicd:local-next
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      - uses: taiki-e/install-action@v2.90.3
         if: ${{ steps.detect.outputs.rust == 'true' }}
         with:
           tool: cargo-llvm-cov
       # proven-cicd:local-next
-      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+      - uses: erlef/setup-beam@v1.24.1
         if: ${{ steps.detect.outputs.elixir == 'true' }}
         with:
           otp-version: ${{ env.PROVEN_COV_OTP_VERSION }}
           elixir-version: ${{ env.PROVEN_COV_ELIXIR_VERSION }}
       # proven-cicd:local-next
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/setup-node@v7.1.0
         if: ${{ steps.detect.outputs.js == 'true' }}
         with:
           node-version: ${{ env.PROVEN_COV_NODE_VERSION }}
       - name: Collect raw and proven coverage reports (shadow, never judged here)
         run: bash "$PROVEN_SUITE/scripts/proven-coverage-collect.sh" collect "$GITHUB_WORKSPACE" .github/workflows/proven-coverage-collect.yml
       # proven-cicd:local-next
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: proven-coverage

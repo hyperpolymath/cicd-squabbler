@@ -33,7 +33,7 @@ permissions:
 
 jobs:
   creusot:
-    uses: hyperpolymath/cicd-suite/.github/workflows/creusot-gate.yml@47a5fe0aa1039ad8a6a0614137d575e66649a174
+    uses: hyperpolymath/proven-cicd-and-workflows/.github/workflows/creusot-gate.yml@6a35e510a41037adfd422b7f449c3503c5e26a98
     with:
       # Paired inputs: Creusot v0.14.0 is built against nightly-2026-08-03
       # (creusot-rs/creusot's own rust-toolchain at that tag, mirrored in
