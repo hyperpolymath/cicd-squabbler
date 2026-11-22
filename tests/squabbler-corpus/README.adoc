@@ -10,8 +10,8 @@ what fix is proposed, who owns it, and how to retry.
 
 * `schema/case.schema.json`: the case shape.
 * `cases/SQ-CASE-NNNN.json`: the cases (this patch adds 15).
-* `validate.py`: offline checker (standard library only). Silent means the case is valid and scrubbed.
-* `tests/run-tests.py`: fire and silence tests for the validator, offline.
+* `check-case.sh` and `check-case.jq`: offline checker (POSIX shell and jq). Silent means the case is valid and scrubbed.
+* `run-tests.sh`: fire and silence tests for the checker, offline.
 
 == Rules the validator enforces
 
@@ -40,6 +40,6 @@ what fix is proposed, who owns it, and how to retry.
 == Run
 
 ----
-python3 -I tests/run-tests.py
-python3 -I validate.py cases/*.json
+tests/squabbler-corpus/run-tests.sh
+tests/squabbler-corpus/check-case.sh tests/squabbler-corpus/cases/*.json
 ----
