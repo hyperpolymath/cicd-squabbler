@@ -269,9 +269,9 @@ just verify-mirror
 # Discharge the obligations — the only step that turns "stated" into "proved"
 just verify-creusot
 
-# The estate gate, verbatim, at the pinned cicd-suite commit
-just verify-gate $(grep -oE 'cicd-suite/\.github/workflows/creusot-gate\.yml@[0-9a-f]{40}' \
-    .github/workflows/creusot.yml | head -1 | sed 's/.*@//')
+# The estate gate script at the commit pinned in the workflow
+just verify-gate "$(sed -nE 's|^[[:space:]]+uses:[[:space:]]+hyperpolymath/proven-cicd-and-workflows/\.github/workflows/creusot-gate\.yml@([0-9a-f]{40})[[:space:]]*(#.*)?$|\1|p' \
+    .github/workflows/creusot.yml)"
 ----
 
 == Historical local gate-wiring check

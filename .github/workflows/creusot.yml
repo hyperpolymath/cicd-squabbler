@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 #
 # Creusot Gate — thin caller of the estate's Rust deductive-verification gate
-# (hyperpolymath/cicd-suite), the Rust twin of the SPARK gate that proves
+# (hyperpolymath/proven-cicd-and-workflows), the Rust twin of the SPARK gate that proves
 # spark/gate_machine. It detects Creusot obligations and claims, fails a claim of
 # proof that has no contracts behind it, and — when obligations exist — installs
 # Creusot at a pinned release, proves a planted FALSE contract to show the prover
@@ -14,9 +14,8 @@
 # after rejecting the false control and proving the true one (docs/CREUSOT.adoc).
 # Each later source still needs its own proof run; this is not a whole-engine proof.
 #
-# Full-SHA pin, DE-ONBOARDED from actions.lock — same rule as rust-ci.yml: the
-# gate scripts are pinned by the caller's own `uses:` SHA, so this line is the
-# single pin for both the workflow and the script it runs.
+# The caller's full `uses:` SHA pins both the workflow and its gate scripts.
+# Keep actions.lock in sync with this pin and the workflow's nested actions.
 name: Creusot Gate
 
 on:
@@ -33,7 +32,7 @@ permissions:
 
 jobs:
   creusot:
-    uses: hyperpolymath/cicd-suite/.github/workflows/creusot-gate.yml@47a5fe0aa1039ad8a6a0614137d575e66649a174
+    uses: hyperpolymath/proven-cicd-and-workflows/.github/workflows/creusot-gate.yml@6a35e510a41037adfd422b7f449c3503c5e26a98
     with:
       # Paired inputs: Creusot v0.14.0 is built against nightly-2026-08-03
       # (creusot-rs/creusot's own rust-toolchain at that tag, mirrored in
