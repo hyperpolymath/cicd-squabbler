@@ -1,0 +1,42 @@
+{
+  "attempt": 1,
+  "classification": {
+    "confidence": "proven",
+    "group": "rate-limit"
+  },
+  "evidence": {
+    "error_strings": [
+      "API rate limit exceeded for installation",
+      "Error: Failed to fetch url https://api.github.com/repos/oven-sh/bun/git/refs/tags. (status code: 403, status text: Forbidden)"
+    ],
+    "exit_code": 1,
+    "log_excerpt": null
+  },
+  "fix": {
+    "description": "Fetch the Bun release without the GitHub API, or cache it; retry with backoff.",
+    "files": [],
+    "owner": "ci-gate-owner",
+    "requires_owner_go": true,
+    "risk": "low"
+  },
+  "id": "SQ-CASE-0002",
+  "job": "Proven 3-outcome test & bench suite",
+  "main_comparison": {
+    "note": "This is the main commit bf64192f itself.",
+    "state": "fails"
+  },
+  "observed_at": "2026-11-19T22:26:35Z",
+  "pr": null,
+  "provenance": {
+    "note": "Read-only inspection of public CI logs and check data; no run was re-run.",
+    "read_by": "api"
+  },
+  "repo": "hyperpolymath/rsr-template-repo",
+  "retry_policy": {
+    "action": "rerun-after-window",
+    "note": "Re-run after the window; the failure is not content-related."
+  },
+  "run_id": 44628578926,
+  "schema_version": "1",
+  "step": "Set up Bun"
+}

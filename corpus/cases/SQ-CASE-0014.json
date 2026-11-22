@@ -1,0 +1,41 @@
+{
+  "attempt": null,
+  "classification": {
+    "confidence": "likely",
+    "group": "stale-generated-file"
+  },
+  "evidence": {
+    "error_strings": [],
+    "exit_code": null,
+    "log_excerpt": null
+  },
+  "fix": {
+    "description": "Regenerate the receipt with: bash scripts/grade-receipt.sh --write, and commit it.",
+    "files": [
+      "verification receipt"
+    ],
+    "owner": "pr-author",
+    "requires_owner_go": true,
+    "risk": "low"
+  },
+  "id": "SQ-CASE-0014",
+  "job": "verification receipt",
+  "main_comparison": {
+    "note": "lintel main does not have this job.",
+    "state": "absent"
+  },
+  "observed_at": null,
+  "pr": 28,
+  "provenance": {
+    "note": "Read-only inspection of public CI logs and check data; no run was re-run.",
+    "read_by": "log"
+  },
+  "repo": "hyperpolymath/lintel",
+  "retry_policy": {
+    "action": "fix-then-rerun",
+    "note": "Receipt is stale against the code."
+  },
+  "run_id": null,
+  "schema_version": "1",
+  "step": null
+}

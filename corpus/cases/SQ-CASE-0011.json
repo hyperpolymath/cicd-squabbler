@@ -1,0 +1,41 @@
+{
+  "attempt": null,
+  "classification": {
+    "confidence": "likely",
+    "group": "lock-drift"
+  },
+  "evidence": {
+    "error_strings": [],
+    "exit_code": null,
+    "log_excerpt": null
+  },
+  "fix": {
+    "description": "actions/upload-artifact@v7.0.2 is used by a workflow but missing from actions.lock; regenerate the lock.",
+    "files": [
+      "actions.lock"
+    ],
+    "owner": "repo-owner",
+    "requires_owner_go": true,
+    "risk": "low"
+  },
+  "id": "SQ-CASE-0011",
+  "job": "actions.lock in sync",
+  "main_comparison": {
+    "note": "Seen on main and on #74 and #76.",
+    "state": "fails"
+  },
+  "observed_at": null,
+  "pr": null,
+  "provenance": {
+    "note": "Read-only inspection of public CI logs and check data; no run was re-run.",
+    "read_by": "log"
+  },
+  "repo": "hyperpolymath/scaffoldia",
+  "retry_policy": {
+    "action": "fix-then-rerun",
+    "note": "Lock must change first."
+  },
+  "run_id": null,
+  "schema_version": "1",
+  "step": null
+}

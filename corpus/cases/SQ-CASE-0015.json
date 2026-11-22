@@ -1,0 +1,44 @@
+{
+  "attempt": 1,
+  "classification": {
+    "confidence": "proven",
+    "group": "stale-generated-file"
+  },
+  "evidence": {
+    "error_strings": [
+      "index.json is out of sync with scans/.",
+      "Run 'bash scripts/regen-index.sh' locally and commit the result."
+    ],
+    "exit_code": 1,
+    "log_excerpt": null
+  },
+  "fix": {
+    "description": "Regenerate index.json on main in one small change. Open question: whether last_updated is wall-clock, which would make the check fail again.",
+    "files": [
+      "index.json"
+    ],
+    "owner": "repo-owner",
+    "requires_owner_go": true,
+    "risk": "low"
+  },
+  "id": "SQ-CASE-0015",
+  "job": "index.json matches scans/",
+  "main_comparison": {
+    "note": "This is main; open pull requests fail the same way, so it is not caused by them.",
+    "state": "fails"
+  },
+  "observed_at": "2026-11-19T15:18:24Z",
+  "pr": null,
+  "provenance": {
+    "note": "Read-only inspection of public CI logs and check data; no run was re-run.",
+    "read_by": "api"
+  },
+  "repo": "hyperpolymath/verisimdb-data",
+  "retry_policy": {
+    "action": "fix-then-rerun",
+    "note": "A re-run fails identically."
+  },
+  "run_id": 44553279791,
+  "schema_version": "1",
+  "step": "Fail if index.json drifted"
+}

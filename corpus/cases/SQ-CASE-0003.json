@@ -1,0 +1,43 @@
+{
+  "attempt": 1,
+  "classification": {
+    "confidence": "hypothesis",
+    "group": "rate-limit"
+  },
+  "evidence": {
+    "error_strings": [
+      "release not found"
+    ],
+    "exit_code": 1,
+    "log_excerpt": null
+  },
+  "fix": {
+    "description": "Make install.sh show the real gh error and retry the release lookup once with backoff; confirm whether the 404 comes from the token or from rate limiting.",
+    "files": [
+      ".github/actions/squabble/install.sh"
+    ],
+    "owner": "repo-owner",
+    "requires_owner_go": true,
+    "risk": "low"
+  },
+  "id": "SQ-CASE-0003",
+  "job": "Squabble CI chains & required-context gate",
+  "main_comparison": {
+    "note": "This is the main commit bf64192f itself. The v0.1.0 release exists, is not a draft and carries the pinned asset, so the lookup error is not a missing release.",
+    "state": "fails"
+  },
+  "observed_at": "2026-11-19T22:27:11Z",
+  "pr": null,
+  "provenance": {
+    "note": "Read-only inspection of public CI logs and check data; no run was re-run.",
+    "read_by": "api"
+  },
+  "repo": "hyperpolymath/rsr-template-repo",
+  "retry_policy": {
+    "action": "rerun-after-window",
+    "note": "Cause not visible in the log; the failure sits inside a known rate-limit window."
+  },
+  "run_id": 44628578862,
+  "schema_version": "1",
+  "step": "Install pinned & SLSA-attested squabble v0.1.0"
+}

@@ -1,0 +1,44 @@
+{
+  "attempt": null,
+  "classification": {
+    "confidence": "proven",
+    "group": "rate-limit"
+  },
+  "evidence": {
+    "error_strings": [
+      "API rate limit exceeded for installation",
+      "Error: Failed to fetch url https://api.github.com/repos/oven-sh/bun/git/refs/tags. (status code: 403, status text: Forbidden)"
+    ],
+    "exit_code": 1,
+    "log_excerpt": null
+  },
+  "fix": {
+    "description": "Shared installation API budget is exhausted; no single-workflow fix. Cut API calls per push (skip statuses already posted, narrow the workflow_run trigger, add per-SHA concurrency), retry with backoff honouring Retry-After, then re-run once after the window.",
+    "files": [
+      ".github/workflows/ci-gate.yml"
+    ],
+    "owner": "ci-gate-owner",
+    "requires_owner_go": true,
+    "risk": "medium"
+  },
+  "id": "SQ-CASE-0005",
+  "job": "Proven 3-outcome test & bench suite",
+  "main_comparison": {
+    "note": "resource-algebra main itself was green.",
+    "state": "passes"
+  },
+  "observed_at": "2026-11-18T12:29:01Z",
+  "pr": 54,
+  "provenance": {
+    "note": "Read-only inspection of public CI logs and check data; no run was re-run.",
+    "read_by": "api"
+  },
+  "repo": "hyperpolymath/resource-algebra",
+  "retry_policy": {
+    "action": "rerun-after-window",
+    "note": "Re-run after the window."
+  },
+  "run_id": null,
+  "schema_version": "1",
+  "step": "Set up Bun"
+}

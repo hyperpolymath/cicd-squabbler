@@ -1,0 +1,41 @@
+{
+  "attempt": null,
+  "classification": {
+    "confidence": "hypothesis",
+    "group": "rate-limit"
+  },
+  "evidence": {
+    "error_strings": [],
+    "exit_code": 1,
+    "log_excerpt": null
+  },
+  "fix": {
+    "description": "Same as the rsr-template-repo squabble install case.",
+    "files": [
+      ".github/actions/squabble/install.sh"
+    ],
+    "owner": "repo-owner",
+    "requires_owner_go": true,
+    "risk": "low"
+  },
+  "id": "SQ-CASE-0004",
+  "job": "Squabble CI chains & required-context gate",
+  "main_comparison": {
+    "note": "resource-algebra main itself was green.",
+    "state": "passes"
+  },
+  "observed_at": "2026-11-18T12:29:01Z",
+  "pr": 54,
+  "provenance": {
+    "note": "Read-only inspection of public CI logs and check data; no run was re-run.",
+    "read_by": "api"
+  },
+  "repo": "hyperpolymath/resource-algebra",
+  "retry_policy": {
+    "action": "rerun-after-window",
+    "note": "No rate-limit text in this job; the timing matches a known exhaustion window."
+  },
+  "run_id": null,
+  "schema_version": "1",
+  "step": "Install pinned & SLSA-attested squabble v0.1.0"
+}

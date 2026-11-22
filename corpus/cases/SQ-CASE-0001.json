@@ -1,0 +1,43 @@
+{
+  "attempt": null,
+  "classification": {
+    "confidence": "proven",
+    "group": "rate-limit"
+  },
+  "evidence": {
+    "error_strings": [
+      "NO VERDICT WAS PRODUCED"
+    ],
+    "exit_code": null,
+    "log_excerpt": null
+  },
+  "fix": {
+    "description": "Shared installation API budget is exhausted; no single-workflow fix. Cut API calls per push (skip statuses already posted, narrow the workflow_run trigger, add per-SHA concurrency), retry with backoff honouring Retry-After, then re-run once after the window.",
+    "files": [
+      ".github/workflows/ci-gate.yml"
+    ],
+    "owner": "ci-gate-owner",
+    "requires_owner_go": true,
+    "risk": "medium"
+  },
+  "id": "SQ-CASE-0001",
+  "job": "gate-pr / CI gate",
+  "main_comparison": {
+    "note": "Commit status CI/gate on the same head was re-evaluated to success at 13:15Z; the 12:00Z check-run stayed red.",
+    "state": "unknown"
+  },
+  "observed_at": "2026-11-20T11:59:46Z",
+  "pr": 469,
+  "provenance": {
+    "note": "Read-only inspection of public CI logs and check data; no run was re-run.",
+    "read_by": "api"
+  },
+  "repo": "hyperpolymath/rsr-template-repo",
+  "retry_policy": {
+    "action": "rerun-after-window",
+    "note": "One re-run after the installation budget has recovered."
+  },
+  "run_id": null,
+  "schema_version": "1",
+  "step": null
+}
