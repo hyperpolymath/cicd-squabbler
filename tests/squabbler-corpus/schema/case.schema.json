@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Squabbler corpus case",
-  "description": "One observed CI failure and its classification. validate.py enforces this plus the scrub rules.",
+  "description": "One observed CI failure and its classification. check-case.jq enforces this plus the scrub rules.",
   "type": "object",
   "additionalProperties": false,
   "required": ["id","schema_version","repo","pr","run_id","job","step","attempt","observed_at","evidence","classification","main_comparison","fix","retry_policy","provenance"],
