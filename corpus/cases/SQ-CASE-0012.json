@@ -1,0 +1,45 @@
+{
+  "attempt": null,
+  "classification": {
+    "confidence": "proven",
+    "group": "lock-drift"
+  },
+  "evidence": {
+    "error_strings": [
+      "lockfile entry for a workflow file that does not exist",
+      "actions.lock is OUT OF SYNC with the workflow YAML, or is not transitively closed",
+      "FAIL: the current lock must be in sync and closed"
+    ],
+    "exit_code": 1,
+    "log_excerpt": null
+  },
+  "fix": {
+    "description": "actions.lock lists .github/workflows/codeql.yml, which no longer exists; prune or regenerate the lock (gh actions-lock --no-migrate-local-actions).",
+    "files": [
+      "actions.lock"
+    ],
+    "owner": "pr-author",
+    "requires_owner_go": true,
+    "risk": "low"
+  },
+  "id": "SQ-CASE-0012",
+  "job": "actions.lock is in sync with the workflow YAML",
+  "main_comparison": {
+    "note": "The same stale entry also fails the estate-rules control job.",
+    "state": "unknown"
+  },
+  "observed_at": "2026-11-18T14:29:07Z",
+  "pr": 38,
+  "provenance": {
+    "note": "Read-only inspection of public CI logs and check data; no run was re-run.",
+    "read_by": "api"
+  },
+  "repo": "hyperpolymath/resource-algebra",
+  "retry_policy": {
+    "action": "fix-then-rerun",
+    "note": "Re-running without a lock change fails again."
+  },
+  "run_id": null,
+  "schema_version": "1",
+  "step": "Verify lockfile synchronisation"
+}

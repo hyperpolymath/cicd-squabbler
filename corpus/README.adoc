@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath)
+= Squabbler training corpus (draft)
+
+One JSON file per observed CI failure, under `cases/`. Each is a structured case:
+what failed, how it was classified, whether the default branch has the same failure,
+what fix is proposed, who owns it, and how to retry.
+
+== Files
+
+* `schema/case.schema.json`: the case shape.
+* `cases/SQ-CASE-NNNN.json`: the cases (this patch adds 15).
+* `validate.py`: offline checker (standard library only). Silent means the case is valid and scrubbed.
+* `tests/run-tests.py`: fire and silence tests for the validator, offline.
+
+== Rules the validator enforces
+
+[cols="1,4"]
+|===
+| Code | Meaning
+| V001 | Top-level fields differ from the schema.
+| V002 | A field has the wrong type or an unknown enum value.
+| V003 | File name differs from the case id.
+| V004 | `log_excerpt` is longer than 30 lines.
+| V005 | Possible secret or token.
+| V006 | Email address.
+| V007 | Internal hostname or private address.
+| V009 | Confidence `proven` without a verbatim error string.
+| V010 | A fix with an owner does not require the owner's go.
+| V011 | `observed_at` is not UTC `YYYY-MM-DDThh:mm:ssZ` or null.
+| V012 | An error string is not in the log excerpt.
+|===
+
+== Honesty conventions
+
+* `error_strings` hold only text that was read verbatim. Where it was not retained the list is empty and confidence is `likely` or `hypothesis`, never `proven`.
+* `null` means not known or not retained, never a guess.
+* A case with confidence `hypothesis` states a cause that the log does not show.
+
+== Run
+
+----
+python3 -I tests/run-tests.py
+python3 -I validate.py cases/*.json
+----

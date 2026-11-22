@@ -1,0 +1,43 @@
+{
+  "attempt": null,
+  "classification": {
+    "confidence": "proven",
+    "group": "infra-flake"
+  },
+  "evidence": {
+    "error_strings": [
+      "Could not connect",
+      "E: Package 'ca-certificates' has no installation candidate",
+      "Unable to locate package curl"
+    ],
+    "exit_code": 100,
+    "log_excerpt": null
+  },
+  "fix": {
+    "description": "Runner could not reach the Ubuntu mirrors; re-run once the network recovers.",
+    "files": [],
+    "owner": "none",
+    "requires_owner_go": false,
+    "risk": "low"
+  },
+  "id": "SQ-CASE-0013",
+  "job": "Lean recheck leg",
+  "main_comparison": {
+    "note": "Proofs verdict failed only as a consequence: Proofs verdict: required job did not succeed: lean-leg=failure",
+    "state": "unknown"
+  },
+  "observed_at": "2026-11-19T12:19:02Z",
+  "pr": 40,
+  "provenance": {
+    "note": "Read-only inspection of public CI logs and check data; no run was re-run.",
+    "read_by": "api"
+  },
+  "repo": "hyperpolymath/resource-algebra",
+  "retry_policy": {
+    "action": "rerun",
+    "note": "Not a proof failure."
+  },
+  "run_id": null,
+  "schema_version": "1",
+  "step": "Install the pinned Lean"
+}

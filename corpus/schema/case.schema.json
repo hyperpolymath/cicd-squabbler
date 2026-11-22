@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Squabbler corpus case",
+  "description": "One observed CI failure and its classification. validate.py enforces this plus the scrub rules.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id","schema_version","repo","pr","run_id","job","step","attempt","observed_at","evidence","classification","main_comparison","fix","retry_policy","provenance"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^SQ-CASE-[0-9]{4}$"},
+    "schema_version": {"const": "1"},
+    "repo": {"type": "string", "pattern": "^[\\w.-]+/[\\w.-]+$"},
+    "pr": {"type": ["integer", "null"], "description": "null means the default branch"},
+    "run_id": {"type": ["integer", "null"]},
+    "job": {"type": "string", "minLength": 1},
+    "step": {"type": ["string", "null"]},
+    "attempt": {"type": ["integer", "null"]},
+    "observed_at": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["log_excerpt", "exit_code", "error_strings"],
+      "properties": {
+        "log_excerpt": {"type": ["string", "null"], "description": "Verbatim, at most 30 lines, scrubbed. null when not retained."},
+        "exit_code": {"type": ["integer", "null"]},
+        "error_strings": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Verbatim strings from the log. Empty when none were retained."}
+      }
+    },
+    "classification": {
+      "type": "object", "additionalProperties": false, "required": ["group", "confidence"],
+      "properties": {
+        "group": {"enum": ["rate-limit","infra-flake","cancelled-timeout","lock-drift","stale-generated-file","real-failure","missing-tool","quality-gate"]},
+        "confidence": {"enum": ["proven","likely","hypothesis"], "description": "proven requires at least one verbatim error string"}
+      }
+    },
+    "main_comparison": {
+      "type": "object", "additionalProperties": false, "required": ["state", "note"],
+      "properties": {"state": {"enum": ["passes","fails","absent","unknown"]}, "note": {"type": "string"}}
+    },
+    "fix": {
+      "type": "object", "additionalProperties": false, "required": ["description","owner","files","risk","requires_owner_go"],
+      "properties": {
+        "description": {"type": "string"},
+        "owner": {"enum": ["ci-gate-owner","pr-author","repo-owner","estate-owner","none"]},
+        "files": {"type": "array", "items": {"type": "string"}},
+        "risk": {"enum": ["low","medium","high"]},
+        "requires_owner_go": {"type": "boolean"}
+      }
+    },
+    "retry_policy": {
+      "type": "object", "additionalProperties": false, "required": ["action", "note"],
+      "properties": {"action": {"enum": ["none","rerun","rerun-after-window","fix-then-rerun"]}, "note": {"type": "string"}}
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false, "required": ["read_by", "note"],
+      "properties": {"read_by": {"enum": ["log","api"]}, "note": {"type": "string"}}
+    }
+  }
+}

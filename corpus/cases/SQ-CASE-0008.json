@@ -1,0 +1,39 @@
+{
+  "attempt": 2,
+  "classification": {
+    "confidence": "likely",
+    "group": "infra-flake"
+  },
+  "evidence": {
+    "error_strings": [],
+    "exit_code": null,
+    "log_excerpt": null
+  },
+  "fix": {
+    "description": "Re-run once more after the mirror recovers; attempt 2 was already a re-run.",
+    "files": [],
+    "owner": "none",
+    "requires_owner_go": false,
+    "risk": "low"
+  },
+  "id": "SQ-CASE-0008",
+  "job": "capnproto/protobuf install",
+  "main_comparison": {
+    "note": "Main is red on other jobs; this mirror failure is separate.",
+    "state": "fails"
+  },
+  "observed_at": null,
+  "pr": 524,
+  "provenance": {
+    "note": "Read-only inspection of public CI logs and check data; no run was re-run.",
+    "read_by": "log"
+  },
+  "repo": "hyperpolymath/echidna",
+  "retry_policy": {
+    "action": "rerun-after-window",
+    "note": "Ubuntu mirror returned HTTP 503 on two attempts."
+  },
+  "run_id": null,
+  "schema_version": "1",
+  "step": null
+}
