@@ -78,7 +78,7 @@ jobs:
           toolchain: ${{ env.PROVEN_COV_RUST_TOOLCHAIN }}
           components: llvm-tools-preview
       # proven-cicd:local-next
-      - uses: taiki-e/install-action@v2.90.3
+      - uses: taiki-e/install-action@v2.90.6
         if: ${{ steps.detect.outputs.rust == 'true' }}
         with:
           tool: cargo-llvm-cov
